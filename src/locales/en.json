@@ -934,5 +934,18 @@
   "今日有效数据暂缺": "Current-day data unavailable",
   "已归属团队账单累计": "Attributed team bills to date",
   "今日平台金额与模型调用采用相同有效快照；待归属数据仅管理员可见，确认归属后才计入团队收益。": "Today’s platform amounts use the same valid snapshots as Model activity. Unassigned data is visible only to the administrator and enters team earnings after ownership is verified.",
-  "成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。": "Member totals include only accounts owned by that member. Descendants appear in their own rows. Member rows add up to the current scope without counting teams twice."
+  "成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。": "Member totals include only accounts owned by that member. Descendants appear in their own rows. Member rows add up to the current scope without counting teams twice.",
+  "Gatelink 登录失败（HTTP {0}）": "Gatelink login failed (HTTP {0})",
+  "Gatelink 读取上号配置失败（HTTP {0}）": "Gatelink onboarding settings could not be loaded (HTTP {0})",
+  "Gatelink 同步账号失败（HTTP {0}）": "Gatelink account sync failed (HTTP {0})",
+  "Gatelink 生成授权链接失败（HTTP {0}）": "Gatelink authorization link could not be generated (HTTP {0})",
+  "Gatelink 提交授权回调失败（HTTP {0}）": "Gatelink authorization callback failed (HTTP {0})",
+  "Gatelink 修改账号状态失败（HTTP {0}）": "Gatelink account status could not be changed (HTTP {0})",
+  "Gatelink 请求失败（HTTP {0}）": "Gatelink request failed (HTTP {0})",
+  "当前主账号无此权限": "The connected platform account does not have permission",
+  "参数校验未通过：{0}": "Parameter validation failed: {0}",
+  "Gatelink 的上游返回 HTTP {0}": "Gatelink's upstream returned HTTP {0}",
+  "请求被拒绝，请核对本步骤的参数或在 Gatelink 查看拒绝原因": "Request rejected. Check the parameters for this step or the rejection reason in Gatelink.",
+  "Gatelink 账号类型仅支持 speed、stable 或 team": "Gatelink account type must be speed, stable, or team",
+  "Gatelink 请粘贴完整回调地址或 code#state，保留 state。": "For Gatelink, paste the full callback URL or code#state, including state."
 }

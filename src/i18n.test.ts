@@ -84,6 +84,18 @@ describe('language switching', () => {
     expect(translateMessage(message)).toBe('User $& chưa có tỷ lệ quyết toán Mini CC vào 2026-10-17; không thể ghi sổ');
   });
 
+  it('translates Gatelink failure steps and safe validation metadata',()=>{
+    const source='Gatelink 生成授权链接失败（HTTP 422）；参数校验未通过：proxy；Gatelink 的上游返回 HTTP 400';
+    for(const locale of ['en','vi','hi'] as const) {
+      setLocale(locale);
+      const message=translateMessage(source);
+      expect(message).not.toMatch(/[\u3400-\u9fff]/u);
+      expect(message).toContain('proxy');
+      expect(message).toContain('422');
+      expect(message).toContain('400');
+    }
+  });
+
   it('translates the complete bulk-update toast before matching a generic effective-date suffix',()=>{
     const source='已调整 {0} 位直属下级，{1} 00:00 北京时间生效',values=[12,'2026-10-19'];
     const original=t(source,values);

@@ -934,5 +934,18 @@
   "今日有效数据暂缺": "Chưa có dữ liệu hợp lệ hôm nay",
   "已归属团队账单累计": "Tổng hóa đơn nhóm đã xác nhận",
   "今日平台金额与模型调用采用相同有效快照；待归属数据仅管理员可见，确认归属后才计入团队收益。": "Số tiền nền tảng hôm nay dùng cùng ảnh chụp hợp lệ với hoạt động mô hình. Dữ liệu chưa phân bổ chỉ quản trị viên thấy và chỉ tính vào thu nhập nhóm sau khi xác nhận chủ sở hữu.",
-  "成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。": "Tổng thành viên chỉ gồm tài khoản do chính thành viên sở hữu. Cấp dưới có dòng riêng. Tổng các dòng bằng tổng phạm vi hiện tại, không cộng trùng nhóm."
+  "成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。": "Tổng thành viên chỉ gồm tài khoản do chính thành viên sở hữu. Cấp dưới có dòng riêng. Tổng các dòng bằng tổng phạm vi hiện tại, không cộng trùng nhóm.",
+  "Gatelink 登录失败（HTTP {0}）": "Đăng nhập Gatelink thất bại (HTTP {0})",
+  "Gatelink 读取上号配置失败（HTTP {0}）": "Không thể tải cấu hình thêm tài khoản Gatelink (HTTP {0})",
+  "Gatelink 同步账号失败（HTTP {0}）": "Đồng bộ tài khoản Gatelink thất bại (HTTP {0})",
+  "Gatelink 生成授权链接失败（HTTP {0}）": "Không thể tạo liên kết ủy quyền Gatelink (HTTP {0})",
+  "Gatelink 提交授权回调失败（HTTP {0}）": "Gửi callback ủy quyền Gatelink thất bại (HTTP {0})",
+  "Gatelink 修改账号状态失败（HTTP {0}）": "Không thể thay đổi trạng thái tài khoản Gatelink (HTTP {0})",
+  "Gatelink 请求失败（HTTP {0}）": "Yêu cầu Gatelink thất bại (HTTP {0})",
+  "当前主账号无此权限": "Tài khoản nền tảng đang kết nối không có quyền này",
+  "参数校验未通过：{0}": "Tham số không hợp lệ: {0}",
+  "Gatelink 的上游返回 HTTP {0}": "Hệ thống thượng nguồn của Gatelink trả về HTTP {0}",
+  "请求被拒绝，请核对本步骤的参数或在 Gatelink 查看拒绝原因": "Yêu cầu bị từ chối. Kiểm tra tham số ở bước này hoặc lý do từ chối trong Gatelink.",
+  "Gatelink 账号类型仅支持 speed、stable 或 team": "Loại tài khoản Gatelink phải là speed, stable hoặc team",
+  "Gatelink 请粘贴完整回调地址或 code#state，保留 state。": "Với Gatelink, hãy dán URL callback đầy đủ hoặc code#state và giữ nguyên state."
 }

@@ -1,6 +1,7 @@
 import { AppError, assert } from './core.js';
 import Decimal from 'decimal.js';
 import { parseProxy } from './proxies.js';
+import { gatelinkFailure } from './gatelink-errors.js';
 import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
 import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
 
@@ -48,7 +49,7 @@ export class ProviderClient {
       if(index>0) this.cookies.set(pair.slice(0,index),pair.slice(index+1));
     }
     // Never expose a raw upstream body: account APIs can contain tokens/proxies.
-    if(!response.ok) throw new UpstreamError(response.status,`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}`);
+    if(!response.ok) throw new UpstreamError(response.status,this.provider==='gatelink'?await gatelinkFailure(response,path):`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}`);
     if(response.status===204) return {};
     try { return await response.json() as any; }
     catch { throw new UpstreamError(response.status,'平台响应格式变化，请检查适配器'); }
@@ -287,11 +288,19 @@ export class ProviderClient {
     return {name:options.email,inference_backend:'native',outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,
       overwrite_existing:false,cc_template_id:template.id,policy_template_id:policy.id,group_ids:groups.map((g:any)=>g.id),...limits};
   }
+  private gatelinkConfig(options:OAuthOptions) {
+    this.requireProxy(options);
+    const accountType=options.accountType||'speed';
+    assert(['speed','stable','team'].includes(accountType),'Gatelink 账号类型仅支持 speed、stable 或 team');
+    // Gatelink documents SOCKS5 URLs. Keep the canonical account identity and
+    // encrypted snapshot unchanged; serialize its SOCKS proxy in that API format.
+    const proxy=parseProxy(options.proxy!).url.replace(/^socks5h:/,'socks5:');
+    return {accountType,oauthFlow:'login',loginMethod:options.email,proxy};
+  }
   async startOAuth(options:OAuthOptions) {
     this.requireProxy(options);
     if(this.provider==='gatelink') {
-      assert(options.proxy,'Gatelink 要求为每个账号填写独立出口代理');
-      const data=await this.call('/api/oauth-submissions/authorize','POST',{accountType:options.accountType||'speed',oauthFlow:'login',loginMethod:options.email,proxy:options.proxy,overwriteExisting:false});
+      const data=await this.call('/api/oauth-submissions/authorize','POST',{...this.gatelinkConfig(options),overwriteExisting:false});
       assert(data.authorizationUrl,'平台未返回授权地址',502);
       return {url:data.authorizationUrl,secret:{options},expiresIn:Math.min(data.expiresInSeconds||600,1800)};
     }
@@ -308,7 +317,7 @@ export class ProviderClient {
   async exchangeOAuth(secret:any,callback:string) {
     this.requireProxy(secret.options);
     if(this.provider==='gatelink') {
-      const data=await this.call('/api/oauth-submissions/exchange','POST',{callback,loginMethod:secret.options.email,accountType:secret.options.accountType||'speed',oauthFlow:'login',proxy:secret.options.proxy});
+      const data=await this.call('/api/oauth-submissions/exchange','POST',{...this.gatelinkConfig(secret.options),callback:callback.trim()});
       assert(data.item,'平台未返回已提交账号',502);
       assert(data.item.upstreamEmail,'平台未返回可核实的真实邮箱，请由管理员同步核对归属',502);
       return this.normalize(data.item);
