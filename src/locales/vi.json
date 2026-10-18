@@ -785,5 +785,15 @@
   "API 密钥缺少此操作所需权限": "Khóa API thiếu quyền cần thiết cho thao tác này",
   "API 密钥必须包含只读权限且不能重复": "Quyền khóa API phải bao gồm quyền đọc và không được trùng lặp",
   "最多保留 10 个有效 API 密钥，请先撤销不再使用的密钥": "Bạn chỉ có thể có tối đa 10 khóa API còn hiệu lực. Hãy thu hồi khóa không dùng trước.",
-  "API 密钥不存在": "Không tìm thấy khóa API"
+  "API 密钥不存在": "Không tìm thấy khóa API",
+  "输入 0–{0} 的折扣": "Nhập tỷ lệ từ 0 đến {0}",
+  "{0}：上级尚未提供完整的生效价格，暂不能给下级定价。": "{0}: Giá cấp trên chưa đầy đủ cho kỳ hiệu lực. Chưa thể đặt giá cho cấp dưới.",
+  "下级折扣上限：{0}（含已安排的调价）": "Tỷ lệ cấp dưới tối đa: {0} (gồm thay đổi đã lên lịch)",
+  "检测到 {0} 项当前或待生效的层级价格异常，请逐级修正；异常账单会阻止结算。": "Phát hiện {0} lỗi phân cấp giá hiện tại hoặc đã lên lịch. Hãy sửa từng cấp; hóa đơn có lỗi sẽ bị chặn quyết toán.",
+  "每个平台单独校验：下级折扣不得高于你的生效折扣；相同折扣表示该层无价差利润。": "Mỗi nền tảng được kiểm tra riêng: tỷ lệ cấp dưới không được vượt tỷ lệ hiệu lực của bạn. Tỷ lệ bằng nhau nghĩa là cấp đó không có lợi nhuận chênh lệch.",
+  "该平台在报价生效期间没有完整的上级价格，请先补齐上级定价": "Giá cấp trên chưa đầy đủ trong kỳ hiệu lực. Hãy bổ sung trước khi đặt giá cấp dưới.",
+  "下级折扣不能高于生效期间的上级上限 {0}": "Tỷ lệ cấp dưới không được vượt mức trần cấp trên {0} trong kỳ hiệu lực",
+  "折扣不能低于已约定的下级折扣 {0}，请先调整下级价格": "Tỷ lệ không được thấp hơn tỷ lệ cấp dưới đã thỏa thuận là {0}. Hãy điều chỉnh giá cấp dưới trước.",
+  "上游折扣不能低于已约定的直属代理折扣 {0}，请先调整代理价格": "Tỷ lệ thượng nguồn không được thấp hơn tỷ lệ đại lý trực tiếp đã thỏa thuận là {0}. Hãy điều chỉnh giá đại lý trước.",
+  "账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算": "Hóa đơn có giá đảo ngược giữa các cấp. Hãy kiểm tra giá và mức sử dụng trước khi quyết toán."
 }

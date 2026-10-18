@@ -32,6 +32,7 @@ describe('agent API authentication and permissions', () => {
     a = id(); b = id(); leaf = id();
     for (const [user, parent, email] of [[a, ownerId, 'a@example.com'], [b, ownerId, 'b@example.com'], [leaf, a, 'leaf@example.com']]) {
       await db.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$3,$4)', [user, parent, email, owner.password_hash]);
+      for (const provider of ['gatelink', 'ai008', 'minicc']) await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,'1970-01-01',$5)", [id(), user, provider, user === leaf ? 0.1 : 0.3, parent]);
       await db.query('INSERT INTO accounts(id,owner_id,email,ownership_verified) VALUES($1,$2,$3,true)', [id(), user, `account-${email}`]);
     }
     ({ app } = await createApp(db, { encryptionKey: 'ab'.repeat(32), appUrl: 'http://localhost:3000' }));

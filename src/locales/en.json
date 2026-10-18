@@ -785,5 +785,15 @@
   "API 密钥缺少此操作所需权限": "API key lacks the required permission",
   "API 密钥必须包含只读权限且不能重复": "API key permissions must include read access and contain no duplicates",
   "最多保留 10 个有效 API 密钥，请先撤销不再使用的密钥": "You can have up to 10 active API keys. Revoke an unused key first.",
-  "API 密钥不存在": "API key not found"
+  "API 密钥不存在": "API key not found",
+  "输入 0–{0} 的折扣": "Enter a rate from 0 to {0}",
+  "{0}：上级尚未提供完整的生效价格，暂不能给下级定价。": "{0}: Upstream pricing is incomplete for the effective period. Downstream pricing is unavailable.",
+  "下级折扣上限：{0}（含已安排的调价）": "Maximum downstream rate: {0} (including scheduled changes)",
+  "检测到 {0} 项当前或待生效的层级价格异常，请逐级修正；异常账单会阻止结算。": "Found {0} current or scheduled pricing hierarchy issues. Correct each level; affected bills cannot be settled.",
+  "每个平台单独校验：下级折扣不得高于你的生效折扣；相同折扣表示该层无价差利润。": "Each platform is checked separately: downstream rates cannot exceed your effective rate. Equal rates mean no margin at that level.",
+  "该平台在报价生效期间没有完整的上级价格，请先补齐上级定价": "Upstream pricing is incomplete during the quote period. Complete it before setting a downstream price.",
+  "下级折扣不能高于生效期间的上级上限 {0}": "The downstream rate cannot exceed the upstream ceiling of {0} during its effective period",
+  "折扣不能低于已约定的下级折扣 {0}，请先调整下级价格": "The rate cannot fall below the agreed downstream rate of {0}. Adjust downstream prices first.",
+  "上游折扣不能低于已约定的直属代理折扣 {0}，请先调整代理价格": "The upstream rate cannot fall below the agreed direct-agent rate of {0}. Adjust agent prices first.",
+  "账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算": "This bill contains inverted pricing between levels. Review the prices and usage before settlement."
 }

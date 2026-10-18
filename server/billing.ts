@@ -1,8 +1,15 @@
 import Decimal from 'decimal.js';
 import type { DB, Row } from './db.js';
-import { ancestry, assert, audit, dayString, id, sum, today, usd, type SecretBox } from './core.js';
+import { AppError, ancestry, assert, audit, dayString, id, sum, today, usd, type SecretBox } from './core.js';
 
 export type UsageInput = { bindingId: string; day: string; rawUsd: string; final: boolean; source: string; evidence?: string };
+const hierarchyError = () => new AppError(409, '账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算', 'RATE_HIERARCHY_CONFLICT');
+
+async function assertUsageHierarchy(db: DB, usageIds: string[]) {
+  const [invalid] = await db.query(`SELECT id FROM earnings WHERE usage_id=ANY($1::text[])
+    AND (downstream_rate>rate OR profit_usd<0) LIMIT 1`, [usageIds]);
+  if (invalid) throw hierarchyError();
+}
 
 // Daily source values replace provisional observations; they are NEVER added to
 // each other. A finalized account/day is immutable and has exactly one charge.
@@ -47,6 +54,7 @@ export async function ingestUsage(tx: DB, input: UsageInput) {
       rates.push(new Decimal(price.rate));
     }
   }
+  if (rates.some((rate,index) => index>0 && rate.gt(rates[index-1]))) throw hierarchyError();
   for (let i=0;i<chain.length;i++) {
     const downstream=rates[i+1]??new Decimal(0);
     const gross=new Decimal(usd(raw.mul(rates[i]))), payable=new Decimal(usd(raw.mul(downstream)));
@@ -71,6 +79,7 @@ export async function createInvoice(db: DB, actor: Row, userId: string, from: st
     const items=await tx.query(`SELECT e.* FROM earnings e JOIN usage_days u ON u.id=e.usage_id
       LEFT JOIN invoice_items i ON i.earning_id=e.id WHERE e.user_id=$1 AND u.state='final' AND u.day BETWEEN $2 AND $3 AND i.earning_id IS NULL`,[userId,from,to]);
     assert(items.length,'所选期间没有可结算的已核实用量');
+    await assertUsageHierarchy(tx,[...new Set(items.map(item=>item.usage_id))]);
     const invoiceId=id();
     const number=`CC-${today().replaceAll('-','')}-${invoiceId.slice(0,8).toUpperCase()}`;
     const [invoice]=await tx.query(`INSERT INTO invoices(id,number,user_id,payer_id,date_from,date_to,gross_usd,downstream_usd,profit_usd,created_by)
@@ -88,6 +97,9 @@ export async function confirmInvoice(db: DB, actor: Row, invoiceId: string, refe
     assert(invoice,'账单不存在',404);
     assert(invoice.payer_id===actor.id || (!invoice.payer_id && actor.role==='owner'),'只能确认直属下级账单；平台回款仅管理员确认',403);
     if (invoice.state==='confirmed') return invoice;
+    const usage=await tx.query('SELECT e.usage_id FROM invoice_items i JOIN earnings e ON e.id=i.earning_id WHERE i.invoice_id=$1',[invoiceId]);
+    if(new Decimal(invoice.profit_usd).lt(0)) throw hierarchyError();
+    await assertUsageHierarchy(tx,usage.map(row=>row.usage_id));
     if (invoice.payer_id) {
       const [missing]=await tx.query(`SELECT count(*) AS count FROM invoice_items ii JOIN earnings e ON e.id=ii.earning_id
         LEFT JOIN earnings pe ON pe.usage_id=e.usage_id AND pe.user_id=e.payer_id

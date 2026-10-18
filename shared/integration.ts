@@ -22,10 +22,10 @@ const period = { from: date, to: date };
 export const apiEndpoints: ApiEndpoint[] = [
   { method: 'GET', path: '/api/auth/me', scope: 'read', summary: 'Current user and Beijing billing date' },
   { method: 'GET', path: '/api/dashboard', scope: 'read', summary: 'Team overview, balances and platform totals' },
-  { method: 'GET', path: '/api/team', scope: 'read', summary: 'Own team tree, prices and period totals', query: period },
-  { method: 'POST', path: '/api/team', scope: 'team:write', summary: 'Create a direct child agent', body: object({ name: { ...text, maxLength: 80 }, email, password, rates: { type: 'object', properties: { gatelink: rate, ai008: rate, minicc: rate }, minProperties: 1, additionalProperties: false }, effectiveFrom: date }, ['name', 'email', 'password', 'rates']) },
+  { method: 'GET', path: '/api/team', scope: 'read', summary: 'Own team tree, prices, period totals and pricing limits/issues', query: period },
+  { method: 'POST', path: '/api/team', scope: 'team:write', summary: 'Create a direct child agent; each rate must not exceed upstream rates throughout its effective period', body: object({ name: { ...text, maxLength: 80 }, email, password, rates: { type: 'object', properties: { gatelink: rate, ai008: rate, minicc: rate }, minProperties: 1, additionalProperties: false }, effectiveFrom: date }, ['name', 'email', 'password', 'rates']) },
   { method: 'PATCH', path: '/api/team/:id', scope: 'team:write', summary: 'Suspend/reactivate a direct child or reset their password', body: { ...object({ active: boolean, newPassword: password }, []), minProperties: 1 } },
-  { method: 'PUT', path: '/api/team/:id/rates', scope: 'team:write', summary: 'Set a direct child price; existing prices change from the next Beijing day', body: object({ provider, rate, effectiveFrom: date }, ['provider', 'rate']) },
+  { method: 'PUT', path: '/api/team/:id/rates', scope: 'team:write', summary: 'Set a direct child price within upstream ceilings and downstream commitments; existing prices change from the next Beijing day', body: object({ provider, rate, effectiveFrom: date }, ['provider', 'rate']) },
   { method: 'GET', path: '/api/connections', scope: 'read', summary: 'Platform capabilities and the calling agent’s settlement prices' },
   { method: 'GET', path: '/api/connections/:id/options', scope: 'read', summary: 'Available onboarding options for one platform' },
   { method: 'GET', path: '/api/proxies', scope: 'read', summary: 'Visible fixed egress proxies, without authentication secrets' },

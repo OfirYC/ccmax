@@ -85,7 +85,7 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | `GET /api/auth/me` | `{user, today}`，当前密钥所属账号及北京时间账单日 |
 | `GET /api/dashboard` | 汇总、余额、每日趋势、团队及平台概况 |
 | `GET /api/accounts` | `{accounts, providers}`；账号包含 `bindings` 和固定代理状态 |
-| `GET /api/team?from=2026-10-01&to=2026-10-18` | `{users, rates, upcoming, period, providers}` |
+| `GET /api/team?from=2026-10-01&to=2026-10-18` | `{users, rates, upcoming, period, providers, pricing}` |
 | `GET /api/connections` | `{connections, providers, today}`，自己的结算价和平台能力 |
 | `GET /api/proxies` | `{proxies}`，无认证密码的代理列表 |
 | `GET /api/usage?from=2026-10-01&to=2026-10-18&page=1` | `{rows, totals, total, page}`，每页 12 条 |
@@ -112,6 +112,10 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 
 已有报价变更从次日北京时间生效，已封账价格保持固定。账单只能使用已核实的日用量，按平台到直属代理再到下一级的顺序确认；提现先冻结可用余额，再由付款人登记打款或驳回。
 
+下级报价按平台实行硬上限，必须小于或等于整条上级链在报价有效期内的折扣。例如上级给你 `0.1`，你只能给下级设置 `0–0.1`，不能设置 `0.1001`。历史起始日和已安排的调价都会检查，上级缺少任何一段生效价格时拒绝报价。上级降价若低于已有或已安排的直属下级报价，也会被拒绝；需先调整下级，不会自动重定价。
+
+`GET /api/team` 的 `pricing.limits[provider]` 返回 `{create, change}`：分别是从今天、次日起持续生效的保守报价上限，以四位十进制字符串返回；缺少上级价格时为 `null`。初始报价回溯日期及已有报价的具体有效区间仍以写入接口校验为准。`pricing.issues` 列出可见团队当前或待生效的异常，格式为 `{userId, provider, effectiveDate}`。旧的倒挂封账记录保持原样，但受影响用量不能新生成或确认结算账单。
+
 接受 `key` 的任务、提现接口支持业务幂等：同一逻辑操作发生网络失败时使用同一 `key` 和完全相同的业务参数，不要把这个 `key` 用在不同请求上。其他写接口不要盲目重试，先查询最终状态。
 
 ## 错误、限流和审计
@@ -121,6 +125,10 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | HTTP / code | 含义 |
 | --- | --- |
 | 400 / `VALIDATION_ERROR` 或 `HTTP_400` | 参数或业务前提不满足 |
+| 400 / `RATE_CAP_EXCEEDED` | 报价超过有效期内的上级价格上限 |
+| 400 / `RATE_FLOOR_VIOLATION` | 降价会低于已有或已安排的下级报价；先调整下级 |
+| 400 / `UPSTREAM_RATE_MISSING` | 报价期间缺少完整的上级平台价格 |
+| 409 / `RATE_HIERARCHY_CONFLICT` | 用量或账单存在层级价格倒挂，需核对后处理 |
 | 401 / `INVALID_API_KEY` | 密钥无效、过期、撤销或所属账号停用 |
 | 403 / `INSUFFICIENT_SCOPE` | 未授予所需权限 |
 | 403 / `SESSION_REQUIRED` | 此接口只允许网页登录 |

@@ -233,7 +233,8 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect(profits.find(r=>r.user_id===b.id)?.profit).toBe('35.00000000');
     expect((await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.9,effectiveFrom:prior()})).statusCode).toBe(400);
     const changed=await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.9});
-    expect(changed.statusCode).toBe(200);expect(changed.json().effectiveDate>today()).toBe(true);
+    expect(changed.statusCode).toBe(400);expect(changed.json().code).toBe('RATE_CAP_EXCEEDED');
+    const allowed=await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.7});expect(allowed.statusCode).toBe(200);expect(allowed.json().effectiveDate>today()).toBe(true);
     await observe(binding.id,'100',true);
     expect((await db.query('SELECT sum(profit_usd) AS profit FROM earnings WHERE user_id=$1',[a.id]))[0].profit).toBe('55.00000000');
     const usage=(await api(cookie,'GET',`/api/usage?provider=minicc&from=${prior()}&to=${prior()}`)).json();
