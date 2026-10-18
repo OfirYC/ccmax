@@ -3,10 +3,12 @@ import type { DB, Row } from './db.js';
 import { assert, dayString, MAX_USD, subtree, sum, today, usd } from './core.js';
 import { assertUsageAccounting } from './financial-integrity.js';
 
-export async function invoiceItems(db: DB, userId: string, from: string, to: string) {
+export async function invoiceItems(db: DB, userId: string, from: string, to: string, automatic=false) {
   return db.query(`SELECT e.* FROM earnings e JOIN usage_days u ON u.id=e.usage_id
     LEFT JOIN invoice_items i ON i.earning_id=e.id WHERE e.user_id=$1 AND u.state='final'
-    AND u.day BETWEEN $2 AND $3 AND i.earning_id IS NULL ORDER BY e.id`, [userId, from, to]);
+    AND u.day BETWEEN $2 AND $3 AND i.earning_id IS NULL
+    AND (NOT $4::boolean OR NOT EXISTS(SELECT 1 FROM billing_entries be WHERE be.usage_id=u.id AND be.state<>'recorded'))
+    ORDER BY e.id`, [userId, from, to, automatic]);
 }
 
 // A review is tied to the exact frozen earning rows, not just rounded totals.

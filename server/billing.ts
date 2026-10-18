@@ -4,7 +4,7 @@ import { AppError, ancestry, assert, audit, dayString, id, MAX_USD, sum, today, 
 import { assertFundingAccounting, assertInvoiceAccounting, assertUsageAccounting, assertWalletAccounting } from './financial-integrity.js';
 import { invoiceItems, invoicePreviewToken } from './invoice-preview.js';
 
-export type UsageInput = { bindingId: string; day: string; rawUsd: string; final: boolean; source: string; evidence?: string };
+export type UsageInput = { bindingId: string; day: string; rawUsd: string; final: boolean; source: string; evidence?: string; sourceAt?: string };
 
 // Daily source values replace provisional observations; they are NEVER added to
 // each other. A finalized account/day is immutable and has exactly one charge.
@@ -30,11 +30,11 @@ export async function ingestUsage(tx: DB, input: UsageInput) {
     WHERE connection_id=$1 AND effective_date<=$2 ORDER BY effective_date DESC LIMIT 1`,[binding.connection_id,input.day]);
   assert(connectionRate,'该平台在所选日期没有已备案的结算折扣，无法安全入账');
   const rootRate=existing?.root_rate??connectionRate.rate;
-  await tx.query(`INSERT INTO usage_days(id,binding_id,day,raw_usd,state,source,evidence,root_rate,finalized_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $5='final' THEN now() ELSE NULL END)
+  await tx.query(`INSERT INTO usage_days(id,binding_id,day,raw_usd,state,source,evidence,root_rate,finalized_at,source_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $5='final' THEN now() ELSE NULL END,$9)
     ON CONFLICT(binding_id,day) DO UPDATE SET raw_usd=EXCLUDED.raw_usd,state=EXCLUDED.state,source=EXCLUDED.source,
-    evidence=EXCLUDED.evidence,finalized_at=EXCLUDED.finalized_at,updated_at=now()`,
-    [usageId,input.bindingId,input.day,usd(raw),'provisional',input.source,input.evidence??null,rootRate]);
+    evidence=EXCLUDED.evidence,source_at=EXCLUDED.source_at,finalized_at=EXCLUDED.finalized_at,updated_at=now()`,
+    [usageId,input.bindingId,input.day,usd(raw),'provisional',input.source,input.evidence??null,rootRate,input.sourceAt??null]);
   if (!binding.owner_id || !binding.ownership_verified) return usageId;
   const chain=await ancestry(tx,binding.owner_id);
   const previous=await tx.query('SELECT * FROM earnings WHERE usage_id=$1',[usageId]);
@@ -66,11 +66,14 @@ export async function ingestUsage(tx: DB, input: UsageInput) {
 }
 
 export async function createInvoice(db: DB, actor: Row, userId: string, from: string, to: string, previewToken?: string) {
+  return db.transaction(tx=>createInvoiceInTransaction(tx,actor,userId,from,to,previewToken));
+}
+
+export async function createInvoiceInTransaction(tx: DB, actor: Row, userId: string, from: string, to: string, previewToken?: string, automatic=false) {
   assert(from<=to && to<today(),'仅可结算已经结束的北京时间日期');
-  return db.transaction(async tx=>{
     const [user]=await tx.query('SELECT * FROM users WHERE id=$1 FOR UPDATE',[userId]);
-    assert(user && (user.id===actor.id || user.parent_id===actor.id),'只能为自己或直属下级生成账单',403);
-    const items=await invoiceItems(tx,userId,from,to);
+    assert(user && (user.id===actor.id || user.parent_id===actor.id || automatic&&actor.role==='owner'),'只能为自己或直属下级生成账单',403);
+    const items=await invoiceItems(tx,userId,from,to,automatic);
     assert(!previewToken || previewToken===invoicePreviewToken(userId,from,to,items),'可开票明细已变化，请刷新预览后重新确认',409);
     assert(items.length,'所选期间没有可结算的已核实用量');
     await assertUsageAccounting(tx,items.map(item=>item.usage_id));
@@ -78,13 +81,13 @@ export async function createInvoice(db: DB, actor: Row, userId: string, from: st
     if(totals.some(amount=>amount.abs().gt(MAX_USD))) throw new AppError(400,'账单金额超出单笔上限，请缩小结算日期范围','AMOUNT_OUT_OF_RANGE');
     const invoiceId=id();
     const number=`CC-${today().replaceAll('-','')}-${invoiceId.slice(0,8).toUpperCase()}`;
-    const [invoice]=await tx.query(`INSERT INTO invoices(id,number,user_id,payer_id,date_from,date_to,gross_usd,downstream_usd,profit_usd,created_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[invoiceId,number,user.id,user.parent_id,from,to,
-      ...totals.map(amount=>usd(amount)),actor.id]);
+    const [estimated]=await tx.query(`SELECT EXISTS(SELECT 1 FROM usage_days WHERE id=ANY($1::text[]) AND source='daily_snapshot') AS value`,[items.map(item=>item.usage_id)]);
+    const [invoice]=await tx.query(`INSERT INTO invoices(id,number,user_id,payer_id,date_from,date_to,gross_usd,downstream_usd,profit_usd,created_by,automatic,estimated)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[invoiceId,number,user.id,user.parent_id,from,to,
+      ...totals.map(amount=>usd(amount)),actor.id,automatic,estimated.value]);
     for (const item of items) await tx.query('INSERT INTO invoice_items(earning_id,invoice_id) VALUES($1,$2)',[item.id,invoiceId]);
-    await audit(tx,actor.id,'invoice.create',invoiceId,{userId,from,to,items:items.length});
+    await audit(tx,actor.id,'invoice.create',invoiceId,{userId,from,to,items:items.length,automatic});
     return invoice;
-  });
 }
 
 export async function confirmInvoice(db: DB, actor: Row, invoiceId: string, reference: string) {

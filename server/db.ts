@@ -3,6 +3,7 @@ import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
 import { hardenSchema, extendProviders, accountProxies, integrationKeys, financialSources, signedSettlementSources } from './migrations.js';
 import { telemetryMigration } from './telemetry.js';
+import { dailyBillingMigration } from './daily-billing-migration.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -123,6 +124,10 @@ export async function migrate(db: DB) {
         PRIMARY KEY(user_id,code_hash)
       )`);
       await tx.query('INSERT INTO migrations(version) VALUES (11)');
+    }
+    if (!done.some(row=>Number(row.version)===12)) {
+      await dailyBillingMigration(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (12)');
     }
   });
 }

@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { ProviderClient } from './providers.js';
+import { ProviderClient, UpstreamError } from './providers.js';
 
 const account=(id:string)=>({id,email:`${id}@example.com`,stats:{daily_cost:'1.25'},status:'active',outbound_proxy_id:'fixed-proxy'});
 const fixedProxy={proxy:'http://user:pass@proxy.example.com:8080',proxyExternalId:'fixed-proxy'};
@@ -35,6 +35,46 @@ describe('upstream adapter data integrity',()=>{
   });
   it('does not turn an absent upstream usage amount into a zero-dollar snapshot',()=>{
     const c=client(()=>({}));expect(()=>c.normalize({id:'one',email:'one@example.com',stats:{}})).toThrow('有效的当日用量');
+  });
+  it('saves snapshot pages independently, isolates invalid accounts and retries a failed page without replaying earlier pages',async()=>{
+    const calls:number[]=[],saved:string[]=[];let retry=true,saveRetry=true;
+    const c=new ProviderClient('ai008',{username:'fixture',password:'fixture'},async url=>{
+      const page=Number(new URL(String(url)).searchParams.get('page'));calls.push(page);
+      if(page===2&&retry){retry=false;return new Response('',{status:503});}
+      return Response.json({accounts:page===1?[account('first'),{...account('bad'),stats:{daily_cost:-1}},account('retry')]:[account('last')],pagination:{total_pages:2,total_rows:4}});
+    });
+    const result=await c.captureSnapshots(async row=>{
+      if(row.id==='retry'&&saveRetry){saveRetry=false;throw new Error('temporary database error');}
+      saved.push(row.id);
+    });
+    expect(calls).toEqual([1,2,2]);expect(saved.sort()).toEqual(['first','last','retry']);
+    expect(result).toEqual({accounts:3,issueCount:1});
+  });
+  it('preserves already captured accounts if a later snapshot page is denied',async()=>{
+    const saved:string[]=[];
+    const c=new ProviderClient('ai008',{username:'fixture',password:'fixture'},async url=>Number(new URL(String(url)).searchParams.get('page'))===1
+      ?Response.json({accounts:[account('kept')],pagination:{total_pages:2,total_rows:2}}):new Response('',{status:403}));
+    await expect(c.captureSnapshots(async row=>{saved.push(row.id);})).rejects.toMatchObject({upstreamStatus:403});
+    expect(saved).toEqual(['kept']);
+  });
+  it('tries the actual Gatelink history permission and requires an exact daily account breakdown',async()=>{
+    const day='2026-10-17',query={from:day,to:day,scopeUserId:'49'},item={date:day,dataStatus:'complete',accounts:[{account_id:'a',cost:'1.23456789'}],usageUsdExact:'1.23456789'};
+    const gate=(body:any,status=200)=>{
+      const c=new ProviderClient('gatelink',{username:'fixture',password:'fixture'},async url=>{
+        const u=new URL(String(url));expect(u.pathname).toBe('/api/admin/usage-settlements');
+        expect(u.searchParams.get('source')).toBe('upstream');expect(u.searchParams.get('scopeUserId')).toBe('49');
+        return Response.json(body,{status});
+      });c.user={id:'49',role:'agent'};return c;
+    };
+    await expect(gate({},403).historicalDay(day)).rejects.toBeInstanceOf(UpstreamError);
+    expect(await gate({query,statsSource:'upstream',items:[item]}).historicalDay(day)).toEqual([{externalId:'a',rawUsd:'1.23456789'}]);
+    for(const body of [
+      {query:{...query,from:'2026-10-16'},statsSource:'upstream',items:[item]},
+      {query,statsSource:'local',items:[item]},
+      {query,statsSource:'upstream',items:[{...item,accounts:undefined}]},
+      {query,statsSource:'upstream',items:[{...item,usageUsdExact:'2'}]},
+      {query,statsSource:'upstream',items:[{...item,dataStatus:'pending'}]},
+    ])await expect(gate(body).historicalDay(day)).rejects.toThrow();
   });
   it('keeps a new Gatelink account with a null counter without blocking valid inventory or inventing usage',async()=>{
     const rows=[{id:'new',submittedEmail:'new@example.com',upstreamDailyCost:null},{id:'valid',submittedEmail:'valid@example.com',upstreamDailyCost:'1.25'}];

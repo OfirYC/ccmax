@@ -9,7 +9,7 @@ import { statefulOAuthCallback } from './oauth-callback.js';
 import { platformNames } from '../shared/platforms.js';
 
 export const PROVIDERS = {
-  gatelink: { name:platformNames.gatelink, url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false,statusRequiresAdmin:true },
+  gatelink: { name:platformNames.gatelink, url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:true,statusRequiresAdmin:true },
   ai008: { name:platformNames.ai008, url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
   minicc: { name:platformNames.minicc, url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
 } as const;
@@ -116,6 +116,53 @@ export class ProviderClient {
       }
       if(total!==undefined) { if(result.length>=Number(total)){assert(result.length===Number(total),'平台账号结果不完整，本次同步未提交',502);return result;}assert(items.length>0,'平台分页提前结束',502);continue; }
       if(items.length<100) return result;
+    }
+    throw new UpstreamError(0,'平台账号超过分页上限，本次同步未提交');
+  }
+  // End-of-day capture commits each account as it arrives. Inventory sync still
+  // requires a complete, valid list; one malformed counter must not prevent
+  // collecting every other account during the limited closing window.
+  async captureSnapshots(consume:(account:UpstreamAccount)=>Promise<void>) {
+    const seen=new Set<string>();
+    let accounts=0,issueCount=0,observed=0,declaredTotal:number|undefined;
+    const readPage=async(path:string)=>{
+      for(let attempt=0;;attempt++) {
+        try {return await this.call(path);}
+        catch(error) {
+          if(attempt>=2 || !(error instanceof UpstreamError) || ![0,429].includes(error.upstreamStatus)&&error.upstreamStatus<500)throw error;
+          await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)));
+        }
+      }
+    };
+    for(let page=1;page<=1000;page++) {
+      const data=await readPage(this.provider==='gatelink'?`/api/submissions?page=${page}&pageSize=100`:this.provider==='minicc'?`/api/accounts?page=${page}&page_size=100`:`/api/admin/oauth-accounts?page_mode=1&page=${page}&page_size=100`);
+      const items=this.provider==='gatelink'?data.items:data.accounts;
+      assert(Array.isArray(items),'平台账号列表格式变化',502);
+      const pages=this.provider==='gatelink'?data.totalPages:this.provider==='minicc'?data.pages:(data.pagination?.total_pages??data.pagination?.totalPages);
+      const total=this.provider==='gatelink'?data.total:this.provider==='minicc'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
+      if(total!==undefined) {
+        assert(Number.isInteger(Number(total))&&Number(total)>=0 && (declaredTotal===undefined||declaredTotal===Number(total)),'平台账号数在分页时发生变化，请重新同步',502);
+        declaredTotal=Number(total);
+      }
+      if(pages!==undefined)assert(Number.isInteger(Number(pages))&&Number(pages)>=0,'平台分页格式变化',502);
+      observed+=items.length;
+      // Small batches limit database pressure while independent platforms have
+      // separate workers. Failed accounts are revisited on the next pass.
+      for(let offset=0;offset<items.length;offset+=4)await Promise.all(items.slice(offset,offset+4).map(async(a:any)=>{
+        try {
+          const remote=this.normalize(a);
+          assert(!seen.has(remote.id),'平台分页出现重复账号，本次同步未提交',502);seen.add(remote.id);
+          assert(remote.dailyUsd!==null&&remote.telemetry?.sourceAt,'平台未返回有效的当日用量，保留上次成功数据',502);
+          try {await consume(remote);}
+          catch(error) {if(error instanceof AppError)throw error;await consume(remote);}
+          accounts++;
+        } catch {issueCount++;}
+      }));
+      if(pages!==undefined?page>=Number(pages):declaredTotal!==undefined?observed>=declaredTotal:items.length<100) {
+        assert(declaredTotal===undefined||observed===declaredTotal,'平台账号结果不完整，本次同步未提交',502);
+        return {accounts,issueCount};
+      }
+      assert(items.length>0,'平台分页提前结束',502);
     }
     throw new UpstreamError(0,'平台账号超过分页上限，本次同步未提交');
   }
@@ -427,7 +474,25 @@ export class ProviderClient {
     assert(account && String(account.outbound_proxy_id||'')===options.proxyExternalId,'上游实际代理未匹配，请核对后重试',502);
   }
   async historicalDay(day:string):Promise<{externalId:string;rawUsd:string}[]> {
-    assert(PROVIDERS[this.provider].historicalUsage,'当前平台没有历史结算接口权限，请导入上游确认的日账单');
+    assert(/^\d{4}-\d{2}-\d{2}$/.test(day)&&Number.isFinite(Date.parse(day))&&new Date(day+'T00:00:00Z').toISOString().slice(0,10)===day,'日期无效');
+    if(this.provider==='gatelink') {
+      // Probe the actual permission, rather than rejecting all agent logins.
+      // The public Gatelink UI uses this endpoint for completed Beijing days.
+      assert(this.user?.id,'请先登录平台再读取历史账单');
+      const query=new URLSearchParams({scopeType:'user',scopeUserId:String(this.user.id),includeChildren:'true',source:'upstream',from:day,to:day});
+      const data=await this.call(`/api/admin/usage-settlements?${query}`);
+      assert(data.query?.from===day && data.query?.to===day && String(data.query?.scopeUserId)===String(this.user.id)
+        && (data.statsSource??data.source)==='upstream','Gatelink 未返回可核实日期和范围的上游日账单',502);
+      const days=Array.isArray(data.items)?data.items:[];
+      assert(days.length===1 && days[0].date===day && days[0].dataStatus==='complete','历史查询尚未完成，请稍后重新查询',502);
+      // Team totals or member totals cannot be allocated to Claude accounts.
+      // Only an explicit account breakdown is usable for automatic settlement.
+      assert(Array.isArray(days[0].accounts),'Gatelink 日账单未提供逐账号金额，无法自动分配给代理',502);
+      const rows=historicalRows(days[0].accounts);
+      const total=upstreamAmount(days[0].usageUsdExact,'Gatelink 日账单合计缺失');
+      assert(rows.reduce((n,r)=>n.plus(r.rawUsd),new Decimal(0)).eq(total),'Gatelink 逐账号金额与日账单合计不一致',502);
+      return rows;
+    }
     if(this.provider==='minicc') {
       const query=new URLSearchParams({since:new Date(`${day}T00:00:00+08:00`).toISOString(),until:new Date(`${day}T23:59:59+08:00`).toISOString()});
       let data:any;

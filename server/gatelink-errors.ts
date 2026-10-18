@@ -44,6 +44,7 @@ export async function gatelinkFailure(response:Response,path:string) {
   const operation=pathname==='/api/auth/login'?'登录'
     :pathname==='/api/settings/submission'?'读取上号配置'
     :pathname==='/api/submissions'?'同步账号'
+    :pathname==='/api/admin/usage-settlements'?'读取历史日账单'
     :pathname==='/api/oauth-submissions/authorize'?'生成授权链接'
     :pathname==='/api/oauth-submissions/exchange'?'提交授权回调'
     :/^\/api\/admin\/accounts\/[^/]+\/enabled$/.test(pathname)?'修改账号状态':'请求';

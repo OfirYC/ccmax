@@ -2,9 +2,11 @@ import type { DB, Row } from './db.js';
 import { createHash } from 'node:crypto';
 import { assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
-import { ProviderClient, type ProviderKey, type UpstreamAccount } from './providers.js';
+import { ProviderClient, UpstreamError, type ProviderKey, type UpstreamAccount } from './providers.js';
 import { accountProxy, requireConsistentBindings } from './proxies.js';
 import { saveTelemetry } from './telemetry.js';
+import { failDailyBilling, recordDailyStatement } from './daily-billing.js';
+import { saveBillingSnapshot, snapshotDay } from './billing-snapshots.js';
 
 export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:string,kind:string,payload:object,key:string) {
   const subject=(payload as any).accountId??(payload as any).bindingId??(payload as any).day??null;
@@ -18,8 +20,8 @@ export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:stri
   const [job]=await db.query(`INSERT INTO jobs(id,connection_id,requested_by,kind,payload,idempotency_key,subject_id,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT DO NOTHING RETURNING id,state`,[id(),connectionId,actor,kind,box.encrypt(payload),key,subject,hash]);
   if(job) return job;
-  if(kind==='sync') {
-    const [running]=await db.query(`SELECT id,state FROM jobs WHERE connection_id=$1 AND kind='sync' AND state IN ('queued','running') LIMIT 1`,[connectionId]);
+  if(['sync','daily_billing','billing_snapshot'].includes(kind)) {
+    const [running]=await db.query(`SELECT id,state FROM jobs WHERE connection_id=$1 AND kind=$2 AND ($2<>'daily_billing' OR subject_id=$3) AND state IN ('queued','running') LIMIT 1`,[connectionId,kind,subject]);
     if(running)return running;
   }
   const retry=await duplicate();assert(retry,'此账号已有正在执行的上号任务，请等待完成',409);return retry;
@@ -47,20 +49,28 @@ export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,ex
     [bound]=await tx.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1 RETURNING *',[bound.id,verified]);
   }
   if(remote.telemetry)await saveTelemetry(tx,bound.id,remote.telemetry);
+  await saveBillingSnapshot(tx,bound.id,remote);
   return bound;
 }
 
-export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:any)=>new ProviderClient(p,c)) {
+export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:any)=>new ProviderClient(p,c),kinds?:string[]) {
   let stopped=false,busy=false;
   async function runOne():Promise<boolean> {
     const job=await db.transaction(async tx=>{
-      const [next]=await tx.query(`SELECT * FROM jobs WHERE state='queued' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`);
+      const [next]=await tx.query(`SELECT * FROM jobs WHERE state='queued' AND ($1::text[] IS NULL OR kind=ANY($1::text[])) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,[kinds??null]);
       if(!next) return null;
-      const [claimed]=await tx.query(`UPDATE jobs SET state='running',started_at=now() WHERE id=$1 RETURNING *`,[next.id]);return claimed;
+      const [claimed]=await tx.query(`UPDATE jobs SET state='running',started_at=now(),heartbeat_at=now() WHERE id=$1 RETURNING *`,[next.id]);return claimed;
     });
     if(!job) return false;
     let recoveryStarted=false;
+
+    // Snapshot leases expire quickly after a process stops. A live collector
+    // renews its lease even while an upstream page request is in flight.
+    const heartbeat=job.kind==='billing_snapshot'?setInterval(()=>{
+      db.query("UPDATE jobs SET heartbeat_at=now() WHERE id=$1 AND state='running'",[job.id]).catch(()=>{});
+    },10000):undefined;
     try {
+      if(job.kind==='daily_billing') await db.query(`UPDATE billing_days SET state='running',attempts=attempts+1,last_attempt_at=now(),error=NULL WHERE connection_id=$1 AND day=$2`,[job.connection_id,job.subject_id]);
       const [connection]=await db.query('SELECT * FROM connections WHERE id=$1',[job.connection_id]);
       assert(connection?.enabled,'平台连接已停用');
       const [actor]=await db.query('SELECT * FROM users WHERE id=$1',[job.requested_by]);
@@ -176,6 +186,49 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         await client.verifyAccountStatus(binding.external_id,binding.email,payload.enabled);
         await db.query('UPDATE bindings SET status=$2 WHERE id=$1',[binding.id,payload.enabled?'active':'disabled']);
         result={enabled:payload.enabled};
+      } else if(job.kind==='billing_snapshot') {
+        assert(actor.role==='owner','仅管理员可以同步共享主账号');
+        const bindings=await db.query('SELECT b.id,b.external_id,a.email FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.connection_id=$1',[connection.id]);
+        const ids=new Map(bindings.map(b=>[b.external_id,b]));
+        const captured=await client.captureSnapshots(async remote=>{
+          let bound=ids.get(remote.id);
+          if(bound)assert(bound.email===remote.email,'上游账号归属冲突',409);
+          else bound=await db.transaction(tx=>saveBinding(tx,connection,remote));
+          assert(await saveBillingSnapshot(db,bound.id,remote),'平台未返回有效的当日用量，保留上次成功数据',502);
+        });
+        result={...captured,state:captured.issueCount?'needs_attention':'succeeded'};
+      } else if(job.kind==='daily_billing') {
+        assert(actor.role==='owner','仅管理员可读取历史对账数据');
+        assert(payload.day<today(),'只能查询已结束日期');
+        let rows:{externalId:string;rawUsd:string}[];
+        let fallback:Awaited<ReturnType<typeof snapshotDay>>|undefined,sourceError:string|undefined;
+        try {rows=await client.historicalDay(payload.day);}
+        catch(error) {
+          // A denied/missing history endpoint can use the expressly configured
+          // snapshot contract. Invalid totals and partial history cannot.
+          if(!(error instanceof UpstreamError) || ![403,404].includes(error.upstreamStatus))throw error;
+          const [official]=await db.query(`SELECT s.rows FROM billing_days d JOIN upstream_statements s ON s.id=d.statement_id
+            WHERE d.connection_id=$1 AND d.day=$2 AND s.basis='upstream'`,[connection.id,payload.day]);
+          if(official)rows=official.rows;
+          else {
+            try {fallback=await snapshotDay(db,connection,payload.day);}
+            catch(snapshotError) {throw new UpstreamError(error.upstreamStatus,`${error.message}；${snapshotError instanceof Error?snapshotError.message:'日终快照不可用'}`);}
+            rows=fallback.rows;sourceError=error.message;
+          }
+        }
+        // Regular account sync normally supplies these bindings. If a newly
+        // discovered historical identity is missing, refresh inventory once;
+        // inability to read today's optional counters cannot discard history.
+        const bindings=await db.query('SELECT external_id FROM bindings WHERE connection_id=$1',[connection.id]);
+        if(rows.some(r=>!bindings.some(b=>b.external_id===r.externalId))) {
+          try {
+            const accounts=await client.listAccounts();
+            await db.transaction(async tx=>{for(const remote of accounts)await saveBinding(tx,connection,remote);});
+          } catch { /* Missing identities remain archived and are retried. */ }
+        }
+        result=await recordDailyStatement(db,connection,actor,payload.day,rows,fallback?{
+          basis:'snapshot',autoFinalize:connection.snapshot_billing,issues:fallback.issues,sourceError,
+        }:{});
       } else if(job.kind==='reconcile') {
         assert(actor.role==='owner','仅管理员可读取历史对账数据');
         assert(payload.day<today(),'只能查询已结束日期');
@@ -183,7 +236,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         const bindings=await db.query('SELECT id,external_id FROM bindings WHERE connection_id=$1',[connection.id]);
         result={day:payload.day,candidates:rows.map(r=>({bindingId:bindings.find(b=>b.external_id===r.externalId)?.id??null,externalId:r.externalId,day:payload.day,rawUsd:r.rawUsd})),reviewRequired:true};
       }
-      await db.query(`UPDATE jobs SET state='succeeded',result=$2,payload=$3,completed_at=now() WHERE id=$1`,[job.id,JSON.stringify(result),box.encrypt({})]);
+      await db.query(`UPDATE jobs SET state=$4,result=$2,payload=$3,completed_at=now() WHERE id=$1`,[job.id,JSON.stringify(result),box.encrypt({}),result.state==='needs_attention'?'needs_attention':'succeeded']);
     } catch(error) {
       const message=error instanceof Error?error.message:'任务执行失败';
       // OAuth codes and credential imports are one-use. Never blindly retry an
@@ -197,7 +250,8 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         } catch { /* the job error already records an encryption/configuration failure */ }
       }
       if(job.kind==='sync') await db.query(`UPDATE connections SET status='error',last_error=$2 WHERE id=$1`,[job.connection_id,message]);
-    }
+      if(job.kind==='daily_billing') await failDailyBilling(db,job.connection_id,job.subject_id,message);
+    } finally {if(heartbeat)clearInterval(heartbeat);}
     return true;
   }
   async function submissionOptions(client:ProviderClient,connection:Row,proxy:any,options:any) {
@@ -220,6 +274,8 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
     async tick() { if(stopped||busy) return;busy=true;try{for(let i=0;i<10&&!stopped;i++){if(!await runOne())break;}}finally{busy=false;} },
     async recover() {
       // Only stale leases are recovered: another replica may be doing live work.
+      await db.query(`UPDATE jobs SET state='failed',error='快照任务执行中断，下一轮自动重试',payload=$1,completed_at=now()
+        WHERE kind='billing_snapshot' AND state='running' AND COALESCE(heartbeat_at,started_at)<now()-interval '90 seconds'`,[box.encrypt({})]);
       await db.query(`UPDATE jobs SET state='needs_attention',error='任务执行中断，请同步上游账号核对后重新提交',payload=$1,completed_at=now()
         WHERE state='running' AND started_at<now()-interval '30 minutes'`,[box.encrypt({})]);
       await db.query(`DELETE FROM sessions WHERE expires_at<now()`);

@@ -258,7 +258,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect(job.kind).toBe('import_rt');expect(job.payload).not.toContain('owned-private-refresh-token');
     expect((await api(cookie,'POST',`/api/connections/${cid}/reconcile`,{day:prior(),key:id()})).statusCode).toBe(200);
     const gate=await connection('gatelink');
-    expect((await api(cookie,'POST',`/api/connections/${gate.id}/reconcile`,{day:prior(),key:id()})).statusCode).toBe(400);
+    expect((await api(cookie,'POST',`/api/connections/${gate.id}/reconcile`,{day:prior(),key:id()})).statusCode).toBe(200);
   });
 
   it('does not grant earnings, platform data or control from a guessed email reservation',async()=>{

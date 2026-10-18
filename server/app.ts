@@ -15,6 +15,7 @@ import { assertWalletAccounting } from './financial-integrity.js';
 import { auditFinance } from './finance-audit.js';
 import { previewInvoice } from './invoice-preview.js';
 import { registerTelemetry } from './telemetry-routes.js';
+import { registerBilling } from './billing-routes.js';
 import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
 import { authorizationState } from '../shared/oauth.js';
@@ -101,6 +102,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   keys.register(app);
   registerTelemetry(app,db,connectionName);
+  registerBilling(app,db,box);
   app.get('/health',async()=>{await db.query('SELECT 1');return {status:'ok',service:'ccmax'};});
   app.post('/api/auth/login',{config:{rateLimit:{max:8,timeWindow:'1 minute'}}},async(req,reply)=>{
     const data=z.object({email,password:z.string().min(1).max(200)}).parse(req.body);
@@ -193,7 +195,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
 
   app.get('/api/connections',async req=>{
     const current=today(),root=req.user.role==='owner';
-    const rows=await db.query(`SELECT c.id,c.provider,c.name,c.enabled,c.status,c.last_error,c.last_sync_at,
+    const rows=await db.query(`SELECT c.id,c.provider,c.name,c.enabled,c.status,c.last_error,c.last_sync_at,c.snapshot_billing,
       COALESCE((SELECT r.rate FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1),c.payout_rate) AS payout_rate,
       (SELECT r.effective_date::text FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1) AS payout_effective_date,
       (SELECT r.rate FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS upcoming_payout_rate,
@@ -212,11 +214,11 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.post('/api/connections',async req=>{
     await requireOwner(req.user);
-    const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional()}).parse(req.body);
+    const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional(),snapshotBilling:z.boolean().optional()}).parse(req.body);
     const connectionId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     await db.transaction(async tx=>{
       await lockPricing(tx);
-      await tx.query('INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,$2,$3,$4,$5)',[connectionId,d.provider,d.name,box.encrypt({username:d.username,password:d.password}),d.payoutRate]);
+      await tx.query('INSERT INTO connections(id,provider,name,credentials,payout_rate,snapshot_billing) VALUES($1,$2,$3,$4,$5,$6)',[connectionId,d.provider,d.name,box.encrypt({username:d.username,password:d.password}),d.payoutRate,d.snapshotBilling??d.provider==='gatelink']);
       await tx.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)',[id(),connectionId,d.payoutRate,effective,req.user.id]);
       await audit(tx,req.user.id,'connection.create',connectionId,{provider:d.provider});
     });
@@ -225,18 +227,18 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.patch('/api/connections/:id',async req=>{
     await requireOwner(req.user);const target=identifier.parse((req.params as Row).id);
-    const d=z.object({enabled:z.boolean().optional(),payoutRate:rate.optional(),username:z.string().max(200).optional(),password:z.string().min(1).max(500).optional(),name:z.string().trim().min(1).max(80).optional()}).parse(req.body);
+    const d=z.object({enabled:z.boolean().optional(),payoutRate:rate.optional(),username:z.string().max(200).optional(),password:z.string().min(1).max(500).optional(),name:z.string().trim().min(1).max(80).optional(),snapshotBilling:z.boolean().optional()}).parse(req.body);
     await db.transaction(async tx=>{
       await lockPricing(tx);
       const effective=nextDay();
       const [c]=await tx.query('SELECT * FROM connections WHERE id=$1 FOR UPDATE',[target]);assert(c,'平台连接不存在',404);
       const credentials=box.decrypt(c.credentials);
-      await tx.query('UPDATE connections SET enabled=$2,credentials=$3,name=$4 WHERE id=$1',[target,d.enabled??c.enabled,box.encrypt({username:d.username??credentials.username,password:d.password??credentials.password}),d.name??c.name]);
+      await tx.query('UPDATE connections SET enabled=$2,credentials=$3,name=$4,snapshot_billing=$5 WHERE id=$1',[target,d.enabled??c.enabled,box.encrypt({username:d.username??credentials.username,password:d.password??credentials.password}),d.name??c.name,d.snapshotBilling??c.snapshot_billing]);
       if(d.payoutRate!==undefined) {
         await tx.query(`INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)
           ON CONFLICT(connection_id,effective_date) DO UPDATE SET rate=EXCLUDED.rate,created_by=EXCLUDED.created_by,created_at=now()`,[id(),target,d.payoutRate,effective,req.user.id]);
       }
-      await audit(tx,req.user.id,'connection.update',target,{enabled:d.enabled,payoutRate:d.payoutRate});
+      await audit(tx,req.user.id,'connection.update',target,{enabled:d.enabled,payoutRate:d.payoutRate,snapshotBilling:d.snapshotBilling});
     });return {ok:true};
   });
   app.get('/api/connections/:id/options',async req=>{
@@ -473,13 +475,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const [totals]=await db.query(`SELECT count(*) AS count,COALESCE(sum(u.raw_usd),0) AS raw_usd,COALESCE(sum(e.gross_usd),0) AS gross_usd,
       COALESCE(sum(e.downstream_usd),0) AS downstream_usd,COALESCE(sum(e.profit_usd),0) AS profit_usd ${source}`,params);
     if(exporting)assert(Number(totals.count)<=100000,'导出超过 100,000 条，请缩小日期或平台范围；未导出截断账单',400);
-    const rows=await db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.evidence,u.updated_at,b.id AS binding_id,b.connection_id,c.provider,c.name AS connection_name,
+    const rows=await db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.source_at,u.evidence,u.updated_at,b.id AS binding_id,b.connection_id,c.provider,c.name AS connection_name,
       a.email,a.owner_id,a.ownership_verified,o.name AS owner_name,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd ${source}
       ORDER BY u.day DESC,a.email,u.id LIMIT $8 OFFSET $9`,[...params,exporting?100000:12,exporting?0:(q.page-1)*12]);
     return {rows:publicConnectionRows(user,rows).map(({evidence,...r})=>({...r,...(user.role==='owner'?{evidence}:{})})),totals,total:Number(totals.count),page:q.page};
   }
   app.get('/api/usage',async req=>usageRows(req.user,req.query));
-  app.get('/api/usage/export',async(req,reply)=>{const {rows}=await usageRows(req.user,req.query,true);return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-usage.csv"').send(csv(rows,[['day','日期（北京时间）'],['email','账号'],['connection_name','平台'],['raw_usd','平台账单 USD'],['rate','结算折扣'],['gross_usd','我的应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','我的利润 USD'],['state','核实状态']]));});
+  app.get('/api/usage/export',async(req,reply)=>{const {rows}=await usageRows(req.user,req.query,true);return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-usage.csv"').send(csv(rows,[['day','日期（北京时间）'],['email','账号'],['connection_name','平台'],['raw_usd','平台账单 USD'],['rate','结算折扣'],['gross_usd','我的应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','我的利润 USD'],['state','核实状态'],['source','金额来源'],['source_at','数据截止时间']]));});
   app.post('/api/usage/import',async req=>{
     await requireOwner(req.user);
     const d=z.object({evidence:z.string().trim().min(5).max(2000),rows:z.array(z.object({bindingId:identifier,day:date,rawUsd:money})).min(1).max(1000)}).parse(req.body);
@@ -554,9 +556,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.get('/api/invoices/:id/export',async(req,reply)=>{
     const invoiceId=identifier.parse((req.params as Row).id),[inv]=await db.query('SELECT * FROM invoices WHERE id=$1',[invoiceId]);assert(inv&&(inv.user_id===req.user.id||inv.payer_id===req.user.id),'无权查看账单',403);
-    const items=await db.query(`SELECT u.day,a.email,c.id AS connection_id,c.provider,c.name AS platform,u.raw_usd,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd FROM invoice_items i JOIN earnings e ON e.id=i.earning_id
+    const items=await db.query(`SELECT u.day,u.source,u.source_at,a.email,c.id AS connection_id,c.provider,c.name AS platform,u.raw_usd,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd FROM invoice_items i JOIN earnings e ON e.id=i.earning_id
       JOIN usage_days u ON u.id=e.usage_id JOIN bindings b ON b.id=u.binding_id JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id WHERE i.invoice_id=$1 ORDER BY u.day,a.email`,[invoiceId]);
-    return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition',`attachment; filename="${inv.number}.csv"`).send(csv(items.map(c=>({...c,platform:connectionName(req.user,c.provider,c.connection_id,c.platform)})),[['day','日期'],['email','账号'],['platform','平台'],['raw_usd','账单 USD'],['rate','折扣'],['gross_usd','应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','利润 USD']]));
+    return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition',`attachment; filename="${inv.number}.csv"`).send(csv(items.map(c=>({...c,platform:connectionName(req.user,c.provider,c.connection_id,c.platform),billing_basis:c.source==='daily_snapshot'?'快照预估':c.source==='upstream_daily'?'上游完整日账单':'人工核实日账单'})),[['day','日期'],['email','账号'],['platform','平台'],['raw_usd','账单 USD'],['rate','折扣'],['gross_usd','应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','利润 USD'],['billing_basis','账单依据'],['source_at','数据截止时间']]));
   });
   app.post('/api/withdrawals',async req=>{
     const d=z.object({amount:money,method:z.string().trim().min(1).max(80),destination:z.string().trim().min(3).max(500),key}).parse(req.body);const w=await requestWithdrawal(db,req.user,d.amount,d.method,d.destination,d.key,box);return {...w,destination:withdrawalDestination(box,w.destination)};
