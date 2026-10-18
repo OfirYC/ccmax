@@ -9,6 +9,7 @@ import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdr
 import { enqueue } from './worker.js';
 import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './providers.js';
 import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings } from './proxies.js';
+import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -24,6 +25,7 @@ const connectionName=(user:Row,provider:ProviderKey,connectionId:string,internal
 const publicConnectionRows=(user:Row,rows:Row[]):Row[]=>rows.map(r=>({...r,connection_name:connectionName(user,r.provider,r.connection_id,r.connection_name)}));
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const optionSchema=z.object({accountType:z.enum(['speed','stable','team','max','pro']).optional(),policyTemplateId:z.string().max(100).optional(),groupIds:z.array(z.string().max(100)).max(30).optional(),ccTemplateId:z.string().max(100).optional()}).strict();
+const batchPricingSchema=z.object({provider,userIds:z.array(identifier).min(1).max(500),mode:z.enum(['fixed','scale','cap']),value:rate.optional()}).strict().refine(d=>d.mode==='cap'||d.value!==undefined,'请填写批量调价的折扣或比例');
 
 export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string;production?:boolean;logger?:boolean}) {
   const box=secretBox(config.encryptionKey);
@@ -105,10 +107,17 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
     return {users,rates,upcoming,period:q,providers:PROVIDERS};
   });
+  app.get('/api/team/pricing',async req=>pricingReport(db,req.user));
+  app.post('/api/team/rates/preview',async req=>previewBatchPricing(db,req.user,batchPricingSchema.parse(req.body)));
+  app.post('/api/team/rates/batch',async req=>{
+    const {snapshot,acknowledgeRisk,...input}=z.object({snapshot:z.string().regex(/^[a-f0-9]{64}$/),acknowledgeRisk:z.boolean().default(false)}).passthrough().parse(req.body);
+    return applyBatchPricing(db,req.user,batchPricingSchema.parse(input),snapshot,acknowledgeRisk);
+  });
   app.post('/api/team',async req=>{
     const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.partialRecord(provider,rate).refine(v=>Object.keys(v).length>0,'请至少设置一个平台价格'),effectiveFrom:date.optional()}).parse(req.body);
     const hash=await hashPassword(d.password),userId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     return db.transaction(async tx=>{
+      await lockPricing(tx);
       const [u]=await tx.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING *',[userId,req.user.id,d.email,d.name,hash]);
       for(const [p,value] of Object.entries(d.rates)) await tx.query('INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[id(),userId,p,value,effective,req.user.id]);
       await audit(tx,req.user.id,'team.create',userId,{name:d.name});return {user:publicUser(u)};
@@ -129,6 +138,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const target=identifier.parse((req.params as Row).id);
     const d=z.object({provider,rate,effectiveFrom:date.optional()}).parse(req.body);
     return db.transaction(async tx=>{
+      await lockPricing(tx);
       await requireDirect(tx,req.user,target);
       await tx.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[target]);
       const [existing]=await tx.query('SELECT id FROM rates WHERE user_id=$1 AND provider=$2 LIMIT 1',[target,d.provider]);
@@ -165,6 +175,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional()}).parse(req.body);
     const connectionId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     await db.transaction(async tx=>{
+      await lockPricing(tx);
       await tx.query('INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,$2,$3,$4,$5)',[connectionId,d.provider,d.name,box.encrypt({username:d.username,password:d.password}),d.payoutRate]);
       await tx.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)',[id(),connectionId,d.payoutRate,effective,req.user.id]);
       await audit(tx,req.user.id,'connection.create',connectionId,{provider:d.provider});
@@ -173,9 +184,11 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     return {id:connectionId,job};
   });
   app.patch('/api/connections/:id',async req=>{
-    await requireOwner(req.user);const target=identifier.parse((req.params as Row).id),effective=nextDay();
+    await requireOwner(req.user);const target=identifier.parse((req.params as Row).id);
     const d=z.object({enabled:z.boolean().optional(),payoutRate:rate.optional(),username:z.string().max(200).optional(),password:z.string().min(1).max(500).optional(),name:z.string().trim().min(1).max(80).optional()}).parse(req.body);
     await db.transaction(async tx=>{
+      await lockPricing(tx);
+      const effective=nextDay();
       const [c]=await tx.query('SELECT * FROM connections WHERE id=$1 FOR UPDATE',[target]);assert(c,'平台连接不存在',404);
       const credentials=box.decrypt(c.credentials);
       await tx.query('UPDATE connections SET enabled=$2,credentials=$3,name=$4 WHERE id=$1',[target,d.enabled??c.enabled,box.encrypt({username:d.username??credentials.username,password:d.password??credentials.password}),d.name??c.name]);

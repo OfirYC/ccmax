@@ -18,7 +18,7 @@ export function RateBadge({value}:{value:any}) {
   return <span className={`rate-value${missing?' rate-missing':''}`}>{missing?t('未定价'):`× ${Number(value).toFixed(4)}`}</span>;
 }
 
-export function RateField({name,label,defaultValue,hint,recipient='settlement'}:{name:string;label:string;defaultValue?:any;hint?:string;recipient?:'self'|'downstream'|'settlement'}) {
+export function RateField({name,label,defaultValue,hint,recipient='settlement',ceiling}:{name:string;label:string;defaultValue?:any;hint?:string;recipient?:'self'|'downstream'|'settlement';ceiling?:string|null}) {
   useLocale();
   const [value,setValue]=useState(defaultValue===undefined||defaultValue===null?'':String(defaultValue));
   const valid=value.trim()!==''&&Number.isFinite(Number(value))&&Number(value)>=0&&Number(value)<=1;
@@ -26,5 +26,6 @@ export function RateField({name,label,defaultValue,hint,recipient='settlement'}:
   return <div className="price-field">
     <Field label={label} hint={hint}><input className="rate-input" name={name} aria-label={label} type="number" min="0" max="1" step="0.0001" required placeholder="0.1000" value={value} onChange={e=>setValue(e.target.value)}/></Field>
     <div className="rate-preview" aria-live="polite"><span>{example}</span>{valid?<Amount value={Number(value)*100} digits={2} tone="settlement"/>:<span className="rate-preview-empty">{t('输入 0–1 的折扣')}</span>}</div>
+    {valid&&ceiling!==null&&ceiling!==undefined&&Number(value)>Number(ceiling)&&<p className="rate-loss-warning" role="status">{t('高于我的次日应收折扣，每 $100 账单预计亏损 {0}。',[money((Number(value)-Number(ceiling))*100,4)])}</p>}
   </div>;
 }

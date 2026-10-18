@@ -5,9 +5,9 @@ test('owner and agent complete team, usage, settlement and withdrawal flows',asy
  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(/Content Security Policy|violates the following/i.test(message.text()))errors.push(message.text());});
  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
  await expect(page.getByRole('heading',{name:'你好，平台管理员'})).toBeVisible();
- await page.getByRole('link',{name:'代理团队',exact:true}).click();await expect(page.getByText('测试下级',{exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'团队平台账单'})).toBeVisible();
+ await page.getByRole('link',{name:'代理团队',exact:true}).click();await expect(page.locator('.team-members-panel').getByText('测试下级',{exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'团队平台账单'})).toBeVisible();
  await page.getByRole('button',{name:'创建直属下级'}).click();
- await page.getByLabel('成员名称').fill('浏览器代理');await page.getByLabel('登录邮箱').fill('browser@example.com');await page.getByLabel('初始登录密码').fill('browser-password');await page.getByLabel('Gatelink 结算折扣').fill('0.2');await page.getByLabel('AI008 结算折扣').fill('0.1');await page.getByLabel('Mini CC Gateway 结算折扣').fill('0.15');await page.getByRole('button',{name:'创建下级账号',exact:true}).click();await expect(page.getByText('浏览器代理',{exact:true})).toBeVisible();
+ await page.getByLabel('成员名称').fill('浏览器代理');await page.getByLabel('登录邮箱').fill('browser@example.com');await page.getByLabel('初始登录密码').fill('browser-password');await page.getByLabel('Gatelink 结算折扣').fill('0.2');await page.getByLabel('AI008 结算折扣').fill('0.1');await page.getByLabel('Mini CC Gateway 结算折扣').fill('0.15');await page.getByRole('button',{name:'创建下级账号',exact:true}).click();await expect(page.locator('.team-members-panel').getByText('浏览器代理',{exact:true})).toBeVisible();
  await page.getByRole('columnheader',{name:'Mini CC Gateway 折扣'}).waitFor();
  await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(page.getByRole('heading',{name:'Mini CC Test'})).toBeVisible();
  await page.getByRole('button',{name:'添加连接',exact:true}).click();await page.getByLabel('平台',{exact:true}).selectOption('minicc');await expect(page.getByLabel('平台',{exact:true})).toHaveValue('minicc');await page.getByRole('button',{name:'取消',exact:true}).click();
@@ -17,8 +17,8 @@ test('owner and agent complete team, usage, settlement and withdrawal flows',asy
  await page.getByRole('link',{name:'利润提现',exact:true}).click();await page.getByRole('button',{name:'提取平台利润',exact:true}).click();await page.getByLabel('提现金额（USD）').fill('10');await page.getByLabel('收款信息').fill('test-only-destination');await page.getByRole('button',{name:'创建利润提取记录',exact:true}).click();await expect(page.locator('tbody').first()).toContainText('test-only-destination');
  await page.getByRole('button',{name:'记录已提取',exact:true}).click();await page.getByLabel('付款凭证 / 交易流水号').fill('manual-transfer-reference');await page.getByRole('button',{name:'确认已打款',exact:true}).click();await expect(page.locator('tbody').first()).toContainText('已打款');
  await page.locator('.user-card').click();await page.getByLabel('登录邮箱').fill('agent@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-agent-password');await page.getByRole('button',{name:'进入工作空间'}).click();
- await page.getByRole('link',{name:'代理团队',exact:true}).click();await expect(page.getByText('测试下级',{exact:true})).toBeVisible();await expect(page.getByText('浏览器代理',{exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'创建直属下级'}).click();await page.getByLabel('成员名称').fill('代理的下级');await page.getByLabel('登录邮箱').fill('nested@example.com');await page.getByLabel('初始登录密码').fill('nested-password');await page.getByLabel('Gatelink 结算折扣').fill('0.1');await page.getByLabel('AI008 结算折扣').fill('0.1');await page.getByLabel('Mini CC Gateway 结算折扣').fill('0.15');await page.getByRole('button',{name:'创建下级账号',exact:true}).click();await expect(page.getByText('代理的下级',{exact:true})).toBeVisible();
+ await page.getByRole('link',{name:'代理团队',exact:true}).click();await expect(page.locator('.team-members-panel').getByText('测试下级',{exact:true})).toBeVisible();await expect(page.locator('.team-members-panel').getByText('浏览器代理',{exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'创建直属下级'}).click();await page.getByLabel('成员名称').fill('代理的下级');await page.getByLabel('登录邮箱').fill('nested@example.com');await page.getByLabel('初始登录密码').fill('nested-password');await page.getByLabel('Gatelink 结算折扣').fill('0.1');await page.getByLabel('AI008 结算折扣').fill('0.1');await page.getByLabel('Mini CC Gateway 结算折扣').fill('0.15');await page.getByRole('button',{name:'创建下级账号',exact:true}).click();await expect(page.locator('.team-members-panel').getByText('代理的下级',{exact:true})).toBeVisible();
  await page.getByRole('link',{name:'账号管理',exact:false}).first().click();await expect(page.getByText('claude-fixture@example.com',{exact:true})).toBeVisible();
  await page.getByRole('link',{name:'设置与审计',exact:true}).click();await expect(page.getByRole('heading',{name:'设置与审计',exact:true})).toBeVisible();await page.getByRole('link',{name:'账号管理',exact:false}).first().click();
  await page.screenshot({path:'test-results/workspace-desktop.png',fullPage:true});
@@ -31,9 +31,9 @@ test('platform management hides upstream identities, displays personal prices an
  await expect(page.getByRole('heading',{name:'你好，平台管理员'})).toBeVisible();
  const created=await page.request.post('/api/team',{headers:{'x-ccmax-request':'1'},data:{name:'价格核查代理',email:'pricing-browser@example.com',password:'pricing-browser-password',rates:{gatelink:0,ai008:0.2,minicc:0.15},effectiveFrom:'1970-01-01'}});expect(created.ok()).toBe(true);
  await page.getByRole('link',{name:'代理团队',exact:true}).click();
- await page.getByRole('row').filter({hasText:'价格核查代理'}).getByRole('button',{name:'定价',exact:true}).click();
+ await page.locator('.team-members-panel').getByRole('row').filter({hasText:'价格核查代理'}).getByRole('button',{name:'定价',exact:true}).click();
  await page.getByLabel('AI008 结算折扣',{exact:true}).fill('0.25');await page.getByRole('button',{name:'保存折扣',exact:true}).click();
- await expect(page.getByRole('row').filter({hasText:'价格核查代理'})).toContainText('待生效 × 0.2500');
+ await expect(page.locator('.team-members-panel').getByRole('row').filter({hasText:'价格核查代理'})).toContainText('待生效 × 0.2500');
  await page.getByRole('link',{name:'平台管理',exact:true}).click();
  const aiCard=page.locator('.connection-card').filter({has:page.locator('.platform-mark.ai008')});
  await expect(aiCard.getByRole('heading',{name:'private-upstream-ai008@example.com',exact:true})).toBeVisible();
