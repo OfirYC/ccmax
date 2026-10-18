@@ -38,8 +38,15 @@ test('platform management hides upstream identities, displays personal prices an
  await expect(page.locator('.team-members-panel').getByRole('row').filter({hasText:'价格核查代理'})).toContainText('待生效 × 0.2500');
  await page.getByRole('link',{name:'平台管理',exact:true}).click();
  const aiCard=page.locator('.connection-card').filter({has:page.locator('.platform-mark.ai008')});
+ await page.route('**/api/connections/*/options',route=>route.fulfill({json:{requireProxy:true,policies:[{id:'policy',name:'Policy'}],groups:[{id:'group',name:'Group'}],templates:[{id:'cc',name:'CC'}]}}));
  await expect(aiCard.getByRole('heading',{name:'private-upstream-ai008@example.com',exact:true})).toBeVisible();
  await expect(aiCard.locator('.settlement-price>strong')).toHaveText('× 0.6000');await expect(aiCard.locator('.scheduled-price')).toHaveCount(0);
+ await aiCard.getByRole('link',{name:'上号到此平台',exact:true}).click();
+ const ownerDialog=page.getByRole('dialog',{name:'指定平台上号'});
+ await ownerDialog.getByLabel('Claude 账号邮箱').fill('owner-platform-choice@example.com');await ownerDialog.getByRole('button',{name:'下一步：选择平台',exact:true}).click();
+ await expect(ownerDialog.locator('.target-card strong')).toHaveText('AI008');await expect(ownerDialog.locator('.target-price .rate-value')).toHaveText('× 0.6000');await expect(ownerDialog).not.toContainText('private-upstream-');
+ await ownerDialog.getByRole('button',{name:'Refresh token 导入',exact:true}).click();await expect(ownerDialog.getByLabel('目标平台').locator('option').last()).toHaveText('AI008 · 我的结算折扣 × 0.6000');
+ await page.getByRole('button',{name:'关闭弹窗'}).click();
  await page.locator('.user-card').click();await page.getByLabel('登录邮箱').fill('pricing-browser@example.com');await page.getByLabel('密码',{exact:true}).fill('pricing-browser-password');await page.getByRole('button',{name:'进入工作空间'}).click();
  await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(page.getByRole('heading',{name:'平台管理',exact:true})).toBeVisible();
  await expect(page.locator('body')).not.toContainText('private-upstream-');await expect(page.getByRole('link',{name:'打开平台',exact:true})).toHaveCount(0);
@@ -48,11 +55,10 @@ test('platform management hides upstream identities, displays personal prices an
  await expect(page.locator('.connection-card').filter({has:page.locator('.platform-mark.gatelink')}).locator('.settlement-price>strong')).toHaveText('× 0.0000');await expect(page.locator('.connection-card').filter({has:page.locator('.platform-mark.gatelink')}).locator('.scheduled-price')).toHaveCount(0);
  const connections=await (await page.request.get('/api/connections')).json(),target=connections.connections.find((c:any)=>c.provider==='ai008');
  expect(JSON.stringify(connections)).not.toContain('private-upstream-');expect(target).not.toHaveProperty('payout_rate');
- await page.route('**/api/connections/*/options',route=>route.fulfill({json:{requireProxy:true,policies:[{id:'policy',name:'Policy'}],groups:[{id:'group',name:'Group'}],templates:[{id:'cc',name:'CC'}]}}));
  await aiCard.getByRole('link',{name:'上号到此平台',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'指定平台上号'});await expect(dialog).toBeVisible();
  await dialog.getByLabel('Claude 账号邮箱').fill('platform-choice@example.com');await dialog.getByRole('button',{name:'下一步：选择平台',exact:true}).click();
- await expect(dialog.locator('.target-card')).toHaveCount(1);await expect(dialog.locator('.target-card input[type=checkbox]')).toBeChecked();await expect(dialog.locator('.target-card')).toContainText(target.name);
+ await expect(dialog.locator('.target-card')).toHaveCount(1);await expect(dialog.locator('.target-card input[type=checkbox]')).toBeChecked();await expect(dialog.locator('.target-card strong')).toHaveText('AI008');await expect(dialog.locator('.target-price .rate-value')).toHaveText('× 0.2000');await expect(dialog).not.toContainText(target.name);
  const authorize=dialog.getByRole('button',{name:'生成此平台授权链接',exact:true});await expect(authorize).toBeDisabled();
  await dialog.getByRole('button',{name:'添加新代理',exact:true}).click();await dialog.getByLabel('代理名称',{exact:true}).fill('Platform choice fixed proxy');await dialog.getByLabel('代理地址',{exact:true}).fill('http://price-ui:test@price.proxy.example.com:8080');await dialog.getByRole('button',{name:'添加并绑定代理',exact:true}).click();await expect(authorize).toBeEnabled();
  await page.route('**/api/accounts/*/authorize',route=>route.fulfill({json:{jobs:[]}}));
@@ -71,7 +77,7 @@ test('Mini CC is selectable for onboarding, token import and historical reconcil
  await page.getByRole('link',{name:'账号管理',exact:false}).first().click();
  await page.getByRole('button',{name:'新增账号 / 多平台上号',exact:true}).click();
  await page.getByLabel('Claude 账号邮箱').fill('mini-e2e@example.com');await page.getByRole('button',{name:'下一步：选择平台'}).click();
- await page.locator('.target-card').filter({hasText:'Mini CC Test'}).getByRole('checkbox').check();
+ await page.locator('.target-card').filter({hasText:'Mini CC Gateway'}).getByRole('checkbox').check();
  const dialog=page.getByRole('dialog');
  await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');await expect(dialog.getByLabel('账号策略')).toBeDisabled();
  await expect(dialog.getByLabel('分组',{exact:true})).toBeDisabled();await expect(dialog.getByLabel('CC 模板',{exact:true})).toHaveValue('default-cc');
@@ -82,7 +88,7 @@ test('Mini CC is selectable for onboarding, token import and historical reconcil
  await expect(dialog.getByText('固定出口代理：Mini account fixed proxy',{exact:true})).toBeVisible();
  await expect(dialog.getByRole('button',{name:'一键生成所选平台授权链接'})).toBeEnabled();
  await dialog.getByRole('button',{name:'Refresh token 导入',exact:true}).click();
- await dialog.getByLabel('目标平台',{exact:true}).selectOption({label:'Mini CC Test'});await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');
+ await dialog.getByLabel('目标平台',{exact:true}).selectOption({label:'Mini CC Gateway · 我的结算折扣 × 0.7000'});await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');
  await dialog.getByRole('button',{name:'关闭弹窗'}).click();
  await page.getByRole('link',{name:'用量明细',exact:true}).click();await page.getByRole('button',{name:'读取历史账单'}).click();
  await page.getByLabel('支持历史查询的平台连接').selectOption({label:'Mini CC Test'});await expect(page.getByLabel('支持历史查询的平台连接')).not.toHaveValue('');
