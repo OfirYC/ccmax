@@ -13,7 +13,8 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "verify:upstream": "tsx scripts/verify-upstream.ts"
+    "verify:upstream": "tsx scripts/verify-upstream.ts",
+    "audit:finance": "tsx scripts/audit-finance.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",

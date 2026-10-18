@@ -143,10 +143,11 @@ describe('hard ceilings for hierarchical settlement rates', () => {
     // A legacy sealed bill must be reviewed, even when this user's own margin
     // is positive and the inverted edge belongs to a lower level.
     const usageId = id(), earningId = id();
-    await db.query("INSERT INTO usage_days(id,binding_id,day,raw_usd,state,source,root_rate) VALUES($1,$2,$3,100,'final','legacy',0.5)", [usageId, bindingId, prior()]);
+    await db.query("INSERT INTO usage_days(id,binding_id,day,raw_usd,state,source,root_rate) VALUES($1,$2,$3,100,'provisional','legacy',0.5)", [usageId, bindingId, prior()]);
     for (const [userId, rate, downstream, profit, eid] of [[owner.id, 0.5, 0.2, 30, earningId], [a.id, 0.2, 0.3, -10, id()], [b.id, 0.3, 0, 30, id()]]) {
       await db.query('INSERT INTO earnings(id,usage_id,user_id,rate,downstream_rate,gross_usd,downstream_usd,profit_usd) VALUES($1,$2,$3,$4,$5,$4::numeric*100,$5::numeric*100,$6)', [eid, usageId, userId, rate, downstream, profit]);
     }
+    await db.query("UPDATE usage_days SET state='final' WHERE id=$1", [usageId]);
     await expect(createInvoice(db, owner, owner.id, prior(), prior())).rejects.toMatchObject({ code: 'RATE_HIERARCHY_CONFLICT' });
     const invoiceId = id();
     await db.query("INSERT INTO invoices(id,number,user_id,date_from,date_to,gross_usd,downstream_usd,profit_usd,created_by) VALUES($1,'legacy-pending',$2,$3,$3,50,20,30,$2)", [invoiceId, owner.id, prior()]);

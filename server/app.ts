@@ -11,6 +11,7 @@ import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './pr
 import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings } from './proxies.js';
 import { apiKeyService } from './api-keys.js';
 import { assertConnectionPricing, assertUserPricing, lockPricing, pricingSummary } from './pricing.js';
+import { assertWalletAccounting } from './financial-integrity.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -468,6 +469,11 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const rows=await db.query('SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at,id',[req.user.id]);
     return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-ledger.csv"').send(csv(rows,[['created_at','时间'],['kind','类型'],['amount_usd','金额 USD'],['reference_id','关联账单或提现编号']]));
   });
+  app.get('/api/finance/check',async req=>db.transaction(async tx=>{
+    await tx.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[req.user.id]);
+    await assertWalletAccounting(tx,req.user.id);
+    return {ok:true,balance:await balance(tx,req.user.id),checkedAt:new Date().toISOString()};
+  }));
   app.post('/api/invoices',async req=>{
     const d=z.object({userId:identifier,from:date,to:date}).parse(req.body);return createInvoice(db,req.user,d.userId,d.from,d.to);
   });

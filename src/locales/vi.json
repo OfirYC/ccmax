@@ -795,5 +795,11 @@
   "下级折扣不能高于生效期间的上级上限 {0}": "Tỷ lệ cấp dưới không được vượt mức trần cấp trên {0} trong kỳ hiệu lực",
   "折扣不能低于已约定的下级折扣 {0}，请先调整下级价格": "Tỷ lệ không được thấp hơn tỷ lệ cấp dưới đã thỏa thuận là {0}. Hãy điều chỉnh giá cấp dưới trước.",
   "上游折扣不能低于已约定的直属代理折扣 {0}，请先调整代理价格": "Tỷ lệ thượng nguồn không được thấp hơn tỷ lệ đại lý trực tiếp đã thỏa thuận là {0}. Hãy điều chỉnh giá đại lý trước.",
-  "账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算": "Hóa đơn có giá đảo ngược giữa các cấp. Hãy kiểm tra giá và mức sử dụng trước khi quyết toán."
+  "账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算": "Hóa đơn có giá đảo ngược giữa các cấp. Hãy kiểm tra giá và mức sử dụng trước khi quyết toán.",
+  "用量的收益链或金额不一致，请核对原始账单，不能继续结算": "Chuỗi thu nhập hoặc số tiền sử dụng không khớp. Hãy kiểm tra hóa đơn gốc trước khi quyết toán.",
+  "账单明细、归属或汇总金额不一致，请核对后再确认": "Chi tiết, chủ sở hữu hoặc tổng tiền hóa đơn không khớp. Hãy kiểm tra trước khi xác nhận.",
+  "资金流水与原始账单或提现记录不一致，请核对后再操作": "Sổ cái không khớp với hóa đơn hoặc yêu cầu rút tiền gốc. Hãy kiểm tra trước khi tiếp tục.",
+  "账单金额超出单笔上限，请缩小结算日期范围": "Hóa đơn vượt giới hạn số tiền mỗi hóa đơn. Hãy chọn kỳ quyết toán ngắn hơn.",
+  "核对资金账本": "Đối soát sổ cái",
+  "资金账本核对通过，余额和冻结流水一致": "Đối soát thành công. Số dư và tiền tạm giữ khớp với chứng từ gốc."
 }

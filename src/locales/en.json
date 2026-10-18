@@ -795,5 +795,11 @@
   "下级折扣不能高于生效期间的上级上限 {0}": "The downstream rate cannot exceed the upstream ceiling of {0} during its effective period",
   "折扣不能低于已约定的下级折扣 {0}，请先调整下级价格": "The rate cannot fall below the agreed downstream rate of {0}. Adjust downstream prices first.",
   "上游折扣不能低于已约定的直属代理折扣 {0}，请先调整代理价格": "The upstream rate cannot fall below the agreed direct-agent rate of {0}. Adjust agent prices first.",
-  "账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算": "This bill contains inverted pricing between levels. Review the prices and usage before settlement."
+  "账单存在层级价格倒挂，请先核对价格及相关用量，不能继续结算": "This bill contains inverted pricing between levels. Review the prices and usage before settlement.",
+  "用量的收益链或金额不一致，请核对原始账单，不能继续结算": "The usage earnings chain or amounts do not reconcile. Review the original statement before settlement.",
+  "账单明细、归属或汇总金额不一致，请核对后再确认": "Invoice items, ownership or totals do not reconcile. Review them before confirmation.",
+  "资金流水与原始账单或提现记录不一致，请核对后再操作": "Ledger entries do not reconcile with their invoices or withdrawals. Review the records before proceeding.",
+  "账单金额超出单笔上限，请缩小结算日期范围": "The invoice exceeds the per-invoice amount limit. Use a shorter settlement period.",
+  "核对资金账本": "Reconcile ledger",
+  "资金账本核对通过，余额和冻结流水一致": "Ledger reconciliation passed. Balances and reserved funds match their source records."
 }

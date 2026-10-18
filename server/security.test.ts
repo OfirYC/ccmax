@@ -3,7 +3,7 @@ import { migrate, type DB } from './db.js';
 import { bootstrap, id, today, nextDay, secretBox } from './core.js';
 import { createApp } from './app.js';
 import { ingestUsage, requestWithdrawal, balance, createInvoice, confirmInvoice, reviewWithdrawal } from './billing.js';
-import { openTestDB } from './test-db.js';
+import { openTestDB, seedSettlement } from './test-db.js';
 import { enqueue, saveBinding, createWorker } from './worker.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -76,7 +76,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const [owner] = await db.query('SELECT * FROM users WHERE role=\'owner\'');
     const agentId = id();
     await db.query(`INSERT INTO users(id,parent_id,email,name,password_hash,role) VALUES($1,$2,$3,$4,$5,'agent')`, [agentId, owner.id, 'ledger@example.com', 'Ledger', 'x']);
-    await db.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement','100.00000000','invoice-ledger-test')`, [id(), agentId]);
+    await seedSettlement(db, agentId, '100');
     const [agent] = await db.query('SELECT * FROM users WHERE id=$1', [agentId]);
 
     const results = await Promise.allSettled([
@@ -289,7 +289,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
 
   it('deduplicates withdrawals across retries, encrypts destinations and releases rejected funds exactly once',async()=>{
     const [owner]=await db.query("SELECT * FROM users WHERE role='owner'"),a=await agent(owner,'withdraw'),other=await agent(owner,'other');
-    await db.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',100,'fixture-credit')`,[id(),a.id]);
+    await seedSettlement(db,a.id,'100');
     const box=secretBox(key),requestKey=id();
     const ws=await Promise.all([requestWithdrawal(db,a,'80','bank','secret destination',requestKey,box),requestWithdrawal(db,a,'80','bank','secret destination',requestKey,box)]);
     expect(ws[0].id).toBe(ws[1].id);expect(ws[0].destination).not.toContain('secret destination');

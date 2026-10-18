@@ -90,6 +90,7 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | `GET /api/proxies` | `{proxies}`，无认证密码的代理列表 |
 | `GET /api/usage?from=2026-10-01&to=2026-10-18&page=1` | `{rows, totals, total, page}`，每页 12 条 |
 | `GET /api/finance?tab=mine&page=1` | `{balance, pendingProfit, invoicesTotal, withdrawalsTotal, invoices, withdrawals, ledger}`，账单和提现各每页 12 条 |
+| `GET /api/finance/check` | `{ok:true, balance, checkedAt}`，只核对密钥所属用户的钱包、利润来源与冻结/释放流水；异常返回 409 |
 | `GET /api/jobs?id=<UUID>` | `{jobs}`，按任务编号查状态；不传编号时最多最近 100 条可见任务 |
 | `GET /api/audits` | `{rows}`，最多最近 300 条可见审计 |
 
@@ -118,6 +119,8 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 
 接受 `key` 的任务、提现接口支持业务幂等：同一逻辑操作发生网络失败时使用同一 `key` 和完全相同的业务参数，不要把这个 `key` 用在不同请求上。其他写接口不要盲目重试，先查询最终状态。
 
+账单确认前复核原冻结价格、完整代理收益链、明细归属和汇总金额；不是按今天的价格重新计算历史。提现及审核会自动核对利润来源、等额冻结和释放流水。提现审核以相同 `action` 和 `reference` 重试时返回原记录，不重复扣款或退回；已处理记录的冲突决定返回 409。实际付款仍由线下完成，核对通过不能证明外部回款或现金准备金充足。
+
 ## 错误、限流和审计
 
 错误形如 `{error, code, requestId}`。依据状态码和 `code` 判断结果，`error` 供人阅读，可能是中文或上游错误描述。
@@ -129,6 +132,11 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | 400 / `RATE_FLOOR_VIOLATION` | 降价会低于已有或已安排的下级报价；先调整下级 |
 | 400 / `UPSTREAM_RATE_MISSING` | 报价期间缺少完整的上级平台价格 |
 | 409 / `RATE_HIERARCHY_CONFLICT` | 用量或账单存在层级价格倒挂，需核对后处理 |
+| 409 / `USAGE_ACCOUNTING_CONFLICT` | 冻结收益链、归属、付款关系或金额公式不一致 |
+| 409 / `INVOICE_INTEGRITY_CONFLICT` | 账单为空，或明细、日期及汇总金额不一致 |
+| 409 / `WALLET_INTEGRITY_CONFLICT` | 余额来源或原提现冻结/释放流水不一致 |
+| 409 / `UPSTREAM_SETTLEMENT_REQUIRED` | 同一用量尚未被整条上级链的有效已确认账单和利润流水覆盖 |
+| 400 / `AMOUNT_OUT_OF_RANGE` | 多条用量合计超出单笔账单范围，需缩短结算期间 |
 | 401 / `INVALID_API_KEY` | 密钥无效、过期、撤销或所属账号停用 |
 | 403 / `INSUFFICIENT_SCOPE` | 未授予所需权限 |
 | 403 / `SESSION_REQUIRED` | 此接口只允许网页登录 |

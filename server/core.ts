@@ -5,6 +5,7 @@ import type { DB, Row } from './db.js';
 
 const scrypt = promisify(scryptCb);
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
+export const MAX_USD = '9999999999999999.99999999';
 export const id = () => randomUUID();
 export const usd = (value: Decimal.Value) => new Decimal(value).toFixed(8);
 export const sum = (values: Decimal.Value[]) => values.reduce<Decimal>((a,b) => a.plus(b), new Decimal(0));

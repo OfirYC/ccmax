@@ -45,6 +45,7 @@ export const apiEndpoints: ApiEndpoint[] = [
   { method: 'GET', path: '/api/usage/export', scope: 'read', summary: 'Export up to 100,000 matching usage rows as CSV', query: { ...period, provider, search: text }, csv: true },
   { method: 'GET', path: '/api/finance', scope: 'read', summary: 'Balances, invoices, withdrawals and latest ledger entries (12 rows per page)', query: { tab: { type: 'string', enum: ['all', 'mine', 'children'], default: 'all' }, page: { type: 'integer', minimum: 1, default: 1, maximum: 1000000 } } },
   { method: 'GET', path: '/api/ledger/export', scope: 'read', summary: 'Export the calling agent’s ledger as CSV', csv: true },
+  { method: 'GET', path: '/api/finance/check', scope: 'read', summary: 'Reconcile own ledger sources, frozen usage chains and withdrawals; 409 if any inconsistency exists' },
   { method: 'POST', path: '/api/invoices', scope: 'finance:write', summary: 'Create a settlement invoice for self or a direct child', body: object({ userId: uuid, ...period }) },
   { method: 'POST', path: '/api/invoices/:id/confirm', scope: 'finance:write', summary: 'Confirm an invoice as its payer; records profit in the ledger', body: object({ reference: { ...text, minLength: 3, maxLength: 500 } }) },
   { method: 'GET', path: '/api/invoices/:id/export', scope: 'read', summary: 'Export an invoice belonging to the calling user or its payer', csv: true },

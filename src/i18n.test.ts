@@ -95,4 +95,15 @@ describe('language switching', () => {
       expect(localToday()).toBe(billingDay);
     }
   });
+
+  it('formats large decimal USD strings without losing digits through a Number conversion', () => {
+    expect(money('9007199254740993.12345678', 8)).toBe('$9,007,199,254,740,993.12345678');
+    expect(money('9999999999999999.99999999', 8)).toBe('$9,999,999,999,999,999.99999999');
+    expect(money('1.005')).toBe('$1.01');
+    expect(money('-1.005')).toBe('-$1.01');
+    setLocale('vi');
+    expect(money('9007199254740993.12345678', 8)).toContain('9.007.199.254.740.993,12345678');
+    setLocale('hi');
+    expect(money('9007199254740993.12345678', 8)).toContain('9,00,71,99,25,47,40,993.12345678');
+  });
 });

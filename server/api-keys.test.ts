@@ -3,7 +3,7 @@ import type { FastifyInstance, InjectOptions } from 'fastify';
 import { createApp } from './app.js';
 import { migrate, type DB } from './db.js';
 import { bootstrap, id } from './core.js';
-import { openTestDB } from './test-db.js';
+import { openTestDB, seedSettlement } from './test-db.js';
 import { apiEndpoints, apiScopes } from '../shared/integration.js';
 
 describe('agent API authentication and permissions', () => {
@@ -97,7 +97,7 @@ describe('agent API authentication and permissions', () => {
 
   it('grants financial writes only explicitly and keeps withdrawals idempotent', async () => {
     const issued = await createKey(['read', 'finance:write']);
-    await db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement','10',$3)", [id(), a, id()]);
+    await seedSettlement(db, a, '10');
     const payload = { amount: '2', method: '币安 ID', destination: '123456789', key: id() };
     const first = await call(issued.token, 'POST', '/api/withdrawals', payload);
     const second = await call(issued.token, 'POST', '/api/withdrawals', payload);
