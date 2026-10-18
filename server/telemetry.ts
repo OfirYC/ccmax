@@ -88,6 +88,11 @@ export function aggregateTelemetry(rows:Row[],period:TelemetryPeriod) {
     requests:metric(v=>period==='today'&&v.day!==today()?null:v.periods[period].requests),
     tokens:metric(v=>period==='today'&&v.day!==today()?null:v.periods[period].tokens),
     billedUsd:metric(v=>period==='today'&&v.day!==today()?null:v.periods[period].billedUsd),
-    models:['opus','fable'].map(model=>({model,...metric(v=>!v.modelsAt||Math.abs(Date.now()-Date.parse(v.modelsAt))>10*60000||(period==='today'&&(v.day!==today()||beijingDay(v.modelsAt)!==today()))?null:v.periods[period].models.find(m=>m.model===model)?.usageUsd??null)})),
+    models:['opus','fable'].map(model=>{
+      const amount=(v:AccountTelemetry)=>!v.modelsAt||Date.parse(v.modelsAt)>Date.now()+60000||(period==='today'&&(v.day!==today()||beijingDay(v.modelsAt)!==today()))?null:v.periods[period].models.find(m=>m.model===model)?.usageUsd??null;
+      const dates=values.filter(v=>amount(v)!==null).map(v=>v.modelsAt!).sort();
+      return {model,...metric(v=>!v.modelsAt||Math.abs(Date.now()-Date.parse(v.modelsAt))>10*60000?null:amount(v)),
+        reference:{...metric(amount),oldestAt:dates[0]??null,newestAt:dates.at(-1)??null}};
+    }),
   };
 }

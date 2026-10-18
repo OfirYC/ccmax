@@ -13,7 +13,7 @@ import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } fr
 import { apiKeyService } from './api-keys.js';
 import { assertWalletAccounting } from './financial-integrity.js';
 import { registerTelemetry } from './telemetry-routes.js';
-import { snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
+import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
@@ -461,8 +461,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1 GROUP BY u.day ORDER BY u.day DESC LIMIT 14`,[req.user.id]);
     const snapshots=await visibleTelemetry(db,req.user,telemetryFilters.parse({}),connectionName);
     const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).map(c=>{
-      const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today');
-      return {...c,account_count:group.length,daily_usd:metrics.billedUsd.value,daily_covered:metrics.billedUsd.covered};
+      const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today'),week=aggregateTelemetry(group,'7d');
+      return {...c,account_count:group.length,daily_usd:metrics.billedUsd.value,daily_covered:metrics.billedUsd.covered,
+        seven_day_usd:week.billedUsd.value,seven_day_covered:week.billedUsd.covered,attribution:attributionTotals(group)};
     });
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
     const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];

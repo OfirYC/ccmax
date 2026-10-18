@@ -167,8 +167,9 @@ export class ProviderClient {
       try {
         const d=await this.call(`/api/admin/oauth-accounts/model-usage?ids=${encodeURIComponent(batch.map(a=>a.id).join(','))}`);
         const generated=typeof d.generated_at==='string'?Date.parse(d.generated_at):NaN;
-        // A stale model cache must not be presented as a fresh daily result.
-        if(!Number.isFinite(generated)||generated>Date.now()+60000||Date.now()-generated>10*60000)continue;
+        // Keep the source timestamp even when the upstream model cache is
+        // delayed. Current totals exclude it; the UI can show a dated reference.
+        if(!Number.isFinite(generated)||generated>Date.now()+60000)continue;
         for(const a of batch)if(a.telemetry&&d.accounts?.[a.id])for(const p of telemetryPeriods) {
           a.telemetry.modelsAt=new Date(generated).toISOString();
           a.telemetry.periods[p].models=normalizeModelAmounts(d.accounts[a.id][{today:'today','5h':'five_hour','7d':'seven_day','30d':'thirty_day'}[p]]);

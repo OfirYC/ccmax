@@ -50,6 +50,7 @@ describe('independent account, platform and recursive team reconciliation',()=>{
     await account(c,mini,11);await account(g,ai,13);await account(b,ai,17);await account(null,ai,19,{verified:false});await account(a,ai,23,{verified:false});
     await account(a,gate,29,{stale:true});await account(c,mini,31,{missing:true});await account(g,disabled,37);
     const all=await get('/api/telemetry');expect(all.total).toBe(8);expect(all.totals).toMatchObject({bindings:8,fresh:5,rpm:{value:'39',covered:5,total:8},requests:{value:'390'},tokens:{value:'39000'},billedUsd:{value:'39.625'}});
+    expect(all.attribution).toEqual({assigned:8,unassigned:0});
     expect((await get('/api/telemetry?scope=self')).totals.rpm.value).toBe('15');expect((await get('/api/telemetry?scope=descendants')).totals.rpm.value).toBe('24');
     expect((await get(`/api/telemetry?ownerId=${c}`)).totals.rpm.value).toBe('11');expect((await get(`/api/telemetry?accountId=${shared.aid}`)).totals.rpm.value).toBe('15');
     expect((await get('/api/telemetry?provider=ai008')).totals.rpm.value).toBe('21');expect((await get(`/api/telemetry?connectionId=${ai2}`)).totals.rpm.value).toBe('5');
@@ -66,6 +67,11 @@ describe('independent account, platform and recursive team reconciliation',()=>{
     // or disabled; the current aggregate deliberately excludes these snapshots.
     const trend=await get('/api/telemetry/trend');expect(trend.samples.reduce((n:number,s:any)=>n+Number(s.rpm),0)).toBe(107);
     await login('root@example.com');const platform=await get('/api/telemetry');expect(platform.totals.rpm.value).toBe('100');expect(platform.total).toBe(12);
+    expect(platform.attribution).toEqual({assigned:10,unassigned:2});expect(platform.members.find((m:any)=>m.id===null).rpm.value).toBe('42');
+    expect(platform.members.find((m:any)=>m.id===a).rpm.value).toBe('15');
+    expect((await get(`/api/telemetry?ownerId=${a}`)).attribution.unassigned).toBe(0);
+    expect((await get('/api/telemetry?scope=descendants')).totals.rpm.value).toBe('56');
+    const rootDashboard=await get('/api/dashboard');expect(rootDashboard.platforms.find((p:any)=>p.id===ai)).toMatchObject({seven_day_usd:'82.25',attribution:{assigned:4,unassigned:2}});
     await login('g@example.com');expect((await get('/api/telemetry')).totals.rpm.value).toBe('13');expect((await get('/api/telemetry?scope=descendants')).total).toBe(0);
     expect((await app.inject({url:`/api/telemetry?ownerId=${b}`,headers:{cookie}})).statusCode).toBe(403);
   });

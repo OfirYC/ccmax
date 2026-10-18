@@ -2,21 +2,22 @@ import type { FastifyInstance } from 'fastify';
 import type { DB } from './db.js';
 import { today } from './core.js';
 import { aggregateTelemetry,staleSeconds } from './telemetry.js';
-import { telemetryFilters as filters,visibleTelemetry,type ConnectionName } from './telemetry-data.js';
+import { attributionTotals,telemetryFilters as filters,visibleTelemetry,type ConnectionName } from './telemetry-data.js';
 
 export function registerTelemetry(app:FastifyInstance,db:DB,name:ConnectionName) {
   app.get('/api/telemetry',async req=>{
     const q=filters.parse(req.query),rows=await visibleTelemetry(db,req.user,q,name);
     const platforms=[...new Set(rows.map(r=>r.connection_id))].map(connectionId=>{
       const group=rows.filter(r=>r.connection_id===connectionId),first=group[0];
-      return {id:connectionId,provider:first.provider,name:first.connection_name,...aggregateTelemetry(group,q.period)};
+      return {id:connectionId,provider:first.provider,name:first.connection_name,attribution:attributionTotals(group),...aggregateTelemetry(group,q.period)};
     });
-    const members=[...new Set(rows.map(r=>r.owner_id))].map(userId=>{
-      const group=rows.filter(r=>r.owner_id===userId);
-      return {id:userId,name:group[0].owner_name,...aggregateTelemetry(group,q.period)};
+    const memberId=(r:typeof rows[number])=>r.ownership_verified?r.owner_id:null;
+    const members=[...new Set(rows.map(memberId))].map(userId=>{
+      const group=rows.filter(r=>memberId(r)===userId);
+      return {id:userId,name:userId?group[0].owner_name:null,...aggregateTelemetry(group,q.period)};
     });
     return {period:q.period,scope:q.scope,day:today(),generatedAt:new Date().toISOString(),staleSeconds:staleSeconds(),
-      totals:aggregateTelemetry(rows,q.period),platforms,members,total:rows.length,page:q.page,pageSize:12,rows:rows.slice((q.page-1)*12,q.page*12)};
+      totals:aggregateTelemetry(rows,q.period),attribution:attributionTotals(rows),platforms,members,total:rows.length,page:q.page,pageSize:12,rows:rows.slice((q.page-1)*12,q.page*12)};
   });
   app.get('/api/telemetry/trend',async req=>{
     const q=filters.omit({page:true}).parse(req.query),rows=await visibleTelemetry(db,req.user,{...q,page:1},name);

@@ -116,6 +116,12 @@ tbody tr:hover .amount-cell-key{background:#edf6f1}
 .earnings-row strong .amount{font-size:16px;white-space:normal;overflow-wrap:anywhere}
 .platform-metrics{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .platform-metrics>div{min-width:0}
+.platform-metrics .platform-week{grid-column:1/-1;border-top:1px solid var(--line);padding-top:12px}
+.platform-pending{color:#a67321}
+.telemetry-attribution,.telemetry-zero{flex-wrap:wrap}
+.telemetry-attribution>div,.telemetry-zero>span{flex:1 1 260px}
+.telemetry-attribution p{margin:5px 0 0;line-height:1.7}
+.telemetry-models small{display:block;line-height:1.7}
 .platform-metrics strong .amount{font-size:19px;white-space:normal;overflow-wrap:anywhere}
 @media(max-width:520px){
   .settlement-price{padding:16px}

@@ -144,3 +144,5 @@ Gatelink 返回 HTTP 422 时，请先查看错误标明的失败步骤及参数�
 详细的实现范围、安全验证及运营边界见 [上线核查](docs/VERIFICATION.md)。GitHub Actions 已配置 PostgreSQL、浏览器及 Docker 构建检查。
 
 数据归属和展示核查、Railway 只读检查命令见 [数据归属核查](docs/DATA_ATTRIBUTION_AUDIT.md)。`npm run audit:data` 和 `npm run audit:finance` 已打包到生产镜像，可在应用容器终端直接执行；本地需先构建。
+
+AI008 今日为 0 时可查看「模型调用 → 近 7 天」，首页平台卡片同时展示近 7 天消费。待归属账号会显示在管理员的全平台运营统计中，但不会生成个人或代理收益。模型分类缓存延迟时，页面显示最近可用值和原始时间，并标记非实时。

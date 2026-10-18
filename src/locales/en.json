@@ -947,5 +947,15 @@
   "Gatelink 的上游返回 HTTP {0}": "Gatelink's upstream returned HTTP {0}",
   "请求被拒绝，请核对本步骤的参数或在 Gatelink 查看拒绝原因": "Request rejected. Check the parameters for this step or the rejection reason in Gatelink.",
   "Gatelink 账号类型仅支持 speed、stable 或 team": "Gatelink account type must be speed, stable, or team",
-  "Gatelink 请粘贴完整回调地址或 code#state，保留 state。": "For Gatelink, paste the full callback URL or code#state, including state."
+  "Gatelink 请粘贴完整回调地址或 code#state，保留 state。": "For Gatelink, paste the full callback URL or code#state, including state.",
+  "全平台账号": "All platform accounts",
+  "待归属平台账号：{0}": "Platform accounts awaiting attribution: {0}",
+  "这些账号已计入当前平台调用统计；确认归属前，不计入任何成员的本人用量或团队收益。": "These accounts are included in the current platform activity totals. Until ownership is verified, they do not contribute to any member’s personal usage or team earnings.",
+  "查看待归属账号": "View unassigned accounts",
+  "上游当前返回的今日请求和消费均为 0；历史用量可切换统计窗口查看。": "The upstream currently reports 0 requests and 0 cost for today. Select another period to view earlier usage.",
+  "查看近 7 天用量": "View last 7 days",
+  "上游缓存已延迟，展示最近可用值（非实时）": "Upstream cache delayed; showing the latest available values (not live)",
+  "模型缓存时间：{0}": "Model cache time: {0}",
+  "待归属 {0} 个": "{0} awaiting attribution",
+  "近 7 天平台消费": "Platform cost · last 7 days"
 }

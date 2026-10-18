@@ -31,7 +31,7 @@ test('dashboard and account amounts match attributed activity, and prior-day det
   const dashboard=await (await page.request.get('/api/dashboard')).json(),activity=await (await page.request.get('/api/telemetry')).json(),accounts=await (await page.request.get('/api/accounts')).json();
   for(const p of activity.platforms){expect(dashboard.platforms.find((v:any)=>v.id===p.id).daily_usd).toBe(p.billedUsd.value);}
   expect(accounts.accounts.find((a:any)=>a.email==='claude-fixture@example.com').bindings.reduce((n:number,b:any)=>n+Number(b.today_usd),0)).toBe(Number(activity.totals.billedUsd.value));
-  await expect(page.locator('.platform-overview')).toHaveCount(3);await expect(page.locator('.platform-overview').filter({hasText:'Mini CC Gateway'}).locator('.amount')).toHaveText('—');
+  await expect(page.locator('.platform-overview')).toHaveCount(3);await expect(page.locator('.platform-overview').filter({hasText:'Mini CC Gateway'}).locator('.amount').first()).toHaveText('—');
   await page.route('**/api/telemetry?**',async route=>{
     const response=await route.fetch(),data=await response.json();
     for(const row of data.rows)row.telemetry.day='2000-01-01';
@@ -73,4 +73,36 @@ test('model activity switches languages and refreshes snapshots without exposing
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     await page.screenshot({path:`test-results/telemetry-${lang}-mobile.png`,fullPage:true});
   }
+});
+
+test('owner sees unassigned AI008 usage and a dated model cache without assigning earnings',async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
+  await page.route('**/api/dashboard',async route=>{
+    const response=await route.fetch(),data=await response.json(),ai=data.platforms.find((p:any)=>p.provider==='ai008');
+    Object.assign(ai,{account_count:9,daily_usd:'0',daily_covered:9,seven_day_usd:'18245.658334',seven_day_covered:9,attribution:{assigned:0,unassigned:9}});
+    await route.fulfill({response,json:data});
+  });
+  await page.route('**/api/telemetry?**',async route=>{
+    const response=await route.fetch(),data=await response.json(),q=new URL(route.request().url());
+    if((q.searchParams.get('scope')??'team')==='team'){
+      data.attribution={assigned:0,unassigned:data.total};
+      for(const r of data.rows){r.ownership_verified=false;r.owner_id=null;r.owner_name=null;}
+      if((q.searchParams.get('period')??'today')==='today'){data.totals.requests.value='0';data.totals.billedUsd.value='0';}
+      for(const m of data.totals.models){Object.assign(m,{value:null,covered:0,reference:{value:m.model==='opus'?'17987.630294':'75.710322',covered:data.total,total:data.total,oldestAt:'2026-10-18T17:09:45Z',newestAt:'2026-10-18T17:09:45Z'}});}
+    }
+    await route.fulfill({response,json:data});
+  });
+  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
+  const card=page.locator('.platform-overview').filter({has:page.locator('.platform-mark.ai008')});
+  await expect(card).toContainText('待归属 9 个');await expect(card.locator('.platform-week')).toContainText('$18,245.66');
+  await page.setViewportSize({width:390,height:844});await card.screenshot({path:'test-results/owner-ai008-platform-mobile.png'});
+  await card.click();await expect(page).toHaveURL(/connectionId=.*period=7d/);
+  await expect(page.getByRole('button',{name:'全平台账号',exact:true})).toBeVisible();await expect(page.locator('.telemetry-attribution')).toContainText('待归属平台账号：1');
+  await expect(page.locator('.telemetry-models')).toContainText('$17,987.6303');await expect(page.locator('.telemetry-models')).toContainText('非实时');await expect(page.locator('.telemetry-models')).toContainText('模型缓存时间');
+  await page.getByRole('button',{name:'今日',exact:true}).click();await expect(page.locator('.telemetry-zero')).toContainText('今日请求和消费均为 0');
+  await page.getByRole('link',{name:'查看近 7 天用量',exact:true}).click();await expect(page).toHaveURL(/period=7d/);
+  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'test-results/owner-ai008-status-mobile.png',fullPage:true});
+  await page.locator('.telemetry-models').screenshot({path:'test-results/owner-ai008-model-cache-mobile.png'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.getByRole('button',{name:'仅本人',exact:true}).click();await expect(page.locator('.telemetry-attribution')).toHaveCount(0);
 });

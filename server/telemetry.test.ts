@@ -48,13 +48,23 @@ describe('upstream operational telemetry',()=>{
     expect(accounts[0].telemetry?.periods.today.models).toEqual([{model:'opus',usageUsd:'2'},{model:'fable',usageUsd:'0'}]);
     expect(accounts[1].telemetry?.periods.today.models).toEqual([]);expect(accounts[0].telemetry?.detail).toBe('unavailable');
   });
-  it('enriches verified account details and rejects old model caches',async()=>{
+  it('enriches verified account details and retains delayed model data only as a dated reference',async()=>{
     const c=new ProviderClient('ai008',{username:'fixture',password:'fixture'},async url=>Response.json(String(url).includes('model-usage')?
-      {generated_at:new Date(Date.now()-3600000).toISOString(),accounts:{one:{today:{opus:999}}}}:
+      {generated_at:new Date(Date.now()-3600000).toISOString(),accounts:{one:{today:{opus:999},seven_day:{opus:999}}}}:
       {account:upstream(),stats:{rpm:9},cost_windows:{req_7d:7,tokens_7d:70,cost_7d:0.7}}));
     const accounts=[c.normalize(upstream())];await c.enrichTelemetry(accounts);
-    expect(accounts[0].telemetry?.detail).toBe('available');expect(accounts[0].telemetry?.periods['7d'].requests).toBe(7);expect(accounts[0].telemetry?.periods.today.models).toEqual([]);
+    expect(accounts[0].telemetry?.detail).toBe('available');expect(accounts[0].telemetry?.periods['7d'].requests).toBe(7);expect(accounts[0].telemetry?.periods.today.models).toEqual([{model:'opus',usageUsd:'999'}]);
+    const models=aggregateTelemetry([{fresh:true,telemetry:accounts[0].telemetry}],'7d').models;
+    expect(models[0]).toMatchObject({value:null,covered:0,reference:{value:'999',covered:1}});expect(models[0].reference.oldestAt).toBe(accounts[0].telemetry?.modelsAt);
     expect(accounts[0].telemetry?.periods.today.requests).toBe(42);expect(accounts[0].telemetry?.activity.rpm).toBe(9);
+  });
+  it('keeps current model totals separate from mixed fresh and delayed source caches',()=>{
+    const fresh=normalizeTelemetry('ai008',upstream()),delayed=structuredClone(fresh);
+    fresh.modelsAt=new Date().toISOString();fresh.periods['7d'].models=[{model:'opus',usageUsd:'15'}];
+    delayed.modelsAt=new Date(Date.now()-3600000).toISOString();delayed.periods['7d'].models=[{model:'opus',usageUsd:'25'}];
+    const result=aggregateTelemetry([{fresh:true,telemetry:fresh},{fresh:true,telemetry:delayed}],'7d');
+    expect(result.models[0]).toMatchObject({value:'15',covered:1,total:2,reference:{value:'40',covered:2,total:2,oldestAt:delayed.modelsAt,newestAt:fresh.modelsAt}});
+    expect(result.models[1].reference.value).toBeNull();
   });
   it('aggregates partial coverage exactly and excludes previous-day daily counters',()=>{
     const d=normalizeTelemetry('ai008',upstream()),missing=normalizeTelemetry('ai008',{stats:{rpm:0}}),old={...d,day:'2000-01-01'};
@@ -68,6 +78,7 @@ describe('upstream operational telemetry',()=>{
       vi.setSystemTime(new Date('2026-10-18T16:02:00Z'));const d=normalizeTelemetry('ai008',upstream());
       d.modelsAt='2026-10-18T15:59:00Z';d.periods.today.models=[{model:'opus',usageUsd:'777'}];
       const result=aggregateTelemetry([{telemetry:d,fresh:true}],'today');expect(result.requests.value).toBe('42');expect(result.models[0].value).toBeNull();
+      expect(result.models[0].reference.value).toBeNull();
     }finally{vi.useRealTimers();}
   });
 });
@@ -95,7 +106,7 @@ describe('telemetry ownership, retention and accounting separation',()=>{
   it('shows self and every downstream level, excluding sibling, unverified and unassigned data from both APIs',async()=>{
     await account(agent,'self@example.com');await account(leaf,'downstream@example.com');await account(sibling,'sibling-secret@example.com');await account(agent,'unverified@example.com',false);await account(null,'unassigned@example.com');
     const response=await request('/api/telemetry'),data=response.json();expect(response.statusCode).toBe(200);expect(data.total).toBe(2);expect(data.totals.rpm.value).toBe('6');expect(data.members).toHaveLength(2);
-    expect(response.body).not.toMatch(/secret-master|secret-upstream|sibling-secret|unverified|unassigned|credentials|external_id/);
+    expect(response.body).not.toMatch(/secret-master|secret-upstream|sibling-secret|unverified@example|unassigned@example|credentials|external_id/);
     expect((await request('/api/telemetry?scope=self')).json().rows.map((r:any)=>r.email)).toEqual(['self@example.com']);
     expect((await request('/api/telemetry?scope=descendants')).json().rows.map((r:any)=>r.email)).toEqual(['downstream@example.com']);
     const trend=await request('/api/telemetry/trend');expect(trend.json().samples[0].rpm).toBe(6);expect(trend.json().samples[0].rpm_covered).toBe(2);
