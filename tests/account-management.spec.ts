@@ -10,6 +10,7 @@ test('platform account management shows personal prices, retains failed state ch
   await expect(row).not.toContainText('private-upstream-');await row.getByRole('button',{name:'平台管理',exact:true}).click();
   let dialog=page.getByRole('dialog',{name:'平台账号管理',exact:true});
   await expect(dialog.locator('.account-platform-card')).toHaveCount(3);await expect(dialog).not.toContainText('private-upstream-');
+  await expect(dialog.getByLabel('账号固定代理',{exact:true})).toBeVisible();
   for(const [provider,rate] of [['Gatelink','0.5000'],['AI008','0.6000'],['Mini CC Gateway','0.7000']])await expect(dialog.getByRole('region',{name:provider,exact:true}).locator('.account-platform-price .rate-value')).toHaveText(`× ${rate}`);
   const accounts=(await(await page.request.get('/api/accounts')).json()).accounts,account=accounts.find((value:any)=>value.email==='claude-fixture@example.com');
   const ai=account.bindings.find((value:any)=>value.provider==='ai008');
@@ -24,9 +25,14 @@ test('platform account management shows personal prices, retains failed state ch
   await page.getByLabel('登录邮箱').fill('leaf@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-agent-password');await page.getByRole('button',{name:'进入工作空间'}).click();
   await expect(page.locator('.user-card strong')).toHaveText('测试下级');
   const headers={'x-ccmax-request':'1'},proxy=await(await page.request.post('/api/proxies',{headers,data:{name:'Management fixed proxy',url:'http://management.proxy.example.com:8080'}})).json();
-  const bound=await page.request.post(`/api/accounts/${account.id}/proxy`,{headers,data:{proxyId:proxy.id}});expect(bound.ok(),await bound.text()).toBe(true);
   await page.getByRole('link',{name:'账号管理',exact:false}).first().click();await page.getByRole('row').filter({hasText:account.email}).getByRole('button',{name:'平台管理',exact:true}).click();
   dialog=page.getByRole('dialog',{name:'平台账号管理',exact:true});
+  await dialog.getByLabel('账号固定代理',{exact:true}).selectOption(proxy.id);await dialog.getByRole('button',{name:'绑定所选代理',exact:true}).click();
+  await expect(dialog.getByText('固定出口代理：Management fixed proxy',{exact:true})).toBeVisible();
+  const disabled=await page.request.patch(`/api/proxies/${proxy.id}`,{headers,data:{enabled:false}});expect(disabled.ok()).toBe(true);
+  await dialog.getByRole('button',{name:'刷新账号状态',exact:true}).click();await expect(dialog.getByRole('button',{name:'允许上号',exact:true})).toBeVisible();
+  await expect(dialog.getByRole('region',{name:'AI008',exact:true}).getByRole('button',{name:'重新授权',exact:true})).toBeDisabled();
+  await dialog.getByRole('button',{name:'允许上号',exact:true}).click();await expect(dialog.getByRole('region',{name:'AI008',exact:true}).getByRole('button',{name:'重新授权',exact:true})).toBeEnabled();
   await expect(dialog).not.toContainText('private-upstream-');
   for(const badge of await dialog.locator('.account-platform-price .rate-value').all())await expect(badge).toHaveText('× 0.1000');
   await expect(dialog.getByRole('region',{name:'Gatelink',exact:true})).toContainText('上游管理员权限');
@@ -45,4 +51,9 @@ test('platform account management shows personal prices, retains failed state ch
   const request=page.waitForRequest(`**/api/bindings/${ai.id}/reauthorize`);await onboard.getByRole('button',{name:'生成重新授权链接',exact:true}).click();const payload=(await request).postDataJSON();expect(payload).toHaveProperty('options');expect(payload.options).not.toHaveProperty('proxy');
   await expect(onboard.locator('.oauth-attempt')).toHaveCount(1);await expect(onboard.locator('.oauth-attempt')).toContainText('AI008');await expect(onboard.locator('.oauth-attempt .rate-value')).toHaveText('× 0.1000');
   const after=(await(await page.request.get('/api/accounts')).json()).accounts.find((value:any)=>value.id===account.id);expect(after.bindings.map((value:any)=>value.id).sort()).toEqual(account.bindings.map((value:any)=>value.id).sort());
+  await onboard.getByRole('button',{name:'关闭弹窗'}).click();await page.locator('.user-card').click();
+  await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
+  await page.getByRole('link',{name:'账号管理',exact:false}).first().click();await page.getByRole('row').filter({hasText:account.email}).getByRole('button',{name:'平台管理',exact:true}).click();
+  dialog=page.getByRole('dialog',{name:'平台账号管理',exact:true});await dialog.getByRole('region',{name:'Gatelink',exact:true}).getByRole('button',{name:'重新授权',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'重新授权平台账号',exact:true}).locator('.target-card strong')).toHaveText('Gatelink');
 });

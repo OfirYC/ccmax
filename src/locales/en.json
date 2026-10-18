@@ -1103,5 +1103,10 @@
   "Gatelink 逐账号金额与日账单合计不一致": "Gatelink per-account amounts do not match the daily total",
   "数据截止 {0}": "Data through {0}",
   "有 {0} 个账号快照未成功，采集窗口内下一轮自动重试。": "{0} account snapshots failed. They will retry on the next pass within the collection window.",
-  "快照任务执行中断，下一轮自动重试": "Snapshot collection was interrupted; it will retry on the next pass"
+  "快照任务执行中断，下一轮自动重试": "Snapshot collection was interrupted; it will retry on the next pass",
+  "仅账号本人或管理员可重新授权已核实归属的平台账号": "Only the account owner or an administrator can reauthorize a platform account with verified ownership",
+  "此平台的代理尚未核实，请先同步固定代理或重新授权": "This platform’s proxy is unverified. Sync the fixed proxy or reauthorize first",
+  "绑定代理后，可分别同步或重新授权各平台，再启用需要恢复的平台。": "After binding a proxy, sync or reauthorize each platform separately, then enable the platforms you want to restore.",
+  "已占用：{0}": "In use by: {0}",
+  "账号所属团队已停用": "The account’s team is disabled"
 }

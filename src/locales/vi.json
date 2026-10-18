@@ -1103,5 +1103,10 @@
   "Gatelink 逐账号金额与日账单合计不一致": "Số tiền từng tài khoản Gatelink không khớp tổng ngày",
   "数据截止 {0}": "Dữ liệu đến {0}",
   "有 {0} 个账号快照未成功，采集窗口内下一轮自动重试。": "{0} ảnh chụp tài khoản chưa thành công. Hệ thống sẽ thử lại ở lượt tiếp theo trong thời gian thu thập.",
-  "快照任务执行中断，下一轮自动重试": "Tác vụ chụp bị gián đoạn; sẽ tự động thử lại ở lượt tiếp theo"
+  "快照任务执行中断，下一轮自动重试": "Tác vụ chụp bị gián đoạn; sẽ tự động thử lại ở lượt tiếp theo",
+  "仅账号本人或管理员可重新授权已核实归属的平台账号": "Chỉ chủ tài khoản hoặc quản trị viên mới được cấp quyền lại tài khoản nền tảng đã xác minh chủ sở hữu",
+  "此平台的代理尚未核实，请先同步固定代理或重新授权": "Proxy của nền tảng này chưa được xác minh. Hãy đồng bộ proxy cố định hoặc cấp quyền lại trước",
+  "绑定代理后，可分别同步或重新授权各平台，再启用需要恢复的平台。": "Sau khi gắn proxy, hãy đồng bộ hoặc cấp quyền lại từng nền tảng, rồi bật các nền tảng cần khôi phục.",
+  "已占用：{0}": "Đang dùng cho: {0}",
+  "账号所属团队已停用": "Nhóm của tài khoản đã bị vô hiệu hóa"
 }

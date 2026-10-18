@@ -33,7 +33,11 @@ describe('owned platform account recovery',()=>{
     const binding=await db.transaction(tx=>saveBinding(tx,connection,{id:`original-${provider}`,email:account.email,name:'Original',status:'disabled',dailyUsd:'123.45',cost7d:'456',cost30d:'789',utilization:12}));
     return {connection,binding};
   }
-  it('allows each verified owner to repair an existing binding despite other pending proxy checks and preserves every financial row',async()=>{
+  it.each(['agent','administrator'])('lets an %s recover each platform while retaining the original owner and every financial row',async actor=>{
+    if(actor==='administrator') {
+      const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'recovery-owner-password'}});
+      cookie=String(login.headers['set-cookie']).split(';')[0];
+    }
     const platforms=await Promise.all((['ai008','minicc','gatelink'] as const).map(platform));
     for(const {binding} of platforms)await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:'2021-01-01',rawUsd:'100',final:true,source:'verified-recovery-test'}));
     const history=await db.query('SELECT * FROM usage_days ORDER BY id'),earnings=await db.query('SELECT * FROM earnings ORDER BY id');
@@ -75,6 +79,7 @@ describe('owned platform account recovery',()=>{
       expect((await call('POST',`/api/bindings/${binding.id}/reauthorize`,{options:{},key:requestKey})).json().id).toBe(start.json().id);
       expect((await call('POST',`/api/bindings/${binding.id}/reauthorize`,{options:{},key:id()})).statusCode).toBe(409);
       const [attempt]=await db.query('SELECT * FROM oauth_attempts WHERE connection_id=$1',[connection.id]);expect(box.decrypt(attempt.secret).bindingId).toBe(binding.id);
+      const visible=await call('GET',`/api/accounts/${account.id}/attempts`);expect(visible.statusCode).toBe(200);expect(visible.json().attempts.some((a:any)=>a.id===attempt.id)).toBe(true);
       const exchanged=await call('POST',`/api/oauth/${attempt.id}/exchange`,{callback:`private-code-${connection.provider}#${connection.provider}`,key:id()});expect(exchanged.statusCode).toBe(200);
       await worker.runOne();
       expect((await db.query('SELECT state,error FROM jobs WHERE id=$1',[exchanged.json().id]))[0]).toMatchObject({state:'succeeded',error:null});
@@ -84,6 +89,7 @@ describe('owned platform account recovery',()=>{
     expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(history);
     expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(earnings);
     expect(await db.query('SELECT * FROM bindings')).toHaveLength(3);
+    expect((await db.query('SELECT owner_id,ownership_verified FROM accounts WHERE id=$1',[account.id]))[0]).toMatchObject({owner_id:agent.id,ownership_verified:true});
     expect(await db.query("SELECT * FROM audits WHERE action='binding.reauthorized'")).toHaveLength(3);
     expect(writes.filter(write=>write.startsWith('exchange-'))).toHaveLength(3);
   });
@@ -102,8 +108,39 @@ describe('owned platform account recovery',()=>{
     expect(await db.query('SELECT * FROM jobs')).toHaveLength(0);
   });
 
+  it('keeps another member’s OAuth attempts private when an administrator manages their account',async()=>{
+    const {connection}=await platform('ai008'),attemptId=id();
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
+      VALUES($1,$2,$3,$4,$5,'https://auth.example/?state=member-private',$6)`,[attemptId,agent.id,connection.id,account.id,box.encrypt({}),new Date(Date.now()+600000)]);
+    expect((await call('GET',`/api/accounts/${account.id}/attempts`)).json().attempts).toHaveLength(1);
+    const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'recovery-owner-password'}});
+    cookie=String(login.headers['set-cookie']).split(';')[0];
+    const visible=await call('GET',`/api/accounts/${account.id}/attempts`);
+    expect(visible.statusCode).toBe(200);expect(visible.json().attempts).toEqual([]);
+    expect((await call('POST',`/api/oauth/${attemptId}/exchange`,{callback:'private-code#member-private',key:id()})).statusCode).toBe(404);
+    expect(await db.query('SELECT * FROM jobs')).toHaveLength(0);
+  });
+
+  it('blocks administrator recovery if the account owner is disabled after queuing',async()=>{
+    const {binding}=await platform('ai008');
+    const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'recovery-owner-password'}});
+    cookie=String(login.headers['set-cookie']).split(';')[0];
+    const job=await call('POST',`/api/bindings/${binding.id}/reauthorize`,{options:{},key:id()});expect(job.statusCode).toBe(200);
+    await db.query('UPDATE users SET active=false WHERE id=$1',[agent.id]);
+    let requests=0;
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async()=>{requests++;throw new Error('Unexpected upstream request');}));
+    await worker.runOne();
+    expect(requests).toBe(0);
+    expect((await db.query('SELECT state,error FROM jobs WHERE id=$1',[job.json().id]))[0]).toMatchObject({state:'needs_attention',error:'账号所属团队已停用'});
+    expect(await db.query('SELECT * FROM oauth_attempts')).toHaveLength(0);
+    expect((await db.query('SELECT owner_id FROM accounts WHERE id=$1',[account.id]))[0].owner_id).toBe(agent.id);
+  });
+
   it('does not display enabled locally if the upstream accepted a write but did not apply it',async()=>{
     const {connection,binding}=await platform('ai008');await db.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1',[binding.id,proxyId]);
+    // A second platform awaiting proxy checks must not block this verified one.
+    const pending=await platform('minicc');
+    expect((await call('POST',`/api/bindings/${pending.binding.id}/status`,{enabled:true,key:id()})).statusCode).toBe(409);
     let changed=false;
     const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
       if(String(input).endsWith('/auth/admin-login'))return Response.json({user:{role:'admin'},accessToken:'fixture'});
@@ -117,6 +154,7 @@ describe('owned platform account recovery',()=>{
     const retry=await call('POST',`/api/bindings/${binding.id}/status`,{enabled:true,key:id()});await worker.runOne();
     expect((await db.query('SELECT state FROM jobs WHERE id=$1',[retry.json().id]))[0].state).toBe('succeeded');
     expect((await db.query('SELECT status FROM bindings WHERE id=$1',[binding.id]))[0].status).toBe('active');
+    expect((await db.query('SELECT status,proxy_id FROM bindings WHERE id=$1',[pending.binding.id]))[0]).toMatchObject({status:'disabled',proxy_id:null});
   });
 
   it.each(['different ID','different email','disabled proxy','disabled owner'] as const)('preserves bindings and sealed money on recovery failure: %s',async failure=>{

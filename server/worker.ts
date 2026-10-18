@@ -1,6 +1,6 @@
 import type { DB, Row } from './db.js';
 import { createHash } from 'node:crypto';
-import { assert, audit, id, today, type SecretBox } from './core.js';
+import { ancestry, assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
 import { ProviderClient, UpstreamError, type ProviderKey, type UpstreamAccount } from './providers.js';
 import { accountProxy, requireConsistentBindings } from './proxies.js';
@@ -94,7 +94,9 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       if(recoveryId) {
         [recovery]=await db.query(`SELECT b.*,a.owner_id,a.ownership_verified,a.email FROM bindings b JOIN accounts a ON a.id=b.account_id
           WHERE b.id=$1 AND b.account_id=$2 AND b.connection_id=$3`,[recoveryId,payload.accountId,connection.id]);
-        assert(recovery?.ownership_verified&&recovery.owner_id===actor.id,'只能重新授权自己名下且已核实归属的平台账号');
+        assert(recovery?.ownership_verified&&(recovery.owner_id===actor.id||actor.role==='owner'),'仅账号本人或管理员可重新授权已核实归属的平台账号');
+        const ownerChain=await ancestry(db,recovery.owner_id);
+        assert(ownerChain.length>0&&ownerChain.every(user=>user.active),'账号所属团队已停用');
       }
       if(['oauth_start','oauth_exchange','import_rt','set_proxy'].includes(job.kind)) {
         assert(payload.proxyId,'旧上号任务缺少账号代理快照，请重新发起上号');
@@ -128,7 +130,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         });
         result={accounts:accounts.length,skippedDaily};
       } else if(job.kind==='oauth_start') {
-        const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[payload.accountId,actor.id]);
+        const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[payload.accountId,recovery?.owner_id??actor.id]);
         assert(account,'账号归属不匹配');
         const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
         assert(recovery?bound?.id===recovery.id:!bound,'平台已存在该账号，请由管理员核对归属后使用');
@@ -145,7 +147,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         result={accountId:account.id,attemptId:oauthId,authorizationUrl:oauth.url,expiresIn:oauth.expiresIn};
       } else if(job.kind==='oauth_exchange'||job.kind==='import_rt') {
         const accountId=attempt?.account_id??payload.accountId;
-        const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,actor.id]);assert(account,'账号归属不匹配');
+        const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,recovery?.owner_id??actor.id]);assert(account,'账号归属不匹配');
         const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
         assert(recovery?bound?.id===recovery.id:!bound,'平台已存在该账号，未重复写入，请由管理员核对归属');
         if(recovery)await client.verifySubmissionTarget(recovery.external_id,account.email);
@@ -155,7 +157,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
           await accountProxy(tx,box,account.id,proxy.id);
           if(recovery) {
             const [current]=await tx.query(`SELECT b.id FROM bindings b JOIN accounts a ON a.id=b.account_id
-              WHERE b.id=$1 AND b.account_id=$2 AND b.external_id=$3 AND a.owner_id=$4 AND a.ownership_verified FOR UPDATE OF b,a`,[recovery.id,account.id,remote.id,actor.id]);
+              WHERE b.id=$1 AND b.account_id=$2 AND b.external_id=$3 AND a.owner_id=$4 AND a.ownership_verified FOR UPDATE OF b,a`,[recovery.id,account.id,remote.id,recovery.owner_id]);
             assert(current,'重新授权的原绑定或账号归属已变化，请核对',409);
             // Token refresh never resets daily counters, historical usage or earnings.
             await tx.query('UPDATE bindings SET status=$2,proxy_id=$3,last_seen_at=now() WHERE id=$1',[recovery.id,remote.status,proxy.id]);
@@ -179,7 +181,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         assert(binding && ((binding.ownership_verified&&binding.owner_id===actor.id)||actor.role==='owner'),'不能操作该账号');
         if(payload.enabled) {
           const proxy=await accountProxy(db,box,binding.account_id);
-          await requireConsistentBindings(db,binding.account_id,proxy.id);
+          assert(binding.proxy_id===proxy.id,'此平台的代理尚未核实，请先同步固定代理或重新授权',409);
         }
         await client.verifySubmissionTarget(binding.external_id,binding.email);
         await client.setEnabled(binding.external_id,payload.enabled);
