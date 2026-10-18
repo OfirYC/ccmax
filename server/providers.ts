@@ -313,13 +313,23 @@ export class ProviderClient {
     // proxy already occupied by this account. Upstream writes enforce capacity.
     return this.usableProxy(record,true);
   }
-  async provisionProxy(url:string) {
+  async provisionProxy(url:string,existingExternalId?:string) {
     const normalized=parseProxy(url).url;
     if(this.provider==='gatelink')return null;
     const before=await this.remoteProxies();
     const exact=before.filter(p=>this.proxyMatches(p,normalized,true));
     assert(exact.length<=1,'上游出现重复代理，请管理员核对平台映射',502);
-    if(exact.length===1)return this.usableProxy(exact[0]);
+    if(exact.length===1) {
+      let existing=false;
+      if(existingExternalId) {
+        // Reuse capacity only when this exact account already holds the proxy.
+        const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(existingExternalId)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(existingExternalId)}`;
+        const {account}=await this.call(path);
+        const proxyId=this.provider==='minicc'?(exact[0].upstream_id??exact[0].id):exact[0].id;
+        existing=!!account&&String(account.outbound_proxy_id||'')===String(proxyId);
+      }
+      return this.usableProxy(exact[0],existing);
+    }
     const ids=new Set(before.map(p=>String(this.provider==='minicc'?(p.upstream_id??p.id):p.id)));
     const imported=await this.call(this.provider==='minicc'?'/api/proxies/import':'/api/admin/outbound-proxies/import','POST',{text:normalized});
     assert(!imported.failed && !(imported.errors?.length),'上游代理导入或连通测试失败，请在平台核对代理后重试',502);

@@ -168,7 +168,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const history=await db.query('SELECT * FROM usage_days'),earnings=await db.query('SELECT * FROM earnings');
     const paths=['/api/connections','/api/dashboard','/api/accounts','/api/jobs','/api/proxies','/api/telemetry','/api/usage','/api/usage/export',`/api/invoices/${invoice.id}/export`,`/api/invoices/preview?from=1970-01-01&to=${prior()}`];
     for(const cookie of [ownerCookie,childCookie])for(const path of paths) {
-      const response=await api(cookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);expect(response.body,path).toContain(`AI008 · ${conn.id.slice(0,8)}`);
+      const response=await api(cookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);if(path==='/api/proxies'&&cookie===ownerCookie)expect(response.json().proxies).toEqual([]);else expect(response.body,path).toContain(`AI008 · ${conn.id.slice(0,8)}`);
     }
     expect((await api(childCookie,'GET',`/api/accounts/${acct.id}/attempts`)).body).not.toContain(internal);
     expect((await db.query('SELECT name FROM connections WHERE id=$1',[conn.id]))[0].name).toBe(internal);
@@ -401,8 +401,9 @@ describe('CCMAX authorization and ledger safeguards', () => {
     await observe(binding.id,'100',true);
     const changed=await db.transaction(tx=>saveBinding(tx,conn,{...observed,proxyExternalId:'wrong-proxy'}));expect(changed.proxy_id).toBeNull();
     const second=await connection('ai008');
-    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:[{connectionId:second.id,options:{}}],key:id()})).statusCode).toBe(409);
-    expect((await api(cookie,'POST',`/api/bindings/${binding.id}/status`,{enabled:true,key:id()})).statusCode).toBe(409);
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:[{connectionId:second.id,options:{}}],key:id()})).statusCode).toBe(200);
+    expect((await api(cookie,'POST',`/api/bindings/${binding.id}/status`,{enabled:true,key:id()})).statusCode).toBe(200);
+    expect((await db.query('SELECT proxy_id FROM bindings WHERE id=$1',[binding.id]))[0].proxy_id).toBeNull();
     const restored=await db.transaction(tx=>saveBinding(tx,conn,observed));expect(restored.proxy_id).toBe(proxyId);
     expect((await db.query('SELECT raw_usd,state FROM usage_days'))[0]).toMatchObject({raw_usd:'100.00000000',state:'final'});
     expect((await db.query('SELECT profit_usd FROM earnings'))[0].profit_usd).toBe('50.00000000');

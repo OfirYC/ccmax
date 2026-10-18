@@ -1,12 +1,32 @@
-import { PlatformIdentity, platformOptionLabel, usePlatformCatalog } from '../PlatformIdentity';
 import { t } from '../i18n';
 import { useLocale } from '../LanguageSwitcher';
 import { useState } from 'react';
 import { Plus, ShieldCheck } from 'lucide-react';
 import { mutate, post, useData } from '../api';
-import { Badge, Empty, ErrorBox, Field, Form, Loading, Modal, PageHead, Submit, Table, useSession, useToast } from '../components';
+import { Badge, Empty, ErrorBox, Field, Form, Loading, Modal, PageHead, Submit, Table, useToast } from '../components';
 
-export default function Proxies() {useLocale();
-  const {user}=useSession(),toast=useToast(),{data,error,loading,refresh}=useData('/api/proxies'),connections=usePlatformCatalog(),[adding,setAdding]=useState(false),[mapping,setMapping]=useState<any>(null);
-  return <><PageHead eyebrow={t("账号出口代理")} title={t("出口代理")} description={t("每个 Claude 账号固定绑定一条代理，所有平台统一使用。")} actions={<button className="button primary" onClick={()=>setAdding(true)}><Plus size={16}/>{t("添加代理")}</button>}/><ErrorBox error={error}/><div className="notice"><ShieldCheck size={18}/><span>{t("代理认证信息加密保存。账号绑定后不可直接替换；禁止上号会阻止该代理的新授权、RT 导入及账号启用，不会修改既有账单。")}</span></div><section className="panel">{loading?<Loading/>:data?.proxies.length?<Table headers={[t("代理名称 / 出口"),t("添加人"),t("固定账号"),t("平台映射"),t("允许上号"),t("操作")]}>{data.proxies.map((p:any)=><tr key={p.id}><td><strong>{p.name}</strong><small className="mono">{p.endpoint}</small></td><td>{p.owner_name}</td><td>{p.account_email||<span className="muted">{t("未占用")}</span>}</td><td>{p.mappings.length?p.mappings.map((m:any)=><div key={m.connection_id}><PlatformIdentity provider={m.provider} connectionId={m.connection_id}/><small className="mono">{m.external_id}</small></div>):<span className="muted">{t("上号时自动导入和匹配")}</span>}</td><td><Badge state={p.enabled?'active':'disabled'}/></td><td><div className="row-actions">{(p.owner_id===user.id||user.role==='owner')&&<button onClick={async()=>{try{await mutate(`/api/proxies/${p.id}`,'PATCH',{enabled:!p.enabled});await refresh();}catch(e){toast((e as Error).message,'error');}}}>{p.enabled?t("禁止上号"):t("允许上号")}</button>}{user.role==='owner'&&<button onClick={()=>setMapping(p)}>{t("核实平台映射")}</button>}</div></td></tr>)}</Table>:<Empty title={t("先添加账号专属代理")} detail={t("上号前必须添加并绑定代理，系统不会自动分配其他出口或改为直连。")}/>}</section>{adding&&<Modal title={t("添加出口代理")} onClose={()=>setAdding(false)}><Form onSubmit={async f=>{await post('/api/proxies',{name:f.get('name'),url:f.get('url')});toast(t("代理已加密保存，可在账号上号时绑定"));setAdding(false);await refresh();}}><Field label={t("代理名称")}><input name="name" required maxLength={80}/></Field><Field label={t("代理地址")} hint={t("支持 http、https、socks5h URL；socks5 统一转换为 socks5h。")}><input aria-label={t("代理地址")} name="url" type="password" required maxLength={2000} autoComplete="new-password" placeholder="http://user:password@host:port"/></Field><Submit>{t("保存代理")}</Submit></Form></Modal>}{mapping&&<Modal title={t("核实平台代理映射")} subtitle={`${mapping.name} · ${mapping.endpoint}`} onClose={()=>setMapping(null)}><p className="form-hint">{t("新代理在上号时自动导入。上游已有代理且隐藏认证信息时，请先在上游核实其完整地址、用户名和密码与此代理一致，再填入代理 ID；系统同时校验出口地址。")}</p><Form onSubmit={async f=>{await post(`/api/proxies/${mapping.id}/mappings`,{connectionId:f.get('connectionId'),externalId:f.get('externalId'),evidence:f.get('evidence')});toast(t("平台代理映射已核实"));setMapping(null);await refresh();}}><Field label={t("平台代理连接")}><select aria-label={t("平台代理连接")} name="connectionId" required><option value="">{t("选择连接")}</option>{connections.data?.connections.filter((c:any)=>c.enabled&&c.provider!=='gatelink').map((c:any)=><option key={c.id} value={c.id}>{platformOptionLabel(c)}</option>)}</select></Field><Field label={t("上游代理 ID")}><input name="externalId" required maxLength={200}/></Field><Field label={t("核对说明")}><input name="evidence" required minLength={5} maxLength={2000}/></Field><label className="check-row"><input type="checkbox" required/>{t("已核实上游代理的完整认证信息与此固定代理一致")}</label><Submit>{t("核实并保存映射")}</Submit></Form></Modal>}</>;
+export default function Proxies() {
+  useLocale();
+  const toast=useToast(),{data,error,loading,refresh}=useData('/api/proxies'),[adding,setAdding]=useState(false);
+  return <>
+    <PageHead eyebrow={t('账号出口代理')} title={t('出口代理')} description={t('只显示你自己的代理。每个 Claude 账号绑定一次，所有平台自动沿用。')}
+      actions={<button className="button primary" onClick={()=>setAdding(true)}><Plus size={16}/>{t('添加代理')}</button>}/>
+    <ErrorBox error={error}/>
+    <div className="notice"><ShieldCheck size={18}/><span>{t('代理认证信息加密保存。账号绑定后不可直接替换；禁止上号会阻止该代理的新授权、RT 导入及账号启用，不会修改既有账单。')}</span></div>
+    <section className="panel">{loading?<Loading/>:data?.proxies.length?<Table headers={[t('代理名称 / 出口'),t('固定账号'),t('允许上号'),t('操作')]}>
+      {data.proxies.map((proxy:any)=><tr key={proxy.id}>
+        <td><strong>{proxy.name}</strong><small className="mono">{proxy.endpoint}</small></td>
+        <td>{proxy.account_email||<span className="muted">{t('未占用')}</span>}</td>
+        <td><Badge state={proxy.enabled?'active':'disabled'}/></td>
+        <td><div className="row-actions"><button onClick={async()=>{try{await mutate(`/api/proxies/${proxy.id}`,'PATCH',{enabled:!proxy.enabled});await refresh();}catch(error){toast((error as Error).message,'error');}}}>{proxy.enabled?t('禁止上号'):t('允许上号')}</button></div></td>
+      </tr>)}
+    </Table>:<Empty title={t('先添加账号专属代理')} detail={t('上号前必须添加并绑定代理，系统不会自动分配其他出口或改为直连。')}/>}</section>
+    {adding&&<Modal title={t('添加出口代理')} onClose={()=>setAdding(false)}><Form onSubmit={async form=>{
+      await post('/api/proxies',{name:form.get('name'),url:form.get('url')});toast(t('代理已加密保存，可在账号上号时绑定'));setAdding(false);await refresh();
+    }}>
+      <Field label={t('代理名称')}><input name="name" required maxLength={80}/></Field>
+      <Field label={t('代理地址')} hint={t('支持 http、https、socks5h URL；socks5 统一转换为 socks5h。')}><input aria-label={t('代理地址')} name="url" type="password" required maxLength={2000} autoComplete="new-password" placeholder="http://user:password@host:port"/></Field>
+      <Submit>{t('保存代理')}</Submit>
+    </Form></Modal>}
+  </>;
 }

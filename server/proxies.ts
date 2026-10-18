@@ -27,7 +27,3 @@ export async function accountProxy(db:DB,box:SecretBox,accountId:string,expected
   assert(!expectedId||expectedId===p.id,'账号代理与任务快照不一致，已阻止上号',409);
   return {...p,url:parseProxy(box.decrypt(p.secret).url).url};
 }
-export async function requireConsistentBindings(db:DB,accountId:string,proxyId:string) {
-  const [pending]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND proxy_id IS DISTINCT FROM $2 LIMIT 1',[accountId,proxyId]);
-  assert(!pending,'已有平台的代理尚未核对一致，请先由管理员核实已有绑定',409);
-}

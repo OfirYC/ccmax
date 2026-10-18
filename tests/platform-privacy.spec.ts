@@ -23,7 +23,7 @@ test('all platform surfaces ignore private account labels and display personal o
   await page.route('**/api/proxies',route=>route.fulfill({json:{proxies:[{id:randomUUID(),owner_name:'Fixture',account_email:account.email,name:'Fixture proxy',endpoint:'http://fixture.proxy.example:8080',enabled:true,mappings:[{connection_id:ai.id,provider:'ai008',connection_name:'private-upstream-proxy@example.com',external_id:'fixed-proxy'}]}]}}));
   async function identity(locator:any,rate:string){await expect(locator).toContainText('AI008');await expect(locator.locator('.rate-value')).toHaveText(`× ${rate}`);}
   await identity(page.locator('.platform-overview').filter({has:page.getByRole('heading',{name:'AI008',exact:true})}),'0.6000');
-  for(const path of ['/accounts','/analytics','/jobs','/proxies']){
+  for(const path of ['/accounts','/analytics','/jobs']){
     await page.goto(path);await expect(page.locator('.platform-identity').filter({hasText:'AI008'}).first()).toBeVisible();
     await identity(page.locator('.platform-identity').filter({hasText:'AI008'}).first(),'0.6000');await expect(page.locator('body')).not.toContainText('private-upstream-');
     if(path==='/accounts'){
@@ -35,6 +35,7 @@ test('all platform surfaces ignore private account labels and display personal o
       await page.getByRole('button',{name:'详情',exact:true}).click();await identity(page.getByRole('dialog').locator('.platform-identity'),'0.6000');await expect(page.getByRole('dialog')).not.toContainText('private-upstream-');await page.getByRole('button',{name:'关闭弹窗'}).click();
     }
   }
+  await page.goto('/proxies');await expect(page.locator('tbody')).toContainText('Fixture proxy');await expect(page.locator('body')).not.toContainText('private-upstream-');await expect(page.getByRole('columnheader',{name:'平台映射',exact:true})).toHaveCount(0);
   await page.goto('/platforms');const aiCard=page.locator('.connection-card').filter({has:page.getByRole('heading',{name:'AI008',exact:true})});await expect(aiCard).toBeVisible();await expect(page.locator('body')).not.toContainText('private-upstream-');
   await aiCard.getByRole('button',{name:'配置连接',exact:true}).click();const config=page.getByRole('dialog');await expect(config.getByLabel('连接名称',{exact:true})).toHaveCount(0);await expect(config.locator('input[name=username]')).toHaveValue('');await expect(config.locator('input[name=password]')).toHaveValue('');await expect(config).not.toContainText('private-upstream-');await config.getByRole('button',{name:'关闭弹窗'}).click();
   await page.goto('/usage');await page.getByLabel('开始日期').fill('1970-01-01');await expect(page.locator('tbody tr')).toHaveCount(2);await identity(page.locator('.platform-identity').filter({hasText:'AI008'}),'0.6000');await expect(page.locator('.platform-identity').filter({hasText:'AI008'})).toContainText('账单冻结折扣');

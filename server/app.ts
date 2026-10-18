@@ -6,9 +6,9 @@ import { z, ZodError } from 'zod';
 import type { DB, Row } from './db.js';
 import { AppError, assert, audit, dayString, hashPassword, id, nextDay, requireDirect, requireOwner, secretBox, subtree, today, verifyPassword } from './core.js';
 import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, withdrawalDestination } from './billing.js';
-import { enqueue } from './worker.js';
+import { enqueue, enqueueAccountProxySync } from './worker.js';
 import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './providers.js';
-import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings } from './proxies.js';
+import { accountProxy, parseProxy, proxyFingerprint } from './proxies.js';
 import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 import { apiKeyService } from './api-keys.js';
 import { assertWalletAccounting } from './financial-integrity.js';
@@ -258,10 +258,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
 
   app.get('/api/proxies',async req=>{
-    const ids=await subtree(db,req.user.id);
+    // A proxy pool is personal even when its owner can view a larger team.
     const proxies=await db.query(`SELECT p.id,p.owner_id,p.name,p.endpoint,p.enabled,p.created_at,u.name AS owner_name,a.id AS account_id,a.email AS account_email
       FROM proxies p JOIN users u ON u.id=p.owner_id LEFT JOIN accounts a ON a.proxy_id=p.id
-      WHERE p.owner_id=ANY($1::text[]) OR a.owner_id=ANY($1::text[]) ORDER BY p.created_at DESC`,[ids]);
+      WHERE p.owner_id=$1 ORDER BY p.created_at DESC`,[req.user.id]);
     const mappings=publicConnectionRows(req.user,await db.query(`SELECT m.proxy_id,m.connection_id,m.external_id,c.provider,c.name AS connection_name FROM proxy_bindings m JOIN connections c ON c.id=m.connection_id WHERE m.proxy_id=ANY($1::text[])`,[proxies.map(p=>p.id)]));
     return {proxies:proxies.map(p=>({...p,mappings:mappings.filter(m=>m.proxy_id===p.id)}))};
   });
@@ -276,7 +276,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.patch('/api/proxies/:id',async req=>{
     const proxyId=identifier.parse((req.params as Row).id),d=z.object({name:z.string().trim().min(1).max(80).optional(),enabled:z.boolean().optional()}).parse(req.body);
     await db.transaction(async tx=>{
-      const [p]=await tx.query('SELECT * FROM proxies WHERE id=$1 FOR UPDATE',[proxyId]);assert(p && (p.owner_id===req.user.id||req.user.role==='owner'),'只能管理自己添加的代理',403);
+      const [p]=await tx.query('SELECT * FROM proxies WHERE id=$1 FOR UPDATE',[proxyId]);assert(p?.owner_id===req.user.id,'只能管理自己添加的代理',403);
       await tx.query('UPDATE proxies SET name=$2,enabled=$3 WHERE id=$1',[proxyId,d.name??p.name,d.enabled??p.enabled]);
       await audit(tx,req.user.id,'proxy.update',proxyId,{enabled:d.enabled});
     });return {ok:true};
@@ -284,7 +284,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.post('/api/proxies/:id/mappings',async req=>{
     await requireOwner(req.user);
     const proxyId=identifier.parse((req.params as Row).id),d=z.object({connectionId:identifier,externalId:z.string().min(1).max(200),evidence:z.string().trim().min(5).max(2000)}).parse(req.body);
-    const [p]=await db.query('SELECT * FROM proxies WHERE id=$1',[proxyId]),[c]=await db.query('SELECT * FROM connections WHERE id=$1 AND enabled=true',[d.connectionId]);assert(p?.enabled && c,'代理或平台不可用');
+    const [p]=await db.query('SELECT * FROM proxies WHERE id=$1 AND owner_id=$2',[proxyId,req.user.id]),[c]=await db.query('SELECT * FROM connections WHERE id=$1 AND enabled=true',[d.connectionId]);assert(p?.enabled && c,'代理或平台不可用');
     assert(c.provider!=='gatelink','Gatelink 直接使用账号固定代理 URL，无需配置平台映射');
     const client=new ProviderClient(c.provider,box.decrypt(c.credentials));await client.login();await client.verifyProxyMapping(box.decrypt(p.secret).url,d.externalId);
     await db.transaction(async tx=>{
@@ -306,18 +306,36 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       return {...b,data_fresh:fresh,snapshot_at:telemetry?.sourceAt??telemetry?.collectedAt??null,
         today_usd:fresh&&telemetry?.day===today()?telemetry.periods.today.billedUsd:null};
     }));
-    return {accounts:accounts.map(a=>({...a,bindings:visibleBindings.filter(b=>b.account_id===a.id)})),providers:PROVIDERS};
+    const proxyJobs=await db.query(`SELECT DISTINCT ON(subject_id,connection_id) subject_id,connection_id,state,error FROM jobs
+      WHERE kind='set_proxy' AND subject_id=ANY($1::text[]) ORDER BY subject_id,connection_id,created_at DESC`,[accounts.map(a=>a.id)]);
+    return {accounts:accounts.map(a=>{
+      const own=a.owner_id===req.user.id;
+      const pending=bindings.filter(b=>b.account_id===a.id&&b.enabled&&b.provider!=='gatelink'&&b.proxy_id!==a.proxy_id);
+      const jobs=proxyJobs.filter(job=>job.subject_id===a.id&&pending.some(b=>b.connection_id===job.connection_id));
+      const active=jobs.find(job=>['queued','running'].includes(job.state)),failed=jobs.find(job=>['failed','needs_attention'].includes(job.state));
+      return {...a,proxy_bound:!!a.proxy_id,proxy_id:own?a.proxy_id:null,proxy_name:own?a.proxy_name:null,proxy_endpoint:own?a.proxy_endpoint:null,
+        proxy_sync_state:!a.proxy_id?null:active?.state??(failed?'needs_attention':pending.length?'pending':'succeeded'),proxy_sync_error:failed?.error??null,
+        bindings:visibleBindings.filter(b=>b.account_id===a.id).map(b=>({...b,proxy_verified:!!a.proxy_id&&b.proxy_id===a.proxy_id,proxy_id:own?b.proxy_id:null}))};
+    }),providers:PROVIDERS};
   });
   app.post('/api/accounts/:id/proxy',async req=>{
     const accountId=identifier.parse((req.params as Row).id),d=z.object({proxyId:identifier}).parse(req.body);
     return db.transaction(async tx=>{
-      const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);assert(a && (a.owner_id===req.user.id||req.user.role==='owner'),'只能为自己名下账号绑定代理',403);
+      const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);assert(a?.owner_id===req.user.id,'只能为自己名下账号绑定代理',403);
       assert(!a.proxy_id||a.proxy_id===d.proxyId,'账号已固定绑定代理，不能在平台之间切换代理',409);
-      const [p]=await tx.query('SELECT * FROM proxies WHERE id=$1 FOR UPDATE',[d.proxyId]);assert(p?.enabled && (p.owner_id===req.user.id||req.user.role==='owner'),'请选择自己添加且已启用的代理',403);
-      assert(p.owner_id===a.owner_id||p.owner_id===req.user.id,'不能把其他团队上传的代理绑定给此账号',403);
+      const [p]=await tx.query('SELECT * FROM proxies WHERE id=$1 FOR UPDATE',[d.proxyId]);assert(p?.enabled && p.owner_id===req.user.id,'请选择自己添加且已启用的代理',403);
       await tx.query('UPDATE accounts SET proxy_id=$2 WHERE id=$1',[accountId,p.id]);
       await audit(tx,req.user.id,'account.proxy.bind',accountId,{proxyId:p.id});
-      return {account:{...a,proxy_id:p.id,proxy_name:p.name,proxy_endpoint:p.endpoint,proxy_enabled:p.enabled}};
+      const sync=await enqueueAccountProxySync(tx,box,req.user.id,accountId,id());
+      return {account:{...a,proxy_bound:true,proxy_id:p.id,proxy_name:p.name,proxy_endpoint:p.endpoint,proxy_enabled:p.enabled},...sync};
+    });
+  });
+  app.post('/api/accounts/:id/proxy/sync',async req=>{
+    const accountId=identifier.parse((req.params as Row).id),d=z.object({key}).parse(req.body);
+    return db.transaction(async tx=>{
+      const [a]=await tx.query('SELECT owner_id,ownership_verified FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
+      assert(a?.ownership_verified&&(a.owner_id===req.user.id||req.user.role==='owner'),'不能修改该账号代理',403);
+      return enqueueAccountProxySync(tx,box,req.user.id,accountId,d.key);
     });
   });
   app.post('/api/bindings/:id/proxy/confirm',async req=>{
@@ -369,7 +387,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const d=z.object({targets:z.array(z.object({connectionId:identifier,options:optionSchema})).min(1).max(10),key}).parse(req.body);
     return db.transaction(async tx=>{
       const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2 FOR UPDATE',[accountId,req.user.id]);assert(a,'只能为自己名下的账号上号',403);
-      const proxy=await accountProxy(tx,box,accountId);await requireConsistentBindings(tx,accountId,proxy.id);
+      const proxy=await accountProxy(tx,box,accountId);
       assert(new Set(d.targets.map(t=>t.connectionId)).size===d.targets.length,'不能重复选择同一平台连接');
       const jobs=[];
       for(const t of d.targets) {
@@ -422,7 +440,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
         const [binding]=await tx.query(`SELECT b.id FROM bindings b JOIN accounts account ON account.id=b.account_id
           WHERE b.id=$1 AND b.account_id=$2 AND b.connection_id=$3 AND (account.owner_id=$4 OR $5::boolean) AND account.ownership_verified`,[secret.bindingId,a.account_id,a.connection_id,req.user.id,req.user.role==='owner']);
         assert(binding,'重新授权的原绑定或账号归属已变化，请重新核对',409);
-      } else await requireConsistentBindings(tx,a.account_id,proxy.id);
+      }
       assert(a.state==='pending' && new Date(a.expires_at)>new Date(),'授权已过期或已经提交，请核对任务状态',409);
       // Reject a wrong-platform callback before consuming the attempt or code.
       // Old Gatelink attempts stored the state only inside their authorization URL.
@@ -440,7 +458,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const accountId=identifier.parse((req.params as Row).id),d=z.object({connectionId:identifier,refreshToken:z.string().trim().min(10).max(10000),options:optionSchema,key}).parse(req.body);
     return db.transaction(async tx=>{
       const [a]=await tx.query('SELECT id FROM accounts WHERE id=$1 AND owner_id=$2 FOR UPDATE',[accountId,req.user.id]);assert(a,'只能为自己名下账号上号',403);
-      const proxy=await accountProxy(tx,box,accountId);await requireConsistentBindings(tx,accountId,proxy.id);
+      const proxy=await accountProxy(tx,box,accountId);
       const [c]=await tx.query('SELECT * FROM connections WHERE id=$1 AND enabled=true',[d.connectionId]);assert(c && PROVIDERS[c.provider as ProviderKey]?.refreshTokenImport,'此平台不支持 RT 导入');
       const [bound]=await tx.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!bound,'账号已在此平台，请联系管理员核实归属',409);
       const [pending]=await tx.query(`SELECT id FROM oauth_attempts WHERE account_id=$1 AND connection_id=$2 AND state IN ('pending','exchanging') AND expires_at>now()`,[accountId,c.id]);assert(!pending,'此账号已有有效 OAuth 流程，请先完成或等待过期',409);
@@ -451,7 +469,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const bindingId=identifier.parse((req.params as Row).id),d=z.object({enabled:z.boolean(),key}).parse(req.body);
     const [b]=await db.query('SELECT b.*,a.owner_id,a.ownership_verified FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1',[bindingId]);
     assert(b && ((b.ownership_verified&&b.owner_id===req.user.id)||req.user.role==='owner'),'不能操作该账号',403);
-    if(d.enabled) {const p=await accountProxy(db,box,b.account_id);assert(b.proxy_id===p.id,'此平台的代理尚未核实，请先同步固定代理或重新授权',409);}
+    if(d.enabled) {
+      const p=await accountProxy(db,box,b.account_id),[c]=await db.query('SELECT provider FROM connections WHERE id=$1',[b.connection_id]);
+      assert(c.provider!=='gatelink'||b.proxy_id===p.id,'请重新授权此平台，系统将自动应用账号固定代理',409);
+    }
     return enqueue(db,box,req.user.id,b.connection_id,'set_enabled',{bindingId,enabled:d.enabled},d.key);
   });
 

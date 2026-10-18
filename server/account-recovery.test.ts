@@ -139,7 +139,7 @@ describe('owned platform account recovery',()=>{
   it('does not display enabled locally if the upstream accepted a write but did not apply it',async()=>{
     const {connection,binding}=await platform('ai008');await db.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1',[binding.id,proxyId]);
     // A second platform awaiting proxy checks must not block this verified one.
-    const pending=await platform('minicc');
+    const pending=await platform('gatelink');
     expect((await call('POST',`/api/bindings/${pending.binding.id}/status`,{enabled:true,key:id()})).statusCode).toBe(409);
     let changed=false;
     const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
@@ -196,5 +196,54 @@ describe('owned platform account recovery',()=>{
     const job=await call('POST',`/api/bindings/${binding.id}/status`,{enabled:false,key:id()});expect(job.statusCode).toBe(200);await worker.runOne();
     expect(writes).toBe(0);
     expect((await db.query('SELECT state,error FROM jobs WHERE id=$1',[job.json().id]))[0]).toMatchObject({state:'needs_attention',error:expect.stringContaining('邮箱不一致')});
+  });
+
+  it('binds once, automatically synchronizes all supported legacy platforms and preserves money and ownership',async()=>{
+    const platforms=await Promise.all((['ai008','minicc','gatelink'] as const).map(platform));
+    for(const {binding} of platforms)await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:'2021-01-01',rawUsd:'100',final:true,source:'verified-proxy-test'}));
+    const history=await db.query('SELECT * FROM usage_days ORDER BY id'),earnings=await db.query('SELECT * FROM earnings ORDER BY id');
+    const bound=await call('POST',`/api/accounts/${account.id}/proxy`,{proxyId});expect(bound.statusCode).toBe(200);
+    expect(bound.json().jobs).toHaveLength(2);expect(bound.json().reauthorizeConnectionIds).toEqual([platforms[2].connection.id]);
+    const retry=await call('POST',`/api/accounts/${account.id}/proxy/sync`,{key:id()});expect(retry.statusCode).toBe(200);
+    expect(retry.json().jobs.map((job:any)=>job.id).sort()).toEqual(bound.json().jobs.map((job:any)=>job.id).sort());
+    const actual=new Map<ProviderKey,string>([['ai008','fixed-proxy']]),writes:ProviderKey[]=[];
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
+      expect(provider).not.toBe('gatelink');
+      const path=new URL(String(input)).pathname,body=init.body?JSON.parse(String(init.body)):{};
+      if(path==='/api/login')return Response.json({},{headers:{'set-cookie':'mini=fixture; Path=/; HttpOnly'}});
+      if(path==='/api/me')return Response.json({authenticated:true,user:{role:'supplier'}});
+      if(path.endsWith('/auth/admin-login'))return Response.json({accessToken:'fixture',user:{role:'admin'}});
+      if(path.endsWith('/proxies/manage')||path.endsWith('/outbound-proxies'))return Response.json({total:1,proxies:[{id:'fixed-proxy',upstream_id:'fixed-proxy',url:fixedUrl,status:'active',at_bound_account_limit:provider==='ai008',selectable:provider!=='ai008'}]});
+      if(body.outbound_proxy_id) {expect(body.outbound_proxy_id).toBe('fixed-proxy');actual.set(provider,body.outbound_proxy_id);writes.push(provider);return Response.json({});}
+      if(path.endsWith('/detail')||path.endsWith('/original-ai008'))return Response.json({account:{email:account.email,outbound_proxy_id:actual.get(provider),status:'disabled'}});
+      throw new Error('Unexpected automatic proxy request');
+    }));
+    await worker.runOne();await worker.runOne();expect(await worker.runOne()).toBe(false);
+    expect(writes.sort()).toEqual(['ai008','minicc']);
+    const bindings=await db.query('SELECT * FROM bindings');
+    for(const binding of bindings)expect(binding).toMatchObject({proxy_id:binding.connection_id===platforms[2].connection.id?null:proxyId,status:'disabled',daily_usd:'123.45000000'});
+    expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(history);expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(earnings);
+    expect((await db.query('SELECT owner_id FROM accounts WHERE id=$1',[account.id]))[0].owner_id).toBe(agent.id);
+    expect(await db.query("SELECT * FROM audits WHERE action='binding.proxy.sync'")).toHaveLength(2);
+    expect((await call('POST',`/api/accounts/${account.id}/proxy/sync`,{key:id()})).json().jobs).toEqual([]);
+  });
+
+  it.each([true,false])('automatically applies the account proxy before enabling and requires upstream confirmation: %s',async applied=>{
+    const {binding}=await platform('ai008');let actualProxy:string|null=null,enabled=false;
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
+      const path=new URL(String(input)).pathname,body=init.body?JSON.parse(String(init.body)):{};
+      if(path.endsWith('/auth/admin-login'))return Response.json({accessToken:'fixture',user:{role:'admin'}});
+      if(path.endsWith('/outbound-proxies'))return Response.json({total:1,proxies:[{id:'fixed-proxy',url:fixedUrl,status:'active'}]});
+      if(init.method==='PATCH') {
+        if(body.outbound_proxy_id&&applied)actualProxy=body.outbound_proxy_id;
+        if(body.status) {expect(actualProxy).toBe('fixed-proxy');enabled=body.status==='active';}
+        return Response.json({});
+      }
+      return Response.json({account:{email:account.email,outbound_proxy_id:actualProxy,status:enabled?'active':'disabled'}});
+    }));
+    const queued=await call('POST',`/api/bindings/${binding.id}/status`,{enabled:true,key:id()});expect(queued.statusCode).toBe(200);await worker.runOne();
+    expect((await db.query('SELECT state FROM jobs WHERE id=$1',[queued.json().id]))[0].state).toBe(applied?'succeeded':'needs_attention');
+    expect((await db.query('SELECT proxy_id,status FROM bindings WHERE id=$1',[binding.id]))[0]).toMatchObject({proxy_id:applied?proxyId:null,status:applied?'active':'disabled'});
+    expect(enabled).toBe(applied);
   });
 });

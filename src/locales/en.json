@@ -1108,5 +1108,16 @@
   "此平台的代理尚未核实，请先同步固定代理或重新授权": "This platform’s proxy is unverified. Sync the fixed proxy or reauthorize first",
   "绑定代理后，可分别同步或重新授权各平台，再启用需要恢复的平台。": "After binding a proxy, sync or reauthorize each platform separately, then enable the platforms you want to restore.",
   "已占用：{0}": "In use by: {0}",
-  "账号所属团队已停用": "The account’s team is disabled"
+  "账号所属团队已停用": "The account’s team is disabled",
+  "一个账号只绑定一次代理，所有平台自动沿用。": "Bind a proxy once per account. All platforms use it automatically.",
+  "检查并同步账号代理": "Check and sync account proxy",
+  "账号代理同步已提交，系统会统一处理支持的平台。": "Account proxy sync queued. Supported platforms are handled automatically.",
+  "请账号所属成员绑定自己的专属代理，绑定后所有平台自动沿用。": "The account owner must bind their own dedicated proxy once. All platforms will use it automatically.",
+  "只能选择自己的代理；一个账号绑定一条代理，所有平台自动沿用，无需重复绑定。": "Choose from your own proxies. Bind one proxy per account and all platforms use it automatically.",
+  "只显示你自己的代理。每个 Claude 账号绑定一次，所有平台自动沿用。": "Only your own proxies are shown. Bind each Claude account once and all platforms use its proxy automatically.",
+  "沿用账号固定代理": "Uses the account’s fixed proxy",
+  "重新授权后自动应用账号代理": "Reauthorize to apply the account proxy automatically",
+  "系统自动同步账号代理": "Account proxy is synchronized automatically",
+  "所有平台自动沿用": "Used automatically across platforms",
+  "请重新授权此平台，系统将自动应用账号固定代理": "Reauthorize this platform to apply the account’s fixed proxy automatically"
 }

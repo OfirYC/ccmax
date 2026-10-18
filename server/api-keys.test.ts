@@ -110,6 +110,31 @@ describe('agent API authentication and permissions', () => {
     expect((await call(issued.token, 'POST', '/api/accounts', { email: 'not-allowed@example.com' })).json().code).toBe('INSUFFICIENT_SCOPE');
   });
 
+  it('keeps proxy pools private even from parents and administrators through session and API access',async()=>{
+    const proxies=new Map<string,string>(),accounts=new Map<string,string>();
+    const rootCookie=await login('owner@example.com');
+    for(const [user,email] of [[a,'a@example.com'],[b,'b@example.com'],[leaf,'leaf@example.com'],[ownerId,'owner@example.com']]) {
+      const userCookie=await login(email);
+      const created=await session('POST','/api/proxies',{name:`Private ${user}`,url:`http://${user}.proxy.example.com:8080`},userCookie);
+      expect(created.statusCode).toBe(200);proxies.set(user,created.json().id);
+      const account=await session('POST','/api/accounts',{email:`account-${email}`},userCookie);accounts.set(user,account.json().account.id);
+      expect((await session('POST',`/api/accounts/${accounts.get(user)}/proxy`,{proxyId:created.json().id},userCookie)).statusCode).toBe(200);
+      expect((await session('GET','/api/proxies',undefined,userCookie)).json().proxies.map((p:any)=>p.id)).toEqual([created.json().id]);
+    }
+    for(const [user,userCookie] of [[a,cookie],[ownerId,rootCookie]]) {
+      const issued=await createKey(['read','accounts:write'],userCookie);
+      expect((await call(issued.token,'GET','/api/proxies')).json().proxies.map((p:any)=>p.id)).toEqual([proxies.get(user)]);
+      expect((await call(issued.token,'PATCH',`/api/proxies/${proxies.get(leaf)}`,{enabled:false})).statusCode).toBe(403);
+      expect((await call(issued.token,'POST',`/api/accounts/${accounts.get(leaf)}/proxy`,{proxyId:proxies.get(user)})).statusCode).toBe(403);
+      const visible=(await call(issued.token,'GET','/api/accounts')).json().accounts.find((account:any)=>account.id===accounts.get(leaf));
+      expect(visible).toMatchObject({proxy_bound:true,proxy_id:null,proxy_name:null,proxy_endpoint:null});
+      expect((await call(issued.token,'POST',`/api/accounts/${accounts.get(user)}/proxy/sync`,{key:id()})).statusCode).toBe(user===a?200:403);
+    }
+    const read=await createKey();
+    expect((await call(read.token,'POST',`/api/accounts/${accounts.get(a)}/proxy/sync`,{key:id()})).json().code).toBe('INSUFFICIENT_SCOPE');
+    expect((await db.query('SELECT enabled FROM proxies WHERE id=$1',[proxies.get(leaf)]))[0].enabled).toBe(true);
+  });
+
   it('scopes pricing reports and reviewed batches to the caller and their direct children',async()=>{
     const read=await createKey(),writer=await createKey(['read','team:write']);
     const report=await call(read.token,'GET','/api/team/pricing');

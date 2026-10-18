@@ -87,7 +87,7 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | `GET /api/accounts` | `{accounts, providers}`；账号包含 `bindings` 和固定代理状态 |
 | `GET /api/team?from=2026-10-01&to=2026-10-18` | `{users, rates, upcoming, period, providers, pricing}` |
 | `GET /api/connections` | `{connections, providers, today}`，自己的结算价和平台能力 |
-| `GET /api/proxies` | `{proxies}`，无认证密码的代理列表 |
+| `GET /api/proxies` | `{proxies}`，仅本人添加、无认证密码的代理列表 |
 | `GET /api/usage?from=2026-10-01&to=2026-10-18&page=1` | `{rows, totals, total, page}`，每页 12 条 |
 | `GET /api/finance?tab=mine&page=1` | `{balance, pendingProfit, invoicesTotal, withdrawalsTotal, invoices, withdrawals, ledger}`，账单和提现各每页 12 条 |
 | `GET /api/finance/check` | `{ok:true, balance, checkedAt}`，只核对密钥所属用户的钱包、利润来源与冻结/释放流水；异常返回 409 |
@@ -103,7 +103,7 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 ## 上号流程
 
 1. 查询 `/api/connections` 和 `/api/connections/:id/options`，确定平台连接、能力和可用配置。
-2. `POST /api/accounts` 创建本人账号；`POST /api/proxies` 添加本人固定出口代理；`POST /api/accounts/:id/proxy` 以 `{proxyId}` 绑定。
+2. `POST /api/accounts` 创建本人账号；`POST /api/proxies` 添加本人固定出口代理；`POST /api/accounts/:id/proxy` 以 `{proxyId}` 绑定一次。该请求返回 `{account,jobs,reauthorizeConnectionIds}`，后台自动将同一账号代理同步到已接入的 AI008 / Mini CC；后续上号和重新授权自动沿用，不能逐个平台指定不同代理。Gatelink 旧绑定如需重新授权，会列在 `reauthorizeConnectionIds`，完成 OAuth 即自动应用固定代理。
 3. `POST /api/accounts/:id/authorize`，提交 `{targets:[{connectionId,options:{}}],key}`，获得 `{jobs}`。每次逻辑操作使用新的 UUID 作为 `key`。
 4. 轮询 `/api/jobs?id=<任务编号>`；授权链接生成后从 `/api/accounts/:id/attempts` 获取 `authorization_url`。每个平台分别授权，不能复用授权码。
 5. `POST /api/oauth/:id/exchange`，其中 `:id` 是授权流程编号，提交 `{callback,key}`。三个平台均要求完整回调 URL 或 `code#state`，不能只提交 code；state 必须匹配目标流程，同一 code 不能跨平台重复提交。校验失败时流程保留为 pending，可纠正后提交。继续轮询任务，确认实际成功。
@@ -111,9 +111,13 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 
 任务可能为 `queued`、`running`、`succeeded`、`failed`、`needs_attention`。只有 `succeeded` 表示完成；`needs_attention` 先人工核对上游，不能直接重复提交。代理固定绑定、每个平台配置和旧账号归属核对规则与网站完全一致，Mini CC 使用服务端固定默认配置。
 
+`GET /api/proxies` 仅返回调用者本人添加的代理，不包含上级、下级、兄弟或其他成员的代理；管理员也按本人范围返回。代理修改和账号绑定只能操作本人的代理及本人账号。团队账号列表仅保留其他成员账号是否已绑定代理、是否启用及各平台是否同步的状态，不暴露其代理 ID、名称或出口。一个账号固定绑定一条代理，同一代理不能重复占用。账号返回 `proxy_bound`、`proxy_sync_state`、`proxy_sync_error`，各平台绑定返回 `proxy_verified`；可据此显示同步进度和失败原因。
+
+`POST /api/accounts/:id/proxy/sync` 提交 `{key}`，可在账号层统一重试代理同步；返回 `{jobs,reauthorizeConnectionIds}`，已有执行中的任务不会重复排队。旧的逐平台同步接口保留兼容。启用 AI008 / Mini CC 已有账号时，如尚未同步代理，服务端会先核对账号身份、自动应用并读回固定代理，再启用；失败会保留未核实状态。Gatelink 旧绑定需重新授权时不会假报同步成功。
+
 ### 修复已有平台账号
 
-`POST /api/bindings/:id/reauthorize`（`accounts:write`）提交 `{options:{},key}`，返回单个 `{id,state}` 任务。仅账号已核实的本人可用，管理员不能代其他人授权。平台连接和固定代理必须已启用；允许先修复所选平台，其他绑定仍需分别核对固定代理。`options` 不能指定代理或上游目标 ID；服务端固定原绑定和代理。已有有效授权流程或执行中上号任务时返回 409，使用相同 key 和参数重试则返回原任务。
+`POST /api/bindings/:id/reauthorize`（`accounts:write`）提交 `{options:{},key}`，返回单个 `{id,state}` 任务。仅账号已核实的本人或管理员可用，授权流程和链接仍只返回给发起人。平台连接和账号固定代理必须已启用；各平台自动沿用账号代理，无需逐个平台重新选择或绑定，其他平台的代理同步状态不会阻塞本次授权。`options` 不能指定代理或上游目标 ID；服务端固定原绑定和代理。已有有效授权流程或执行中上号任务时返回 409，使用相同 key 和参数重试则返回原任务。
 
 授权链接、回调、查询和单次 code 规则沿用上述流程。成功时只更新原绑定的授权状态、代理核实和同步时间；原平台 ID、归属、用量和财务历史保持原样。请授权原 Claude 邮箱；如上游 ID 或邮箱不符，任务为 `needs_attention`，不替换本地绑定，先人工核对上游实际结果。启停也先核对上游身份，写入后读回实际状态，不能仅凭受理响应显示成功。Gatelink 启停须主账号具有上游管理员权限。
 
