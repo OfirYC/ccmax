@@ -69,4 +69,10 @@ describe('upstream adapter data integrity',()=>{
     await expect(c.call('/api/admin/oauth-accounts')).rejects.toThrow('HTTP 403');
     try{await c.call('/api/admin/oauth-accounts');}catch(error){expect(String(error)).not.toContain('private-secret');}
   });
+  it('blocks Gatelink account status writes with an agent session and permits an authenticated upstream admin',async()=>{
+    let writes=0;
+    const c=new ProviderClient('gatelink',{username:'fixture',password:'fixture'},async(url,init)=>{writes++;expect(String(url)).toContain('/api/admin/accounts/existing/enabled');expect(JSON.parse(String(init?.body))).toEqual({enabled:false});return Response.json({});});
+    c.user={role:'agent'};await expect(c.setEnabled('existing',false)).rejects.toThrow('上游管理员权限');expect(writes).toBe(0);
+    c.user={role:'admin'};await c.setEnabled('existing',false);expect(writes).toBe(1);
+  });
 });

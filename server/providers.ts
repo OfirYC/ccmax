@@ -6,9 +6,9 @@ import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
 import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
 
 export const PROVIDERS = {
-  gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false },
-  ai008: { name:'AI008', url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true },
-  minicc: { name:'Mini CC Gateway', url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true },
+  gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false,statusRequiresAdmin:true },
+  ai008: { name:'AI008', url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  minicc: { name:'Mini CC Gateway', url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
 } as const;
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
@@ -375,7 +375,10 @@ export class ProviderClient {
     return {id:String(data.id),email:String(email).toLowerCase(),name:String(email),status:account.status||'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null,proxyExternalId:expectedProxyId};
   }
   async setEnabled(externalId:string,enabled:boolean) {
-    if(this.provider==='gatelink') return this.call(`/api/admin/accounts/${encodeURIComponent(externalId)}/enabled`,'POST',{enabled});
+    if(this.provider==='gatelink') {
+      assert(this.user?.role==='admin','Gatelink 启停账号需要上游管理员权限，当前主账号无此权限');
+      return this.call(`/api/admin/accounts/${encodeURIComponent(externalId)}/enabled`,'POST',{enabled});
+    }
     if(this.provider==='minicc') return this.call(`/api/accounts/${encodeURIComponent(externalId)}/status`,'POST',{status:enabled?'active':'disabled'});
     return this.call(`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`,'PATCH',{status:enabled?'active':'disabled'});
   }

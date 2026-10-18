@@ -977,5 +977,8 @@
   "已打款 USD": "Paid withdrawals USD",
   "各成员余额独立计算，平台原始账单按平台绑定只统计一次。": "Member balances are independent. Source bills are counted once per platform binding.",
   "异常记录 {0} 项": "{0} accounting findings",
-  "数据归属或收益链异常，请核对原始记录。": "Account ownership or earnings chain is inconsistent; review the source records."
+  "数据归属或收益链异常，请核对原始记录。": "Account ownership or earnings chain is inconsistent; review the source records.",
+  "账号启停": "Enable / disable accounts",
+  "需要上游管理员权限": "Requires upstream administrator access",
+  "Gatelink 启停账号需要上游管理员权限，当前主账号无此权限": "Enabling or disabling Gatelink accounts requires upstream administrator access; the current master account does not have it"
 }

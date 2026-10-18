@@ -27,6 +27,7 @@ export default function Platforms(){useLocale();
         <div><span>{t("OAuth 上号")}</span><span className="teal-text"><Check size={14}/>{t("已支持")}</span></div>
         <div><span>{t("Refresh token 导入")}</span><span>{c.capabilities.refreshTokenImport?t("已支持"):t("需使用 OAuth")}</span></div>
         <div><span>{t("历史日账单")}</span><span>{c.capabilities.historicalUsage?t("支持历史查询及人工核对"):t("当前权限需导入对账单")}</span></div>
+        <div><span>{t('账号启停')}</span><span>{c.capabilities.statusRequiresAdmin?t('需要上游管理员权限'):t('已支持')}</span></div>
         <div><span>{t("最近成功同步")}</span><span>{dateTime(c.last_sync_at)}</span></div>
       </div>
       {c.last_error&&<ErrorBox error={c.last_error}/>}

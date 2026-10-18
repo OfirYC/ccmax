@@ -977,5 +977,8 @@
   "已打款 USD": "Tiền rút đã thanh toán USD",
   "各成员余额独立计算，平台原始账单按平台绑定只统计一次。": "Số dư từng thành viên được tính độc lập. Hóa đơn gốc chỉ được tính một lần cho mỗi liên kết nền tảng.",
   "异常记录 {0} 项": "{0} vấn đề sổ sách",
-  "数据归属或收益链异常，请核对原始记录。": "Quyền sở hữu hoặc chuỗi thu nhập không nhất quán; hãy kiểm tra bản ghi gốc."
+  "数据归属或收益链异常，请核对原始记录。": "Quyền sở hữu hoặc chuỗi thu nhập không nhất quán; hãy kiểm tra bản ghi gốc.",
+  "账号启停": "Bật / tắt tài khoản",
+  "需要上游管理员权限": "Cần quyền quản trị viên trên nền tảng nguồn",
+  "Gatelink 启停账号需要上游管理员权限，当前主账号无此权限": "Bật hoặc tắt tài khoản Gatelink cần quyền quản trị viên trên nền tảng nguồn; tài khoản chính hiện tại không có quyền này"
 }
