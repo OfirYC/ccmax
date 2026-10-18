@@ -9,6 +9,7 @@ export const languages = [
   { code: 'hi', name: 'हिन्दी' },
 ] as const;
 export type Locale = typeof languages[number]['code'];
+export const defaultLocale: Locale = 'en';
 export const localeStorageKey = 'ccmax.locale';
 const dictionaries: Record<Exclude<Locale, 'zh-CN'>, Record<string, string>> = { en, vi, hi };
 const listeners = new Set<() => void>();
@@ -19,7 +20,7 @@ function readLocale(): Locale {
     const saved = localStorage.getItem(localeStorageKey);
     if (isLocale(saved)) return saved;
   } catch { /* Language switching also works when browser storage is unavailable. */ }
-  return 'zh-CN';
+  return defaultLocale;
 }
 
 let locale = readLocale();

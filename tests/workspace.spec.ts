@@ -1,4 +1,6 @@
-import { test,expect } from '@playwright/test';
+import { test,expect } from './fixtures';
+
+test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN')); });
 
 test('owner and agent complete team, usage, settlement and withdrawal flows',async({page})=>{
  test.setTimeout(90000);

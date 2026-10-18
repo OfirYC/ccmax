@@ -8,7 +8,7 @@ import hi from './locales/hi.json';
 import { getLocale, localeStorageKey, setLocale, subscribeLocale, t, translateMessage } from './i18n';
 import { dateTime, localToday, money, number } from './api';
 
-afterEach(() => { setLocale('zh-CN'); vi.unstubAllGlobals(); });
+afterEach(() => { setLocale('en'); vi.unstubAllGlobals(); });
 
 describe('language catalogs', () => {
   it('covers the same messages in all languages and preserves interpolation parameters', () => {
@@ -40,9 +40,9 @@ describe('language catalogs', () => {
 });
 
 describe('language switching', () => {
-  it('keeps Chinese as the default and interpolates user data literally', () => {
-    expect(getLocale()).toBe('zh-CN');
-    expect(t('你好，{0}', ['$& {1}'])).toBe('你好，$& {1}');
+  it('uses English as the default and interpolates user data literally', () => {
+    expect(getLocale()).toBe('en');
+    expect(t('你好，{0}', ['$& {1}'])).toBe('Hello, $& {1}');
     expect(t('unknown upstream message')).toBe('unknown upstream message');
   });
 

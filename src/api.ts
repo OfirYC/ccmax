@@ -2,7 +2,7 @@ import { t, getLocale } from './i18n';
 import { useCallback, useEffect, useState } from 'react';
 export type RecordData=Record<string,any>;
 export async function api<T=any>(url:string,options:RequestInit={}) : Promise<T> {
-  const response=await fetch(url,{...options,headers:{'Content-Type':'application/json','x-ccmax-request':'1',...options.headers},credentials:'same-origin'});
+  const response=await fetch(url,{...options,headers:{...(options.body!==undefined?{'Content-Type':'application/json'}:{}),'x-ccmax-request':'1',...options.headers},credentials:'same-origin'});
   const data=await response.json().catch(()=>({error:t("服务器响应异常")}));
   if(!response.ok) throw new Error(data.error||t("请求失败"));return data;
 }

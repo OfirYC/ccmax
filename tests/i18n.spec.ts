@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import en from '../src/locales/en.json' with { type: 'json' };
 import vi from '../src/locales/vi.json' with { type: 'json' };
 import hi from '../src/locales/hi.json' with { type: 'json' };
@@ -9,10 +9,10 @@ test('languages persist across login, navigation, refresh, and mobile use', asyn
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   const switcher = page.locator('.language-switcher select');
-  await expect(switcher).toHaveValue('zh-CN');
+  await expect(switcher).toHaveValue('en');
   await expect(switcher.locator('option')).toHaveText(['简体中文', 'English', 'Tiếng Việt', 'हिन्दी']);
-  await page.getByLabel('登录邮箱').fill('owner@example.com');
-  await page.getByLabel('密码', { exact: true }).fill('e2e-owner-password');
+  await page.getByLabel(en['登录邮箱']).fill('owner@example.com');
+  await page.getByLabel(en['密码'], { exact: true }).fill('e2e-owner-password');
 
   // Verify the same server error changes language while the form stays filled.
   await page.route('**/api/auth/login', route => route.fulfill({ status: 401, json: { error: '邮箱或密码错误，或账号已停用' } }));
@@ -81,10 +81,10 @@ test('languages persist across login, navigation, refresh, and mobile use', asyn
   expect(errors).toEqual([]);
 });
 
-test('invalid preferences fall back to Chinese and storage restrictions allow switching', async ({ page }) => {
+test('invalid preferences fall back to English and storage restrictions allow switching', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'invalid-language'));
   await page.goto('/');
-  await expect(page.locator('.language-switcher select')).toHaveValue('zh-CN');
+  await expect(page.locator('.language-switcher select')).toHaveValue('en');
   await page.evaluate(() => {
     Storage.prototype.setItem = () => { throw new DOMException('Storage unavailable'); };
   });

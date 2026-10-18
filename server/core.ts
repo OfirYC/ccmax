@@ -11,7 +11,7 @@ export const sum = (values: Decimal.Value[]) => values.reduce<Decimal>((a,b) => 
 export const today = () => new Date(Date.now()+8*3600000).toISOString().slice(0,10);
 export const nextDay = (day = today()) => new Date(Date.parse(day+'T00:00:00Z')+86400000).toISOString().slice(0,10);
 export const dayString = (v: unknown) => v instanceof Date ? v.toISOString().slice(0,10) : String(v).slice(0,10);
-export class AppError extends Error { constructor(public statusCode: number, message: string) { super(message); } }
+export class AppError extends Error { constructor(public statusCode: number, message: string, public code?: string) { super(message); } }
 export function assert(ok: unknown, message: string, code=400): asserts ok { if (!ok) throw new AppError(code,message); }
 export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString('hex');

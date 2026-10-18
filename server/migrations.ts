@@ -1,6 +1,22 @@
 import type { DB } from './db.js';
 import { PROVIDER_KEYS } from './providers.js';
 
+export async function integrationKeys(tx: DB) {
+  await tx.query(`CREATE TABLE api_keys (
+    id text PRIMARY KEY,
+    user_id text NOT NULL REFERENCES users(id),
+    name text NOT NULL,
+    prefix text NOT NULL,
+    token_hash text NOT NULL UNIQUE,
+    scopes text[] NOT NULL,
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    last_used_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await tx.query('CREATE INDEX api_keys_user ON api_keys(user_id,created_at DESC)');
+}
+
 export async function accountProxies(tx:DB) {
   await tx.query('ALTER TABLE jobs DROP CONSTRAINT jobs_kind_check');
   await tx.query("ALTER TABLE jobs ADD CONSTRAINT jobs_kind_check CHECK(kind IN ('sync','reconcile','oauth_start','oauth_exchange','import_rt','set_enabled','set_proxy'))");

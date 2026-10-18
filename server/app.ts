@@ -9,6 +9,7 @@ import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdr
 import { enqueue } from './worker.js';
 import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './providers.js';
 import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings } from './proxies.js';
+import { apiKeyService } from './api-keys.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -27,20 +28,23 @@ const optionSchema=z.object({accountType:z.enum(['speed','stable','team','max','
 
 export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string;production?:boolean;logger?:boolean}) {
   const box=secretBox(config.encryptionKey);
-  const app=Fastify({logger:config.logger??false,trustProxy:(_address,hop)=>hop===0,bodyLimit:1024*1024});
+  const keys=apiKeyService(db,config.appUrl);
+  const app=Fastify({logger:config.logger?{redact:['req.headers.authorization','req.headers.cookie','res.headers["set-cookie"]']}:false,trustProxy:(_address,hop)=>hop===0,bodyLimit:1024*1024});
   await app.register(cookie);
   await app.register(rateLimit,{max:240,timeWindow:'1 minute'});
   app.decorateRequest('user');
+  app.decorateRequest('apiKey',null);
+  const apiLimit=app.createRateLimit({max:120,timeWindow:'1 minute',keyGenerator:req=>`api-user:${req.user.id}`});
   app.setErrorHandler((error,request,reply)=>{
-    if(error instanceof ZodError) return reply.code(400).send({error:error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('；')});
-    if(error instanceof AppError) return reply.code(error.statusCode).send({error:error.message});
+    if(error instanceof ZodError) return reply.code(400).send({error:error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('；'),code:'VALIDATION_ERROR',requestId:request.id});
+    if(error instanceof AppError) return reply.code(error.statusCode).send({error:error.message,code:error.code||`HTTP_${error.statusCode}`,requestId:request.id});
     const status=(error as any).statusCode;
-    if(status===429) return reply.code(429).send({error:'请求过于频繁，请稍后再试'});
-    if(status===400||status===413) return reply.code(status).send({error:'请求格式错误或内容过大'});
+    if(status===429) return reply.code(429).send({error:'请求过于频繁，请稍后再试',code:'RATE_LIMITED',requestId:request.id});
+    if(status===400||status===413) return reply.code(status).send({error:'请求格式错误或内容过大',code:`HTTP_${status}`,requestId:request.id});
     const code=(error as any).code;
-    if(['23505','23503','23514'].includes(code)) return reply.code(409).send({error:'记录已存在、归属冲突或依赖状态发生变化，请刷新后重试'});
+    if(['23505','23503','23514'].includes(code)) return reply.code(409).send({error:'记录已存在、归属冲突或依赖状态发生变化，请刷新后重试',code:'CONFLICT',requestId:request.id});
     request.log.error({err:error},'Request failed');
-    reply.code(500).send({error:'服务器处理失败，请联系管理员核对记录',requestId:request.id});
+    reply.code(500).send({error:'服务器处理失败，请联系管理员核对记录',code:'INTERNAL_ERROR',requestId:request.id});
   });
   app.addHook('onRequest',async(request,reply)=>{
     reply.header('X-Content-Type-Options','nosniff').header('Referrer-Policy','no-referrer').header('X-Frame-Options','DENY');
@@ -48,19 +52,42 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const path=request.url.split('?')[0];
     if(!path.startsWith('/api/')) return;
     reply.header('Cache-Control','no-store');
-    if(!['GET','HEAD','OPTIONS'].includes(request.method)) {
+    if((path==='/api/docs'||path==='/api/openapi.json')&&['GET','HEAD'].includes(request.method)) return;
+    const authorization=request.headers.authorization;
+    if(!authorization&&!['GET','HEAD','OPTIONS'].includes(request.method)) {
       assert(request.headers['x-ccmax-request']==='1','请求缺少 CSRF 防护标记',403);
       if(request.headers.origin) assert(request.headers.origin===new URL(config.appUrl).origin,'请求来源不允许',403);
     }
-    if(path==='/api/auth/login') return;
-    const sid=request.cookies.ccmax_session;
-    assert(sid,'请先登录',401);
-    const [session]=await db.query('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND s.expires_at>now()',[digest(sid)]);
-    assert(session?.active,'登录已过期或账号已停用',401);
+    if(!authorization&&path==='/api/auth/login') return;
+    let session:Row;
+    if(authorization!==undefined) {
+      const authenticated=await keys.authenticate(authorization);
+      session=authenticated.user;request.apiKey=authenticated.identity;request.user=session;
+      keys.authorize(authenticated.identity,request.method,request.routeOptions.url);
+      const limit=await apiLimit(request);
+      if(!limit.isAllowed) {
+        reply.header('X-RateLimit-Limit',limit.max).header('X-RateLimit-Remaining',limit.remaining).header('X-RateLimit-Reset',limit.ttlInSeconds);
+        if(limit.isExceeded) {reply.header('Retry-After',limit.ttlInSeconds);throw new AppError(429,'请求过于频繁，请稍后再试','RATE_LIMITED');}
+      }
+    } else {
+      const sid=request.cookies.ccmax_session;
+      assert(sid,'请先登录',401);
+      const [user]=await db.query('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND s.expires_at>now()',[digest(sid)]);
+      assert(user?.active,'登录已过期或账号已停用',401);
+      session=user;
+    }
     const [disabled]=await db.query(`WITH RECURSIVE chain AS (SELECT id,parent_id,active FROM users WHERE id=$1 UNION ALL SELECT u.id,u.parent_id,u.active FROM users u JOIN chain c ON c.parent_id=u.id) SELECT id FROM chain WHERE active=false LIMIT 1`,[session.id]);
     assert(!disabled,'所属团队已停用',403);
     request.user=session;
+    if(request.apiKey) await keys.used(request.apiKey);
   });
+  app.addHook('onResponse',async(request,reply)=>{
+    if(request.apiKey&&request.user&&!['GET','HEAD','OPTIONS'].includes(request.method)) {
+      try {await audit(db,request.user.id,'api.request',request.apiKey.id,{method:request.method,route:request.routeOptions.url,status:reply.statusCode,requestId:request.id});}
+      catch(error) {request.log.error({err:error},'API audit failed');}
+    }
+  });
+  keys.register(app);
   app.get('/health',async()=>{await db.query('SELECT 1');return {status:'ok',service:'ccmax'};});
   app.post('/api/auth/login',{config:{rateLimit:{max:8,timeWindow:'1 minute'}}},async(req,reply)=>{
     const data=z.object({email,password:z.string().min(1).max(200)}).parse(req.body);
@@ -80,7 +107,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const d=z.object({currentPassword:z.string().max(200),newPassword:password}).parse(req.body);
     assert(await verifyPassword(d.currentPassword,req.user.password_hash),'当前密码错误');
     const hash=await hashPassword(d.newPassword);
-    await db.transaction(async tx=>{await tx.query('UPDATE users SET password_hash=$2 WHERE id=$1',[req.user.id,hash]);await tx.query('DELETE FROM sessions WHERE user_id=$1 AND id<>$2',[req.user.id,digest(req.cookies.ccmax_session!)]);await audit(tx,req.user.id,'auth.password',req.user.id);});
+    await db.transaction(async tx=>{await tx.query('UPDATE users SET password_hash=$2 WHERE id=$1',[req.user.id,hash]);await tx.query('DELETE FROM sessions WHERE user_id=$1 AND id<>$2',[req.user.id,digest(req.cookies.ccmax_session!)]);await tx.query('UPDATE api_keys SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[req.user.id]);await audit(tx,req.user.id,'auth.password',req.user.id);});
     return {ok:true};
   });
 
@@ -121,7 +148,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     await db.transaction(async tx=>{
       await requireDirect(tx,req.user,target);
       if(d.active!==undefined) await tx.query('UPDATE users SET active=$2 WHERE id=$1',[target,d.active]);
-      if(hash) {await tx.query('UPDATE users SET password_hash=$2 WHERE id=$1',[target,hash]);await tx.query('DELETE FROM sessions WHERE user_id=$1',[target]);}
+      if(hash) {await tx.query('UPDATE users SET password_hash=$2 WHERE id=$1',[target,hash]);await tx.query('DELETE FROM sessions WHERE user_id=$1',[target]);await tx.query('UPDATE api_keys SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[target]);}
       await audit(tx,req.user.id,hash?'team.password':'team.status',target,{active:d.active});
     });return {ok:true};
   });

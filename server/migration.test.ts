@@ -27,7 +27,8 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect(flags.find(a=>a.id===assigned)?.ownership_verified).toBe(true);
   await expect(db.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[sealed,other])).rejects.toThrow('immutable');
   await db.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[sealed]);
-  expect(await db.query('SELECT * FROM migrations')).toHaveLength(5);
+  expect(await db.query('SELECT * FROM migrations')).toHaveLength(6);
+  expect(await db.query('SELECT * FROM api_keys')).toEqual([]);
   expect((await db.query('SELECT proxy_id FROM accounts')).every(a=>a.proxy_id===null)).toBe(true);
   expect((await db.query('SELECT proxy_id FROM bindings')).every(b=>b.proxy_id===null)).toBe(true);
   await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'minicc','Mini CC','encrypted',0.4)",[id()]);
