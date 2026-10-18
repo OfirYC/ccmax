@@ -32,5 +32,24 @@ test('shows exact eight-decimal amounts and reconciles the real wallet from the 
   expect(await response.json()).toMatchObject({ ok: true, balance: { available: '0.00000000', pending: '0.00000000' } });
   await expect(page.getByText(en['资金账本核对通过，余额和冻结流水一致'], { exact: true })).toBeVisible();
   await expect(page.locator('.finance-balance .amount')).toHaveText('$0.00');
+  await expect(page.getByRole('button',{name:en['全平台资金核对'],exact:true})).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+test('an owner reconciles every wallet and platform without changing invoices or withdrawals',async({page})=>{
+  await page.goto('/');
+  await page.getByLabel(en['登录邮箱']).fill('owner@example.com');await page.getByLabel(en['密码'],{exact:true}).fill('e2e-owner-password');
+  await page.getByRole('button',{name:en['进入工作空间']}).click();await page.getByRole('link',{name:en['账单结算'],exact:true}).click();
+  const before=await(await page.request.get('/api/finance')).json();
+  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/finance/audit');
+  await page.getByRole('button',{name:en['全平台资金核对'],exact:true}).click();
+  const report=await(await response).json();expect(report.ok).toBe(true);expect(report.platforms).toHaveLength(3);expect(report.checked.finalizedUsageDays).toBeGreaterThanOrEqual(2);
+  const dialog=page.getByRole('dialog');await expect(dialog.getByText(en['账目一致性核对通过'],{exact:true})).toBeVisible();
+  await expect(dialog.getByRole('heading',{name:en['各代理资金余额'],exact:true})).toBeVisible();
+  await expect(dialog.getByRole('row').filter({hasText:'Mini CC Gateway'})).toBeVisible();
+  await page.setViewportSize({width:390,height:844});await dialog.locator('.finance-audit-totals').screenshot({path:'test-results/finance-audit-mobile.png'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.getByRole('button',{name:en['关闭弹窗']}).click();
+  const after=await(await page.request.get('/api/finance')).json();
+  expect({balance:after.balance,invoices:after.invoices,withdrawals:after.withdrawals,ledger:after.ledger}).toEqual({balance:before.balance,invoices:before.invoices,withdrawals:before.withdrawals,ledger:before.ledger});
 });

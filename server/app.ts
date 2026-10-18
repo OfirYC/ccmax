@@ -12,6 +12,7 @@ import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings }
 import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 import { apiKeyService } from './api-keys.js';
 import { assertWalletAccounting } from './financial-integrity.js';
+import { auditFinance } from './finance-audit.js';
 import { registerTelemetry } from './telemetry-routes.js';
 import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
@@ -494,6 +495,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     await assertWalletAccounting(tx,req.user.id);
     return {ok:true,balance:await balance(tx,req.user.id),checkedAt:new Date().toISOString()};
   }));
+  app.get('/api/finance/audit',{config:{rateLimit:{max:4,timeWindow:'1 minute'}}},async req=>{
+    await requireOwner(req.user);
+    return db.transaction(async tx=>{
+      await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+      return auditFinance(tx);
+    });
+  });
   app.post('/api/invoices',async req=>{
     const d=z.object({userId:identifier,from:date,to:date}).parse(req.body);return createInvoice(db,req.user,d.userId,d.from,d.to);
   });

@@ -6,6 +6,28 @@ const fixedProxy={proxy:'http://user:pass@proxy.example.com:8080',proxyExternalI
 const client=(handler:(url:string,init?:RequestInit)=>any)=>new ProviderClient('ai008',{username:'test',password:'test'},async(url,init)=>Response.json(await handler(String(url),init)));
 
 describe('upstream adapter data integrity',()=>{
+  const history=(handler:(page:number)=>any)=>client((url,init)=>init?.method==='POST'?{task:{id:'history'}}:handler(Number(new URL(url).searchParams.get('account_page'))));
+  const historyPage=(page:number,accounts:any[],count=accounts.length,size=100)=>({task:{id:'history',status:'succeeded',input:{since:'2026-10-17T00:00:00+08:00',until:'2026-10-17T23:59:59+08:00'}},result:{accounts,account_page:page,account_count:count,page_size:size}});
+  it('reads every AI008 history page and preserves decimal amounts without shared-total allocation',async()=>{
+    const pages:number[]=[];
+    const rows=await history(page=>{pages.push(page);return historyPage(page,[{account_id:String(page),cost:page===1?'9007199254740993.12345678':'0.00000001'}],2,1);}).historicalDay('2026-10-17');
+    expect(pages).toEqual([1,2]);expect(rows).toEqual([{externalId:'1',rawUsd:'9007199254740993.12345678'},{externalId:'2',rawUsd:'0.00000001'}]);
+    expect(await history(()=>historyPage(1,[],0,0)).historicalDay('2026-10-17')).toEqual([]);
+  });
+  it.each([null,undefined,'NaN','Infinity','secret-invalid-value',-1,'10000000000000000'])('rejects invalid historical account amounts (%s) before producing import candidates',async cost=>{
+    await expect(history(()=>historyPage(1,[{account_id:'one',cost}])).historicalDay('2026-10-17')).rejects.toThrow('历史用量');
+  });
+  it('rejects repeated account IDs across history pages, missing counts and inconsistent query pages',async()=>{
+    for(const response of [
+      (page:number)=>historyPage(page,[{account_id:'same',cost:1}],2,1),
+      ()=>({task:{id:'history',status:'succeeded'},result:{accounts:[]}}),
+      (page:number)=>historyPage(page,[{account_id:String(page),cost:1}],page===1?2:3,1),
+      ()=>historyPage(1,[{account_id:'one',cost:1}],2,1),
+      ()=>({...historyPage(1,[{account_id:'one',cost:1}]),task:{id:'other-query',status:'succeeded'}}),
+      ()=>({...historyPage(1,[{account_id:'one',cost:1}]),task:{id:'history',status:'succeeded',input:{since:'2026-10-16T00:00:00Z'}}}),
+      ()=>historyPage(1,[{account_id:'one',cost:1}],NaN,1),
+    ])await expect(history(response).historicalDay('2026-10-17')).rejects.toThrow('历史');
+  });
   it('follows all declared pages even when the upstream ignores our requested page size',async()=>{
     const pages:number[]=[];
     const c=client(url=>{const page=Number(new URL(url).searchParams.get('page'));pages.push(page);return {accounts:[account(String(page))],pagination:{page,page_size:1,total_pages:3,total_rows:3}};});

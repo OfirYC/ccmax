@@ -4,6 +4,7 @@ import { migrate, type DB, type Row } from './db.js';
 import { bootstrap, id, MAX_USD, secretBox, today } from './core.js';
 import { balance, confirmInvoice, createInvoice, ingestUsage, requestWithdrawal, reviewWithdrawal } from './billing.js';
 import { assertWalletAccounting } from './financial-integrity.js';
+import { auditFinance } from './finance-audit.js';
 import { createApp } from './app.js';
 import { openTestDB, seedSettlement } from './test-db.js';
 
@@ -31,6 +32,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
   }
   const observe = (bindingId: string, rawUsd = '100', day = prior()) => db.transaction(tx => ingestUsage(tx, { bindingId, day, rawUsd, final: true, source: 'verified-finance-fixture' }));
   const withdraw = (user: Row, amount: string, key = id()) => requestWithdrawal(db, user, amount, 'Binance ID', 'test destination', key, box);
+  const audit = () => db.transaction(async tx=>{await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');return auditFinance(tx);});
   async function legacyLedger(userId: string, amount: string) {
     // Simulate a pre-v7 record in an isolated disposable test schema.
     await db.transaction(async tx => {
@@ -82,6 +84,9 @@ describe('financial source reconciliation and complete agent cash flow', () => {
       await assertWalletAccounting(db, member.id);
     }
     expect([...expected.values()].reduce((total, profit) => total + profit, 0n)).toBe(upstream);
+    const funded=await audit();expect(funded.ok).toBe(true);expect(funded.checked).toMatchObject({wallets:5,finalizedUsageDays:30,provisionalUsageDays:0});
+    expect(atoms(funded.totals.available_profit_usd)).toBe(upstream);
+    expect(funded.platforms.every(p=>p.usage_days===10&&p.finalized_days===10&&Number(p.uninvoiced_receivable_usd)===0)).toBe(true);
     for (let index = 0; index < members.length; index++) {
       const member = members[index], amount = expected.get(member.id)!, half = amount / 2n;
       const paid = await withdraw(member, dollars(half));
@@ -94,6 +99,8 @@ describe('financial source reconciliation and complete agent cash flow', () => {
       await assertWalletAccounting(db, member.id);
       await expect(withdraw(member, dollars(amount - half + 1n))).rejects.toThrow('余额不足');
     }
+    const paid=await audit();expect(paid.ok).toBe(true);
+    expect(atoms(paid.totals.available_profit_usd)+paid.wallets.reduce((n,w)=>n+atoms(w.paid_withdrawal_usd),0n)).toBe(upstream);
   });
 
   it('requires confirmed parent coverage for every day, even when invoices cover different periods', async () => {
@@ -172,6 +179,12 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     const check = await app.inject({ url: `/api/finance/check?userId=${b.id}`, headers: { cookie } });
     expect(check.statusCode).toBe(200); expect(check.json()).toMatchObject({ ok: true, balance: { available: '100.00000000' } });
     expect(check.body).not.toContain(b.id);
+    expect((await app.inject({url:'/api/finance/audit',headers:{cookie}})).statusCode).toBe(403);
+    const rootLogin=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password}});
+    const response=await app.inject({url:'/api/finance/audit',headers:{cookie:String(rootLogin.headers['set-cookie']).split(';')[0]}});
+    expect(response.statusCode).toBe(200);expect(response.json()).toMatchObject({ok:false,checked:{wallets:5}});
+    expect(response.json().findings).toContainEqual(expect.objectContaining({entity:'wallet',ids:[b.id],code:'WALLET_INTEGRITY_CONFLICT'}));
+    expect(response.body).not.toMatch(/password|credentials|destination|finance.example/);
   });
 
   it('does not mint a release or approve payment for a legacy withdrawal missing its original hold', async () => {
@@ -224,5 +237,23 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
     expect(await db.query('SELECT * FROM invoice_items')).toHaveLength(0);
     expect((await createInvoice(db, owner, owner.id, prior(), prior())).gross_usd).toBe(MAX_USD);
+  });
+
+  it('audits provisional chains and separates ended estimates, unassigned usage and uninvoiced receivables',async()=>{
+    const ended=await binding(),current=await binding(a),sealed=await binding(owner,'gatelink');
+    const usageId=await db.transaction(tx=>ingestUsage(tx,{bindingId:ended,day:prior(),rawUsd:'17.12345678',final:false,source:'live_snapshot'}));
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:current,day:today(),rawUsd:'100',final:false,source:'live_snapshot'}));
+    await observe(sealed,'12.5');
+    const accountId=id(),bindingId=id();
+    await db.query('INSERT INTO accounts(id,email) VALUES($1,$2)',[accountId,`${accountId}@unassigned.example`]);
+    await db.query('INSERT INTO bindings(id,account_id,connection_id,external_id) VALUES($1,$2,$3,$1)',[bindingId,accountId,connections.ai008]);
+    await db.transaction(tx=>ingestUsage(tx,{bindingId,day:prior(),rawUsd:'2',final:false,source:'live_snapshot'}));
+    const before=await db.query('SELECT * FROM usage_days ORDER BY id'),report=await audit();
+    expect(report.ok).toBe(true);expect(report.inventory).toMatchObject({assigned:3,awaiting_attribution:1});expect(report.unassignedUsageDays).toBe(1);
+    expect(report.platforms.find(p=>p.provider==='ai008')).toMatchObject({accounts:3,assigned:2,unassigned:1,awaiting_finalization_days:2,awaiting_finalization_raw_usd:'19.12345678',unassigned_raw_usd:'2.00000000',finalized_raw_usd:'0'});
+    expect(report.platforms.find(p=>p.provider==='gatelink')).toMatchObject({finalized_raw_usd:'12.50000000',uninvoiced_receivable_usd:'7.50000000'});
+    expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(before);expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    await db.query('UPDATE earnings SET gross_usd=99,downstream_usd=0,profit_usd=99 WHERE usage_id=$1 AND user_id=$2',[usageId,c.id]);
+    const broken=await audit();expect(broken.ok).toBe(false);expect(broken.findings).toContainEqual(expect.objectContaining({entity:'usage_batch',ids:expect.arrayContaining([usageId]),code:'USAGE_ACCOUNTING_CONFLICT'}));
   });
 });

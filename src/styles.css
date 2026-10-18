@@ -92,6 +92,11 @@ tbody tr:hover .amount-cell-key{background:#edf6f1}
 .finance-summary strong{margin:12px 0 8px}
 .finance-summary strong .amount{font-size:clamp(26px,2.5vw,36px);font-weight:600;white-space:normal;overflow-wrap:anywhere}
 .finance-summary small{font-size:11px}
+.finance-audit-totals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+.finance-audit-totals>div{min-width:0;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--teal-soft)}
+.finance-audit-totals>div>span:first-child{display:block;font-size:12px;color:var(--muted);margin-bottom:8px}
+.finance-audit-totals .amount{font-size:22px;font-weight:600;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:520px){.finance-audit-totals{grid-template-columns:1fr}}
 .finance-summary .finance-balance{background:#e5f2e9;box-shadow:inset 0 3px var(--teal)}
 .usage-totals>div{min-width:0;padding:20px}
 .usage-totals>div>span{font-size:12px;font-weight:600;color:#526b63}

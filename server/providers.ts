@@ -1,4 +1,4 @@
-import { AppError, assert } from './core.js';
+import { AppError, assert,MAX_USD } from './core.js';
 import Decimal from 'decimal.js';
 import { parseProxy } from './proxies.js';
 import { gatelinkFailure } from './gatelink-errors.js';
@@ -24,6 +24,16 @@ function upstreamAmount(value:unknown,message:string) {
   try { amount=new Decimal(value); } catch { throw new UpstreamError(200,message); }
   assert(amount.isFinite() && amount.gte(0),message,502);
   return amount;
+}
+function historicalRows(rows:any[]):{externalId:string;rawUsd:string}[] {
+  const seen=new Set<string>();
+  return rows.map(r=>{
+    assert(r && (typeof r.account_id==='string'||typeof r.account_id==='number') && String(r.account_id).trim() && r.cost!==undefined && r.cost!==null,'历史用量字段缺失',502);
+    const raw=upstreamAmount(r.cost,'历史用量金额或账号重复，未写入账本'),externalId=String(r.account_id);
+    assert(raw.lte(MAX_USD),'历史用量金额或账号重复，未写入账本',502);
+    assert(!seen.has(externalId),'历史用量金额或账号重复，未写入账本',502);
+    seen.add(externalId);return {externalId,rawUsd:raw.toFixed()};
+  });
 }
 
 export class ProviderClient {
@@ -391,19 +401,17 @@ export class ProviderClient {
       }
       assert(data.complete && !data.pending && !data.refreshing,'历史查询尚未完成，请稍后重新查询',502);
       assert(Array.isArray(data.accounts),'上游历史结果缺少逐账号用量；未写入账本',502);
-      const seen=new Set<string>();
-      return data.accounts.map((r:any)=>{
-        assert(r.account_id && r.cost!==undefined && r.cost!==null,'历史用量字段缺失',502);
-        const raw=upstreamAmount(r.cost,'历史用量金额或账号重复，未写入账本'),externalId=String(r.account_id);
-        assert(!seen.has(externalId),'历史用量金额或账号重复，未写入账本',502);
-        seen.add(externalId);return {externalId,rawUsd:raw.toFixed()};
-      });
+      return historicalRows(data.accounts);
     }
     const data=await this.call('/api/admin/vendor-usage/queries','POST',{since:`${day}T00:00:00+08:00`,until:`${day}T23:59:59+08:00`,granularity:'day'});
     assert(data.task?.id,'历史查询接口响应变化',502);
+    const taskMatches=(task:any)=>task?.id===data.task.id
+      &&(task.input?.since===undefined||Date.parse(task.input.since)===Date.parse(`${day}T00:00:00+08:00`))
+      &&(task.input?.until===undefined||Date.parse(task.input.until)===Date.parse(`${day}T23:59:59+08:00`));
     let first:any;
     for(let n=0;n<25;n++) {
       first=await this.call(`/api/admin/vendor-usage/queries/${encodeURIComponent(data.task.id)}?page=1&account_page=1`);
+      assert(taskMatches(first.task),'历史查询分页结果不完整',502);
       if(first.task?.status==='succeeded'||first.task?.status==='completed') break;
       assert(!['failed','cancelled'].includes(first.task?.status),'上游历史查询失败',502);
       await new Promise(resolve=>setTimeout(resolve,2000));
@@ -412,14 +420,16 @@ export class ProviderClient {
     const result=first.result;
     assert(Array.isArray(result.accounts),'上游历史结果缺少逐账号用量；未写入账本',502);
     const rows=[...result.accounts];
-    const count=Number(result.account_count??rows.length),pageSize=Number(result.page_size??rows.length);
-    assert(pageSize>0 || count===0,'历史查询分页格式变化',502);
+    const count=result.account_count,pageSize=result.page_size;
+    assert(Number.isInteger(count)&&count>=0&&count<=100000&&Number.isInteger(pageSize)&&pageSize>=0&&(pageSize>0||count===0)
+      &&(count===0||Math.ceil(count/pageSize)<=1000)&&result.account_page===1,'历史查询分页格式变化',502);
     for(let page=2;page<=Math.ceil(count/pageSize);page++) {
       const next=await this.call(`/api/admin/vendor-usage/queries/${encodeURIComponent(data.task.id)}?page=1&account_page=${page}`);
-      assert(Array.isArray(next.result?.accounts),'历史查询分页结果不完整',502);
+      assert(taskMatches(next.task)&&['succeeded','completed'].includes(next.task?.status)&&Array.isArray(next.result?.accounts)
+        &&next.result.account_count===count&&next.result.page_size===pageSize&&next.result.account_page===page,'历史查询分页结果不完整',502);
       rows.push(...next.result.accounts);
     }
     assert(rows.length===count,'历史账号结果不完整，未写入账本',502);
-    return rows.map((r:any)=>{ assert(r.account_id && r.cost!==undefined,'历史用量字段缺失',502);return {externalId:String(r.account_id),rawUsd:String(r.cost)}; });
+    return historicalRows(rows);
   }
 }
