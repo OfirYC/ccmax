@@ -20,6 +20,8 @@ const email=z.email().max(200).transform(v=>v.toLowerCase());
 const password=z.string().min(12,'密码至少 12 位').max(200);
 const key=z.string().min(8).max(100);
 const publicUser=(u:Row)=>({id:u.id,name:u.name,email:u.email,role:u.role,parent_id:u.parent_id,active:u.active,created_at:u.created_at});
+const connectionName=(user:Row,provider:ProviderKey,connectionId:string,internalName:string)=>user.role==='owner'?internalName:`${PROVIDERS[provider].name} · ${connectionId.slice(0,8)}`;
+const publicConnectionRows=(user:Row,rows:Row[]):Row[]=>rows.map(r=>({...r,connection_name:connectionName(user,r.provider,r.connection_id,r.connection_name)}));
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const optionSchema=z.object({accountType:z.enum(['speed','stable','team','max','pro']).optional(),policyTemplateId:z.string().max(100).optional(),groupIds:z.array(z.string().max(100)).max(30).optional(),ccTemplateId:z.string().max(100).optional()}).strict();
 
@@ -99,8 +101,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
           sum(e.profit_usd) AS profit_usd,sum(CASE WHEN d.state='final' THEN e.profit_usd ELSE 0 END) AS final_profit
         FROM earnings e JOIN usage_days d ON d.id=e.usage_id WHERE d.day BETWEEN $2 AND $3 GROUP BY e.user_id
       ) m ON m.user_id=u.id WHERE u.id=ANY($1::text[]) ORDER BY u.created_at`,[ids,q.from,q.to]);
-    const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,current]);
-    const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
+    const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,current]);
+    const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
     return {users,rates,upcoming,period:q,providers:PROVIDERS};
   });
   app.post('/api/team',async req=>{
@@ -140,13 +142,23 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
 
   app.get('/api/connections',async req=>{
-    const current=today();
+    const current=today(),root=req.user.role==='owner';
     const rows=await db.query(`SELECT c.id,c.provider,c.name,c.enabled,c.status,c.last_error,c.last_sync_at,
       COALESCE((SELECT r.rate FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1),c.payout_rate) AS payout_rate,
+      (SELECT r.effective_date::text FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1) AS payout_effective_date,
       (SELECT r.rate FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS upcoming_payout_rate,
-      (SELECT r.effective_date FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS upcoming_payout_date
-      FROM connections c ORDER BY c.created_at`,[current]);
-    return {connections:rows.map(({payout_rate,last_error,upcoming_payout_rate,upcoming_payout_date,...c})=>({...c,...(req.user.role==='owner'?{payout_rate,last_error,upcoming_payout_rate,upcoming_payout_date}:{}),capabilities:PROVIDERS[c.provider as keyof typeof PROVIDERS]})),providers:PROVIDERS};
+      (SELECT r.effective_date::text FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS upcoming_payout_date,
+      (SELECT r.rate FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1) AS own_rate,
+      (SELECT r.effective_date::text FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1) AS own_effective_date,
+      (SELECT r.rate FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_rate,
+      (SELECT r.effective_date::text FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_date
+      FROM connections c ORDER BY c.created_at`,[current,req.user.id]);
+    return {connections:rows.map(({payout_rate,payout_effective_date,last_error,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
+      ...c,name:connectionName(req.user,c.provider,c.id,c.name),
+      settlement_rate:root?payout_rate:own_rate,settlement_effective_date:root?payout_effective_date:own_effective_date,
+      upcoming_settlement_rate:root?upcoming_payout_rate:own_upcoming_rate,upcoming_settlement_date:root?upcoming_payout_date:own_upcoming_date,
+      ...(root?{payout_rate,last_error,upcoming_payout_rate,upcoming_payout_date}:{}),capabilities:PROVIDERS[c.provider as ProviderKey],
+    })),providers:PROVIDERS,today:current};
   });
   app.post('/api/connections',async req=>{
     await requireOwner(req.user);
@@ -195,7 +207,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const proxies=await db.query(`SELECT p.id,p.owner_id,p.name,p.endpoint,p.enabled,p.created_at,u.name AS owner_name,a.id AS account_id,a.email AS account_email
       FROM proxies p JOIN users u ON u.id=p.owner_id LEFT JOIN accounts a ON a.proxy_id=p.id
       WHERE p.owner_id=ANY($1::text[]) OR a.owner_id=ANY($1::text[]) ORDER BY p.created_at DESC`,[ids]);
-    const mappings=await db.query(`SELECT m.proxy_id,m.connection_id,m.external_id,c.name AS connection_name FROM proxy_bindings m JOIN connections c ON c.id=m.connection_id WHERE m.proxy_id=ANY($1::text[])`,[proxies.map(p=>p.id)]);
+    const mappings=publicConnectionRows(req.user,await db.query(`SELECT m.proxy_id,m.connection_id,m.external_id,c.provider,c.name AS connection_name FROM proxy_bindings m JOIN connections c ON c.id=m.connection_id WHERE m.proxy_id=ANY($1::text[])`,[proxies.map(p=>p.id)]));
     return {proxies:proxies.map(p=>({...p,mappings:mappings.filter(m=>m.proxy_id===p.id)}))};
   });
   app.post('/api/proxies',async req=>{
@@ -233,7 +245,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       WHERE a.owner_id=ANY($1::text[]) OR $2::boolean ORDER BY a.created_at DESC`,[ids,root]);
     const bindings=await db.query(`SELECT b.*,c.provider,c.name AS connection_name FROM bindings b JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id
       WHERE (a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR $2::boolean`,[ids,root]);
-    return {accounts:accounts.map(a=>({...a,bindings:bindings.filter(b=>b.account_id===a.id)})),providers:PROVIDERS};
+    const visibleBindings=publicConnectionRows(req.user,bindings);
+    return {accounts:accounts.map(a=>({...a,bindings:visibleBindings.filter(b=>b.account_id===a.id)})),providers:PROVIDERS};
   });
   app.post('/api/accounts/:id/proxy',async req=>{
     const accountId=identifier.parse((req.params as Row).id),d=z.object({proxyId:identifier}).parse(req.body);
@@ -304,8 +317,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.get('/api/accounts/:id/attempts',async req=>{
     const accountId=identifier.parse((req.params as Row).id);
     const [a]=await db.query('SELECT id FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,req.user.id]);assert(a,'账号不存在',404);
-    return {attempts:await db.query(`SELECT o.id,o.connection_id,o.authorization_url,o.state,o.expires_at,c.name AS connection_name
-      FROM oauth_attempts o JOIN connections c ON c.id=o.connection_id WHERE o.account_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 30`,[accountId,req.user.id])};
+    return {attempts:publicConnectionRows(req.user,await db.query(`SELECT o.id,o.connection_id,o.authorization_url,o.state,o.expires_at,c.provider,c.name AS connection_name
+      FROM oauth_attempts o JOIN connections c ON c.id=o.connection_id WHERE o.account_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 30`,[accountId,req.user.id]))};
   });
   app.post('/api/oauth/:id/exchange',async req=>{
     const attemptId=identifier.parse((req.params as Row).id),d=z.object({callback:z.string().trim().min(1).max(8000),key}).parse(req.body);
@@ -346,8 +359,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
 
   app.get('/api/jobs',async req=>{
     const q=z.object({id:identifier.optional()}).parse(req.query);
-    const jobs=await db.query(`SELECT j.id,j.connection_id,j.requested_by,j.kind,j.state,j.result,j.error,j.created_at,j.completed_at,c.name AS connection_name
-      FROM jobs j JOIN connections c ON c.id=j.connection_id WHERE (j.requested_by=$1 OR $2::boolean) AND ($3::text IS NULL OR j.id=$3) ORDER BY j.created_at DESC LIMIT 100`,[req.user.id,req.user.role==='owner',q.id??null]);
+    const jobs=publicConnectionRows(req.user,await db.query(`SELECT j.id,j.connection_id,j.requested_by,j.kind,j.state,j.result,j.error,j.created_at,j.completed_at,c.provider,c.name AS connection_name
+      FROM jobs j JOIN connections c ON c.id=j.connection_id WHERE (j.requested_by=$1 OR $2::boolean) AND ($3::text IS NULL OR j.id=$3) ORDER BY j.created_at DESC LIMIT 100`,[req.user.id,req.user.role==='owner',q.id??null]));
     // OAuth URLs belong only to the submitting user, including in admin views.
     return {jobs:jobs.map(j=>j.kind==='oauth_start' && j.requested_by!==req.user.id?{...j,result:null}:j)};
   });
@@ -364,10 +377,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const [totals]=await db.query(`SELECT count(*) AS count,COALESCE(sum(u.raw_usd),0) AS raw_usd,COALESCE(sum(e.gross_usd),0) AS gross_usd,
       COALESCE(sum(e.downstream_usd),0) AS downstream_usd,COALESCE(sum(e.profit_usd),0) AS profit_usd ${source}`,params);
     if(exporting)assert(Number(totals.count)<=100000,'导出超过 100,000 条，请缩小日期或平台范围；未导出截断账单',400);
-    const rows=await db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.evidence,u.updated_at,b.id AS binding_id,c.provider,c.name AS connection_name,
+    const rows=await db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.evidence,u.updated_at,b.id AS binding_id,b.connection_id,c.provider,c.name AS connection_name,
       a.email,a.owner_id,a.ownership_verified,o.name AS owner_name,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd ${source}
       ORDER BY u.day DESC,a.email,u.id LIMIT $8 OFFSET $9`,[...params,exporting?100000:12,exporting?0:(q.page-1)*12]);
-    return {rows,totals,total:Number(totals.count),page:q.page};
+    return {rows:publicConnectionRows(user,rows).map(({evidence,...r})=>({...r,...(user.role==='owner'?{evidence}:{})})),totals,total:Number(totals.count),page:q.page};
   }
   app.get('/api/usage',async req=>usageRows(req.user,req.query));
   app.get('/api/usage/export',async(req,reply)=>{const {rows}=await usageRows(req.user,req.query,true);return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-usage.csv"').send(csv(rows,[['day','日期（北京时间）'],['email','账号'],['connection_name','平台'],['raw_usd','平台账单 USD'],['rate','结算折扣'],['gross_usd','我的应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','我的利润 USD'],['state','核实状态']]));});
@@ -387,12 +400,12 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       COALESCE(sum(CASE WHEN u.state='final' THEN e.profit_usd ELSE 0 END),0) AS final_profit FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1`,[req.user.id]);
     const daily=await db.query(`SELECT u.day,sum(u.raw_usd) AS raw_usd,sum(e.gross_usd) AS gross_usd,sum(e.profit_usd) AS profit_usd
       FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1 GROUP BY u.day ORDER BY u.day DESC LIMIT 14`,[req.user.id]);
-    const platforms=await db.query(`SELECT c.provider,c.name,c.status,c.last_sync_at,count(b.id) AS account_count,COALESCE(sum(b.daily_usd),0) AS daily_usd
+    const platforms=await db.query(`SELECT c.id,c.provider,c.name,c.status,c.last_sync_at,count(b.id) AS account_count,COALESCE(sum(b.daily_usd),0) AS daily_usd
       FROM connections c LEFT JOIN bindings b ON b.connection_id=c.id LEFT JOIN accounts a ON a.id=b.account_id
       WHERE c.enabled=true AND ((a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR b.id IS NULL OR $2::boolean) GROUP BY c.id ORDER BY c.created_at`,[ids,req.user.role==='owner']);
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
     const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];
-    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms,providers:PROVIDERS,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
+    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:PROVIDERS,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
   });
   app.get('/api/finance',async req=>{
     const q=z.object({tab:z.enum(['all','mine','children']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);
@@ -422,9 +435,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.get('/api/invoices/:id/export',async(req,reply)=>{
     const invoiceId=identifier.parse((req.params as Row).id),[inv]=await db.query('SELECT * FROM invoices WHERE id=$1',[invoiceId]);assert(inv&&(inv.user_id===req.user.id||inv.payer_id===req.user.id),'无权查看账单',403);
-    const items=await db.query(`SELECT u.day,a.email,c.name AS platform,u.raw_usd,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd FROM invoice_items i JOIN earnings e ON e.id=i.earning_id
+    const items=await db.query(`SELECT u.day,a.email,c.id AS connection_id,c.provider,c.name AS platform,u.raw_usd,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd FROM invoice_items i JOIN earnings e ON e.id=i.earning_id
       JOIN usage_days u ON u.id=e.usage_id JOIN bindings b ON b.id=u.binding_id JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id WHERE i.invoice_id=$1 ORDER BY u.day,a.email`,[invoiceId]);
-    return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition',`attachment; filename="${inv.number}.csv"`).send(csv(items,[['day','日期'],['email','账号'],['platform','平台'],['raw_usd','账单 USD'],['rate','折扣'],['gross_usd','应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','利润 USD']]));
+    return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition',`attachment; filename="${inv.number}.csv"`).send(csv(items.map(c=>({...c,platform:connectionName(req.user,c.provider,c.connection_id,c.platform)})),[['day','日期'],['email','账号'],['platform','平台'],['raw_usd','账单 USD'],['rate','折扣'],['gross_usd','应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','利润 USD']]));
   });
   app.post('/api/withdrawals',async req=>{
     const d=z.object({amount:money,method:z.string().trim().min(1).max(80),destination:z.string().trim().min(3).max(500),key}).parse(req.body);const w=await requestWithdrawal(db,req.user,d.amount,d.method,d.destination,d.key,box);return {...w,destination:withdrawalDestination(box,w.destination)};

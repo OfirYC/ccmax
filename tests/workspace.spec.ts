@@ -9,7 +9,7 @@ test('owner and agent complete team, usage, settlement and withdrawal flows',asy
  await page.getByRole('button',{name:'创建直属下级'}).click();
  await page.getByLabel('成员名称').fill('浏览器代理');await page.getByLabel('登录邮箱').fill('browser@example.com');await page.getByLabel('初始登录密码').fill('browser-password');await page.getByLabel('Gatelink 结算折扣').fill('0.2');await page.getByLabel('AI008 结算折扣').fill('0.1');await page.getByLabel('Mini CC Gateway 结算折扣').fill('0.15');await page.getByRole('button',{name:'创建下级账号',exact:true}).click();await expect(page.getByText('浏览器代理',{exact:true})).toBeVisible();
  await page.getByRole('columnheader',{name:'Mini CC Gateway 折扣'}).waitFor();
- await page.getByRole('link',{name:'平台连接',exact:true}).click();await expect(page.getByRole('heading',{name:'Mini CC Test'})).toBeVisible();
+ await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(page.getByRole('heading',{name:'Mini CC Test'})).toBeVisible();
  await page.getByRole('button',{name:'添加连接',exact:true}).click();await page.getByLabel('平台',{exact:true}).selectOption('minicc');await expect(page.getByLabel('平台',{exact:true})).toHaveValue('minicc');await page.getByRole('button',{name:'取消',exact:true}).click();
  await page.getByRole('link',{name:'用量明细',exact:true}).click();await page.getByLabel('开始日期').fill('1970-01-01');await expect(page.locator('tbody tr')).toHaveCount(2);await expect(page.locator('.usage-totals')).toContainText('$200.00');
  await page.getByRole('link',{name:'账单结算',exact:true}).click();await page.getByRole('button',{name:'生成结算账单',exact:true}).click();await page.getByRole('button',{name:'生成账单',exact:true}).click();await expect(page.locator('tbody tr')).toHaveCount(1);
@@ -24,6 +24,42 @@ test('owner and agent complete team, usage, settlement and withdrawal flows',asy
  await page.screenshot({path:'test-results/workspace-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await expect(page.getByRole('heading',{name:'账号管理',exact:true})).toBeVisible();await page.screenshot({path:'test-results/workspace-mobile.png',fullPage:true});
  expect(errors).toEqual([]);
+});
+
+test('platform management hides upstream identities, displays personal prices and limits onboarding to the chosen platform',async({page})=>{
+ await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
+ await expect(page.getByRole('heading',{name:'你好，平台管理员'})).toBeVisible();
+ const created=await page.request.post('/api/team',{headers:{'x-ccmax-request':'1'},data:{name:'价格核查代理',email:'pricing-browser@example.com',password:'pricing-browser-password',rates:{gatelink:0,ai008:0.2,minicc:0.15},effectiveFrom:'1970-01-01'}});expect(created.ok()).toBe(true);
+ await page.getByRole('link',{name:'代理团队',exact:true}).click();
+ await page.getByRole('row').filter({hasText:'价格核查代理'}).getByRole('button',{name:'定价',exact:true}).click();
+ await page.getByLabel('AI008 结算折扣',{exact:true}).fill('0.25');await page.getByRole('button',{name:'保存折扣',exact:true}).click();
+ await expect(page.getByRole('row').filter({hasText:'价格核查代理'})).toContainText('待生效 × 0.2500');
+ await page.getByRole('link',{name:'平台管理',exact:true}).click();
+ const aiCard=page.locator('.connection-card').filter({has:page.locator('.platform-mark.ai008')});
+ await expect(aiCard.getByRole('heading',{name:'private-upstream-ai008@example.com',exact:true})).toBeVisible();
+ await expect(aiCard.locator('.settlement-price>strong')).toHaveText('× 0.6000');await expect(aiCard.locator('.scheduled-price')).toHaveCount(0);
+ await page.locator('.user-card').click();await page.getByLabel('登录邮箱').fill('pricing-browser@example.com');await page.getByLabel('密码',{exact:true}).fill('pricing-browser-password');await page.getByRole('button',{name:'进入工作空间'}).click();
+ await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(page.getByRole('heading',{name:'平台管理',exact:true})).toBeVisible();
+ await expect(page.locator('body')).not.toContainText('private-upstream-');await expect(page.getByRole('link',{name:'打开平台',exact:true})).toHaveCount(0);
+ await expect(aiCard.locator('.settlement-price>strong')).toHaveText('× 0.2000');await expect(aiCard.locator('.settlement-price')).toContainText('结算 $20.00');await expect(aiCard.locator('.scheduled-price')).toContainText('待生效 × 0.2500');
+ const tomorrow=new Date(Date.now()+8*3600000+86400000).toISOString().slice(0,10);await expect(aiCard.locator('.scheduled-price')).toContainText(`${tomorrow} 00:00 北京时间生效`);
+ await expect(page.locator('.connection-card').filter({has:page.locator('.platform-mark.gatelink')}).locator('.settlement-price>strong')).toHaveText('× 0.0000');await expect(page.locator('.connection-card').filter({has:page.locator('.platform-mark.gatelink')}).locator('.scheduled-price')).toHaveCount(0);
+ const connections=await (await page.request.get('/api/connections')).json(),target=connections.connections.find((c:any)=>c.provider==='ai008');
+ expect(JSON.stringify(connections)).not.toContain('private-upstream-');expect(target).not.toHaveProperty('payout_rate');
+ await page.route('**/api/connections/*/options',route=>route.fulfill({json:{requireProxy:true,policies:[{id:'policy',name:'Policy'}],groups:[{id:'group',name:'Group'}],templates:[{id:'cc',name:'CC'}]}}));
+ await aiCard.getByRole('link',{name:'上号到此平台',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'指定平台上号'});await expect(dialog).toBeVisible();
+ await dialog.getByLabel('Claude 账号邮箱').fill('platform-choice@example.com');await dialog.getByRole('button',{name:'下一步：选择平台',exact:true}).click();
+ await expect(dialog.locator('.target-card')).toHaveCount(1);await expect(dialog.locator('.target-card input[type=checkbox]')).toBeChecked();await expect(dialog.locator('.target-card')).toContainText(target.name);
+ const authorize=dialog.getByRole('button',{name:'生成此平台授权链接',exact:true});await expect(authorize).toBeDisabled();
+ await dialog.getByRole('button',{name:'添加新代理',exact:true}).click();await dialog.getByLabel('代理名称',{exact:true}).fill('Platform choice fixed proxy');await dialog.getByLabel('代理地址',{exact:true}).fill('http://price-ui:test@price.proxy.example.com:8080');await dialog.getByRole('button',{name:'添加并绑定代理',exact:true}).click();await expect(authorize).toBeEnabled();
+ await page.route('**/api/accounts/*/authorize',route=>route.fulfill({json:{jobs:[]}}));
+ const sent=page.waitForRequest('**/api/accounts/*/authorize');await authorize.click();const payload=(await sent).postDataJSON();expect(payload.targets).toHaveLength(1);expect(payload.targets[0].connectionId).toBe(target.id);expect(payload.targets[0].options).not.toHaveProperty('proxy');
+ await page.getByRole('button',{name:'关闭弹窗'}).click();await page.getByRole('link',{name:'平台管理',exact:true}).click();await aiCard.getByRole('link',{name:'上号到此平台',exact:true}).click();
+ await dialog.getByLabel('选择已有 Claude 账号（可选）',{exact:true}).selectOption({label:'platform-choice@example.com'});await expect(dialog.getByText('固定出口代理：Platform choice fixed proxy',{exact:true})).toBeVisible();await expect(dialog.locator('.target-card')).toHaveCount(1);
+ await dialog.getByRole('button',{name:'Refresh token 导入',exact:true}).click();await expect(dialog.getByLabel('目标平台').locator('option')).toHaveCount(2);await dialog.getByLabel('目标平台').selectOption(target.id);await expect(dialog.getByLabel('目标平台')).toHaveValue(target.id);
+ await page.getByRole('button',{name:'关闭弹窗'}).click();await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(aiCard.locator('.settlement-price>strong')).toHaveText('× 0.2000');for(const button of await page.getByRole('button',{name:'关闭通知'}).all())await button.click();await page.screenshot({path:'test-results/platforms-agent-desktop.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});await expect(page.getByRole('heading',{name:'平台管理',exact:true})).toBeVisible();await page.screenshot({path:'test-results/platforms-agent-mobile.png',fullPage:true});
 });
 
 test('Mini CC is selectable for onboarding, token import and historical reconciliation',async({page})=>{

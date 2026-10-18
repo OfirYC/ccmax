@@ -13,7 +13,7 @@ import Jobs from './pages/Jobs';
 import Settings from './pages/Settings';
 import Proxies from './pages/Proxies';
 
-const nav=[{label:'工作台',items:[{to:'/',name:'总览',icon:LayoutDashboard},{to:'/accounts',name:'账号管理',icon:Users},{to:'/platforms',name:'平台连接',icon:Plug},{to:'/proxies',name:'出口代理',icon:ShieldCheck}]},{label:'团队与收益',items:[{to:'/team',name:'代理团队',icon:GitBranch},{to:'/usage',name:'用量明细',icon:ListChecks},{to:'/finance',name:'账单结算',icon:FileText},{to:'/withdrawals',name:'利润提现',icon:Wallet}]},{label:'管理',items:[{to:'/jobs',name:'同步任务',icon:Network},{to:'/settings',name:'设置与审计',icon:Settings2}]}];
+const nav=[{label:'工作台',items:[{to:'/',name:'总览',icon:LayoutDashboard},{to:'/accounts',name:'账号管理',icon:Users},{to:'/platforms',name:'平台管理',icon:Plug},{to:'/proxies',name:'出口代理',icon:ShieldCheck}]},{label:'团队与收益',items:[{to:'/team',name:'代理团队',icon:GitBranch},{to:'/usage',name:'用量明细',icon:ListChecks},{to:'/finance',name:'账单结算',icon:FileText},{to:'/withdrawals',name:'利润提现',icon:Wallet}]},{label:'管理',items:[{to:'/jobs',name:'同步任务',icon:Network},{to:'/settings',name:'设置与审计',icon:Settings2}]}];
 export default function App() {
   const [user,setUser]=useState<RecordData|null>(null),[loading,setLoading]=useState(true),[mobile,setMobile]=useState(false),[help,setHelp]=useState(false);
   const location=useLocation(),toast=useToast();

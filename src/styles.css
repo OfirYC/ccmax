@@ -13,3 +13,5 @@
 .platform-mark.minicc{color:#4d6f9a;background:#e9f0f9}
 
 .proxy-setup{padding:16px;background:#f6faf8;border:1px solid var(--line);border-radius:8px;margin:16px 0}.proxy-setup h3{margin:0 0 8px;font-size:14px}
+
+.settlement-price{margin:20px 0;padding:18px;background:var(--teal-soft);border:1px solid #dceae5;border-radius:10px;display:flex;flex-direction:column;gap:7px}.settlement-price>span{font-size:12px;color:#5b756e}.settlement-price>strong{font-family:'DM Mono',monospace;font-size:25px;color:#245f54}.settlement-price p{margin:0;font-size:13px}.settlement-price small{font-size:11px;color:#6f837d}.scheduled-price{display:flex;flex-direction:column;gap:5px;border-top:1px solid #dceae5;margin-top:6px;padding-top:12px}.scheduled-price b,.scheduled-rate{color:#936c2d}.scheduled-price b{font-size:13px}.connection-actions{flex-wrap:wrap}

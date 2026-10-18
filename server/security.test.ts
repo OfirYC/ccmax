@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate, type DB } from './db.js';
-import { bootstrap, id, today, secretBox } from './core.js';
+import { bootstrap, id, today, nextDay, secretBox } from './core.js';
 import { createApp } from './app.js';
 import { ingestUsage, requestWithdrawal, balance, createInvoice, confirmInvoice, reviewWithdrawal } from './billing.js';
 import { openTestDB } from './test-db.js';
@@ -123,6 +123,55 @@ describe('CCMAX authorization and ledger safeguards', () => {
   async function observe(bindingId:string,rawUsd:string,final=false,day=prior()) {
     return db.transaction(tx=>ingestUsage(tx,{bindingId,day,rawUsd,final,source:'test',evidence:'verified test statement'}));
   }
+
+  it('shows each user their own current and scheduled prices without changing the upstream contract or sealed earnings',async()=>{
+    const ownerCookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),ai=await connection('ai008','0.5');await connection('gatelink','0.6');await connection('minicc','0.7');
+    const child=(await api(ownerCookie,'POST','/api/team',{name:'Price child',email:'price-child@example.com',password:'price-child-password',rates:{ai008:0.2,gatelink:0},effectiveFrom:'1970-01-01'})).json().user;
+    const childCookie=await login(child.email,'price-child-password');
+    const leaf=(await api(childCookie,'POST','/api/team',{name:'Price leaf',email:'price-leaf@example.com',password:'price-leaf-password',rates:{ai008:0.1},effectiveFrom:'1970-01-01'})).json().user,leafCookie=await login(leaf.email,'price-leaf-password');
+    const acct=await account(child,'priced-account@example.com'),binding=await db.transaction(tx=>saveBinding(tx,ai,remote('price-remote',acct.email)));await observe(binding.id,'100',true);
+    const earningsBefore=await db.query('SELECT user_id,rate,gross_usd,profit_usd FROM earnings ORDER BY user_id');
+    const changed=await api(ownerCookie,'PUT',`/api/team/${child.id}/rates`,{provider:'ai008',rate:0.25});expect(changed.json().effectiveDate).toBe(nextDay());
+    const teamPrices=(await api(childCookie,'GET','/api/team')).json();
+    expect(teamPrices.rates.find((r:any)=>r.user_id===child.id&&r.provider==='ai008').effective_date).toBe('1970-01-01');
+    expect(teamPrices.upcoming.find((r:any)=>r.user_id===child.id&&r.provider==='ai008').effective_date).toBe(nextDay());
+    const mine=(cookie:string)=>api(cookie,'GET','/api/connections').then(r=>r.json().connections);
+    const ownerPrices=await mine(ownerCookie),childPrices=await mine(childCookie),leafPrices=await mine(leafCookie);
+    expect(ownerPrices.find((c:any)=>c.id===ai.id)).toMatchObject({payout_rate:'0.5000',settlement_rate:'0.5000',upcoming_settlement_rate:null});
+    expect(childPrices.find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.2000',settlement_effective_date:'1970-01-01',upcoming_settlement_rate:'0.2500',upcoming_settlement_date:nextDay()});
+    expect(childPrices.find((c:any)=>c.provider==='gatelink').settlement_rate).toBe('0.0000');
+    expect(childPrices.find((c:any)=>c.provider==='minicc')).toMatchObject({settlement_rate:null,upcoming_settlement_rate:null});
+    expect(childPrices.every((c:any)=>!Object.hasOwn(c,'payout_rate')&&!Object.hasOwn(c,'upcoming_payout_rate'))).toBe(true);
+    expect(leafPrices.find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.1000',upcoming_settlement_rate:null});
+    expect((await api(childCookie,'PUT',`/api/team/${child.id}/rates`,{provider:'ai008',rate:0.8})).statusCode).toBe(403);
+    expect((await api(childCookie,'PATCH',`/api/connections/${ai.id}`,{payoutRate:0.8})).statusCode).toBe(403);
+    expect((await api(ownerCookie,'PATCH',`/api/connections/${ai.id}`,{payoutRate:0.55})).statusCode).toBe(200);
+    expect((await mine(childCookie)).find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.2000',upcoming_settlement_rate:'0.2500'});
+    const tomorrow=nextDay(),clock=vi.spyOn(Date,'now').mockReturnValue(Date.parse(`${tomorrow}T00:00:00+08:00`));
+    try {
+      expect((await mine(childCookie)).find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.2500',settlement_effective_date:tomorrow,upcoming_settlement_rate:null});
+      expect((await mine(ownerCookie)).find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.5500',upcoming_settlement_rate:null});
+    } finally {clock.mockRestore();}
+    expect(await db.query('SELECT user_id,rate,gross_usd,profit_usd FROM earnings ORDER BY user_id')).toEqual(earningsBefore);
+  });
+
+  it('hides private platform account labels from all downstream views and CSV exports',async()=>{
+    const ownerCookie=await login('owner@example.com','correct horse battery staple'),conn=await connection(),internal='private-platform-login@example.com';
+    await db.query('UPDATE connections SET name=$2 WHERE id=$1',[conn.id,internal]);
+    const child=(await api(ownerCookie,'POST','/api/team',{name:'Private labels',email:'private-labels@example.com',password:'private-labels-password',rates:{ai008:0.2},effectiveFrom:'1970-01-01'})).json().user,childCookie=await login(child.email,'private-labels-password');
+    const acct=await account(child,'owned-claude@example.com'),proxyId=await bindProxy(childCookie,acct),box=secretBox(key);
+    await db.query('INSERT INTO proxy_bindings(id,proxy_id,connection_id,external_id) VALUES($1,$2,$3,$4)',[id(),proxyId,conn.id,'fixed']);
+    const binding=await db.transaction(tx=>saveBinding(tx,conn,{...remote('private-remote',acct.email),proxyExternalId:'fixed'}));await observe(binding.id,'100',true);
+    await enqueue(db,box,child.id,conn.id,'set_enabled',{bindingId:binding.id,enabled:false},id());
+    await db.query('INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[id(),child.id,conn.id,acct.id,box.encrypt({}),'https://auth.example.com/test',new Date(Date.now()+600000)]);
+    const invoice=await createInvoice(db,child,child.id,prior(),prior());
+    const paths=['/api/connections','/api/dashboard','/api/accounts','/api/jobs','/api/proxies',`/api/accounts/${acct.id}/attempts`,'/api/usage','/api/usage/export',`/api/invoices/${invoice.id}/export`];
+    for(const path of paths) {
+      const response=await api(childCookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);expect(response.body,path).toContain(`AI008 · ${conn.id.slice(0,8)}`);
+    }
+    expect((await api(ownerCookie,'GET','/api/connections')).body).toContain(internal);
+    expect((await api(ownerCookie,'GET','/api/accounts')).body).toContain(internal);
+  });
 
   it('settles four levels across two platforms with exact profit conservation and parent-only confirmation',async()=>{
     const [owner]=await db.query("SELECT * FROM users WHERE role='owner'");
