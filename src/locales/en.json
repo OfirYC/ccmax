@@ -735,5 +735,6 @@
   "生效前继续按当前价格结算": "Use the current price until this takes effect",
   "结算": "Settlement",
   "输入 0–1 的折扣": "Enter a rate from 0 to 1",
-  "金额均为 USD。": "All amounts are in USD."
+  "金额均为 USD。": "All amounts are in USD.",
+  "Binance ID、收款地址、账户或约定信息": "Binance ID, receiving address, account, or agreed details"
 }

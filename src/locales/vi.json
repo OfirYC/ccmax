@@ -735,5 +735,6 @@
   "生效前继续按当前价格结算": "Tiếp tục quyết toán theo giá hiện tại cho đến khi giá mới có hiệu lực",
   "结算": "Quyết toán",
   "输入 0–1 的折扣": "Nhập tỷ lệ từ 0 đến 1",
-  "金额均为 USD。": "Tất cả số tiền đều tính bằng USD."
+  "金额均为 USD。": "Tất cả số tiền đều tính bằng USD.",
+  "Binance ID、收款地址、账户或约定信息": "Binance ID, địa chỉ nhận tiền, tài khoản hoặc thông tin đã thỏa thuận"
 }
