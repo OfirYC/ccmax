@@ -1119,5 +1119,13 @@
   "重新授权后自动应用账号代理": "Cấp quyền lại để tự động áp dụng proxy tài khoản",
   "系统自动同步账号代理": "Hệ thống tự đồng bộ proxy tài khoản",
   "所有平台自动沿用": "Mọi nền tảng tự động dùng chung",
-  "请重新授权此平台，系统将自动应用账号固定代理": "Hãy cấp quyền lại nền tảng này để tự động áp dụng proxy cố định của tài khoản"
+  "请重新授权此平台，系统将自动应用账号固定代理": "Hãy cấp quyền lại nền tảng này để tự động áp dụng proxy cố định của tài khoản",
+  "每天北京时间 02:00 后自动更新昨日账单。": "Hóa đơn hôm qua tự động cập nhật sau 02:00 giờ Bắc Kinh hằng ngày.",
+  "账单更新记录": "Lịch sử cập nhật hóa đơn",
+  "等待账单更新": "Đang chờ cập nhật hóa đơn",
+  "账单更新": "Cập nhật hóa đơn",
+  "每天 02:00 后（北京时间）": "Hằng ngày sau 02:00 (giờ Bắc Kinh)",
+  "每日自动更新": "Tự động cập nhật hằng ngày",
+  "填写真实合同起始日期。": "Nhập ngày bắt đầu hợp đồng thực tế.",
+  "账单详情": "Chi tiết hóa đơn"
 }

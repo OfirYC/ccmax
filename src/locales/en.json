@@ -1119,5 +1119,13 @@
   "重新授权后自动应用账号代理": "Reauthorize to apply the account proxy automatically",
   "系统自动同步账号代理": "Account proxy is synchronized automatically",
   "所有平台自动沿用": "Used automatically across platforms",
-  "请重新授权此平台，系统将自动应用账号固定代理": "Reauthorize this platform to apply the account’s fixed proxy automatically"
+  "请重新授权此平台，系统将自动应用账号固定代理": "Reauthorize this platform to apply the account’s fixed proxy automatically",
+  "每天北京时间 02:00 后自动更新昨日账单。": "Yesterday’s bills update automatically after 02:00 Beijing time each day.",
+  "账单更新记录": "Bill updates",
+  "等待账单更新": "Waiting for bill updates",
+  "账单更新": "Bill updates",
+  "每天 02:00 后（北京时间）": "Daily after 02:00 (Beijing time)",
+  "每日自动更新": "Updates automatically each day",
+  "填写真实合同起始日期。": "Enter the actual contract start date.",
+  "账单详情": "Bill details"
 }

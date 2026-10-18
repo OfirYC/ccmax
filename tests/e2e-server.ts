@@ -5,6 +5,7 @@ import { bootstrap,hashPassword,id,secretBox,today } from '../server/core.js';
 import { createApp } from '../server/app.js';
 import { saveBinding } from '../server/worker.js';
 import { ingestUsage } from '../server/billing.js';
+import { createDailyInvoices } from '../server/daily-billing.js';
 import { normalizeTelemetry,saveTelemetry } from '../server/telemetry.js';
 const db=await openDB();await migrate(db);
 await bootstrap(db,{ADMIN_EMAIL:'owner@example.com',ADMIN_PASSWORD:'e2e-owner-password'});
@@ -27,6 +28,7 @@ for(const [provider,rate] of [['gatelink','0.5'],['ai008','0.6']]) {
    VALUES($1,date_trunc('hour',now())-interval '1 hour',now()-interval '1 hour',2,600,0)`,[b.id]);
  await db.transaction(tx=>ingestUsage(tx,{bindingId:b.id,day,rawUsd:'100',final:true,source:'e2e-fixture'}));
 }
+await createDailyInvoices(db,owner,day);
 const mini=id();
 await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,status) VALUES($1,'minicc','Mini CC Test',$2,0.7,'connected')",[mini,box.encrypt({username:'fixture',password:'fixture'})]);
 await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,0.7,'1970-01-01')",[id(),mini]);
