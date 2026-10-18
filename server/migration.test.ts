@@ -27,6 +27,10 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect(flags.find(a=>a.id===assigned)?.ownership_verified).toBe(true);
   await expect(db.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[sealed,other])).rejects.toThrow('immutable');
   await db.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[sealed]);
-  expect(await db.query('SELECT * FROM migrations')).toHaveLength(3);
+  expect(await db.query('SELECT * FROM migrations')).toHaveLength(4);
+  await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'minicc','Mini CC','encrypted',0.4)",[id()]);
+  await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'minicc',0.15,'2020-01-01',$3)",[id(),other,owner.id]);
+  expect((await db.query('SELECT payout_rate FROM connections WHERE id=$1',[connection]))[0].payout_rate).toBe('0.5000');
+  expect((await db.query('SELECT raw_usd FROM usage_days'))[0].raw_usd).toBe('100.00000000');
  }finally{await db.close();}
 });

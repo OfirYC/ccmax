@@ -20,6 +20,7 @@ for(const [provider,rate] of [['gatelink','0.5'],['ai008','0.6']]) {
  const b=await db.transaction(tx=>saveBinding(tx,c,{id:'fixture-'+provider,email:'claude-fixture@example.com',name:'fixture',status:'active',dailyUsd:'100',cost7d:null,cost30d:null,utilization:null}));
  await db.transaction(tx=>ingestUsage(tx,{bindingId:b.id,day,rawUsd:'100',final:true,source:'e2e-fixture'}));
 }
+await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,status) VALUES($1,'minicc','Mini CC Test',$2,0.7,'connected')",[id(),box.encrypt({username:'fixture',password:'fixture'})]);
 const {app}=await createApp(db,{encryptionKey:'ab'.repeat(32),appUrl:'http://127.0.0.1:4319',production:true});
 await app.register(fastifyStatic,{root:path.resolve('dist/client'),wildcard:false});
 app.setNotFoundHandler((req,reply)=>req.url.startsWith('/api/')?reply.code(404).send({error:'接口不存在'}):reply.sendFile('index.html'));

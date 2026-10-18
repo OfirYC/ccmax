@@ -1,4 +1,15 @@
 import type { DB } from './db.js';
+import { PROVIDER_KEYS } from './providers.js';
+
+export async function extendProviders(tx: DB) {
+  // Existing deployments retain their connections, rates and financial history.
+  // New platform prices require an explicit contract; never copy another rate.
+  const allowed=PROVIDER_KEYS.map(p=>`'${p}'`).join(',');
+  for(const table of ['connections','rates']) {
+    await tx.query(`ALTER TABLE ${table} DROP CONSTRAINT ${table}_provider_check`);
+    await tx.query(`ALTER TABLE ${table} ADD CONSTRAINT ${table}_provider_check CHECK(provider IN (${allowed}))`);
+  }
+}
 
 // Each query is one SQL statement, including function bodies. This works in
 // PostgreSQL and PGlite without splitting procedural SQL on semicolons.

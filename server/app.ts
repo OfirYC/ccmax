@@ -7,11 +7,11 @@ import type { DB, Row } from './db.js';
 import { AppError, assert, audit, dayString, hashPassword, id, nextDay, requireDirect, requireOwner, secretBox, subtree, today, verifyPassword } from './core.js';
 import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, withdrawalDestination } from './billing.js';
 import { enqueue } from './worker.js';
-import { PROVIDERS, ProviderClient } from './providers.js';
+import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './providers.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
-const provider=z.enum(['gatelink','ai008']);
+const provider=z.enum(PROVIDER_KEYS);
 const money=z.string().regex(/^(0|[1-9]\d{0,15})(\.\d{1,8})?$/,'请输入最多 8 位小数的美元金额');
 const rate=z.coerce.number().min(0).max(1).multipleOf(0.0001);
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!Number.isNaN(Date.parse(v)) && new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v,'日期无效');
@@ -100,14 +100,14 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       ) m ON m.user_id=u.id WHERE u.id=ANY($1::text[]) ORDER BY u.created_at`,[ids,q.from,q.to]);
     const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,current]);
     const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
-    return {users,rates,upcoming,period:q};
+    return {users,rates,upcoming,period:q,providers:PROVIDERS};
   });
   app.post('/api/team',async req=>{
-    const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.object({gatelink:rate,ai008:rate}),effectiveFrom:date.optional()}).parse(req.body);
+    const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.partialRecord(provider,rate).refine(v=>Object.keys(v).length>0,'请至少设置一个平台价格'),effectiveFrom:date.optional()}).parse(req.body);
     const hash=await hashPassword(d.password),userId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     return db.transaction(async tx=>{
       const [u]=await tx.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING *',[userId,req.user.id,d.email,d.name,hash]);
-      for(const p of ['gatelink','ai008'] as const) await tx.query('INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[id(),userId,p,d.rates[p],effective,req.user.id]);
+      for(const [p,value] of Object.entries(d.rates)) await tx.query('INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[id(),userId,p,value,effective,req.user.id]);
       await audit(tx,req.user.id,'team.create',userId,{name:d.name});return {user:publicUser(u)};
     });
   });
@@ -124,9 +124,14 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.put('/api/team/:id/rates',async req=>{
     const target=identifier.parse((req.params as Row).id);
-    const d=z.object({provider,rate}).parse(req.body),effective=nextDay();
+    const d=z.object({provider,rate,effectiveFrom:date.optional()}).parse(req.body);
     return db.transaction(async tx=>{
       await requireDirect(tx,req.user,target);
+      await tx.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[target]);
+      const [existing]=await tx.query('SELECT id FROM rates WHERE user_id=$1 AND provider=$2 LIMIT 1',[target,d.provider]);
+      const effective=existing?nextDay():(d.effectiveFrom??today());
+      assert(!existing||!d.effectiveFrom||d.effectiveFrom===effective,'已有价格只能从次日变更');
+      assert(existing||effective<=today(),'初始价格日期不能在未来');
       await tx.query(`INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(user_id,provider,effective_date) DO UPDATE SET rate=EXCLUDED.rate,created_by=EXCLUDED.created_by,created_at=now()`,[id(),target,d.provider,d.rate,effective,req.user.id]);
       await audit(tx,req.user.id,'rate.update',target,{...d,effectiveDate:effective});return {effectiveDate:effective};
@@ -180,7 +185,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.post('/api/connections/:id/reconcile',async req=>{
     await requireOwner(req.user);const target=identifier.parse((req.params as Row).id),d=z.object({day:date,key}).parse(req.body);assert(d.day<today(),'只能对账已结束日期');
-    const [c]=await db.query('SELECT provider FROM connections WHERE id=$1 AND enabled=true',[target]);assert(c?.provider==='ai008','仅 AI008 提供已核验的历史查询接口');
+    const [c]=await db.query('SELECT provider FROM connections WHERE id=$1 AND enabled=true',[target]);assert(c && PROVIDERS[c.provider as ProviderKey]?.historicalUsage,'此平台不支持历史查询，请导入确认的日账单');
     return enqueue(db,box,req.user.id,target,'reconcile',{day:d.day},d.key);
   });
 
@@ -190,7 +195,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       WHERE a.owner_id=ANY($1::text[]) OR $2::boolean ORDER BY a.created_at DESC`,[ids,root]);
     const bindings=await db.query(`SELECT b.*,c.provider,c.name AS connection_name FROM bindings b JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id
       WHERE (a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR $2::boolean`,[ids,root]);
-    return {accounts:accounts.map(a=>({...a,bindings:bindings.filter(b=>b.account_id===a.id)}))};
+    return {accounts:accounts.map(a=>({...a,bindings:bindings.filter(b=>b.account_id===a.id)})),providers:PROVIDERS};
   });
   app.post('/api/accounts',async req=>{
     const d=z.object({email,label:z.string().max(100).default('')}).parse(req.body);
@@ -244,7 +249,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const accountId=identifier.parse((req.params as Row).id),d=z.object({connectionId:identifier,refreshToken:z.string().trim().min(10).max(10000),options:optionSchema,key}).parse(req.body);
     return db.transaction(async tx=>{
       const [a]=await tx.query('SELECT id FROM accounts WHERE id=$1 AND owner_id=$2 FOR UPDATE',[accountId,req.user.id]);assert(a,'只能为自己名下账号上号',403);
-      const [c]=await tx.query(`SELECT * FROM connections WHERE id=$1 AND enabled=true AND provider='ai008'`,[d.connectionId]);assert(c,'此平台不支持 RT 导入');
+      const [c]=await tx.query('SELECT * FROM connections WHERE id=$1 AND enabled=true',[d.connectionId]);assert(c && PROVIDERS[c.provider as ProviderKey]?.refreshTokenImport,'此平台不支持 RT 导入');
       const [bound]=await tx.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!bound,'账号已在此平台，请联系管理员核实归属',409);
       const [pending]=await tx.query(`SELECT id FROM oauth_attempts WHERE account_id=$1 AND connection_id=$2 AND state IN ('pending','exchanging') AND expires_at>now()`,[accountId,c.id]);assert(!pending,'此账号已有有效 OAuth 流程，请先完成或等待过期',409);
       return enqueue(tx,box,req.user.id,c.id,'import_rt',{accountId,options:d.options,refreshToken:d.refreshToken},d.key);
@@ -305,7 +310,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       WHERE c.enabled=true AND ((a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR b.id IS NULL OR $2::boolean) GROUP BY c.id ORDER BY c.created_at`,[ids,req.user.role==='owner']);
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
     const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];
-    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
+    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms,providers:PROVIDERS,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
   });
   app.get('/api/finance',async req=>{
     const q=z.object({tab:z.enum(['all','mine','children']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);

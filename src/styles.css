@@ -9,3 +9,5 @@
 .sidebar>.brand,.workspace-switch,.sidebar-bottom{flex-shrink:0}.nav-groups{min-height:0;overflow-y:auto}
 
 .icon-button.mobile-menu{display:none}@media(max-width:880px){.icon-button.mobile-menu{display:grid}}
+
+.platform-mark.minicc{color:#4d6f9a;background:#e9f0f9}
