@@ -6,11 +6,12 @@ import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
 import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
 import { authorizationState } from '../shared/oauth.js';
 import { statefulOAuthCallback } from './oauth-callback.js';
+import { platformNames } from '../shared/platforms.js';
 
 export const PROVIDERS = {
-  gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false,statusRequiresAdmin:true },
-  ai008: { name:'AI008', url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
-  minicc: { name:'Mini CC Gateway', url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  gatelink: { name:platformNames.gatelink, url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false,statusRequiresAdmin:true },
+  ai008: { name:platformNames.ai008, url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  minicc: { name:platformNames.minicc, url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
 } as const;
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];

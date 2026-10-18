@@ -1051,5 +1051,8 @@
   "重新授权的原绑定或账号归属已变化，请核对": "The original reauthorization binding or account ownership has changed; verify it",
   "重新授权的原绑定或账号归属已变化，请重新核对": "The original reauthorization binding or account ownership has changed; verify it again",
   "重新授权返回的账号 ID 不一致，请同步核对；未替换原绑定": "Reauthorization returned a different account ID. Sync and verify; the original binding has not been replaced.",
-  "重新授权返回的账号 ID 或邮箱不一致，请同步核对；未替换原绑定": "Reauthorization returned a different account ID or email. Sync and verify; the original binding has not been replaced."
+  "重新授权返回的账号 ID 或邮箱不一致，请同步核对；未替换原绑定": "Reauthorization returned a different account ID or email. Sync and verify; the original binding has not been replaced.",
+  "当前结算折扣": "Current settlement rate",
+  "账单冻结折扣": "Frozen bill rate",
+  "平台主账号凭据加密保存，仅管理员可配置。所有页面只显示平台名称和当前用户的结算价格。": "Main account credentials are encrypted and configurable only by administrators. Every page shows platform names and the current user’s settlement rates."
 }

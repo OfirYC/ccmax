@@ -1,9 +1,11 @@
+import { platformName } from '../../shared/platforms';
+import { PlatformIdentity } from '../PlatformIdentity';
 import { useState } from 'react';
 import { Link,useSearchParams } from 'react-router-dom';
 import { Activity,ArrowUpRight,RefreshCw,Search } from 'lucide-react';
 import { dateTime,key,number,post,useData } from '../api';
 import { Amount } from '../PriceDisplay';
-import { Badge,Empty,ErrorBox,Loading,Modal,PageHead,Paginator,PlatformMark,Table,useSession,useToast } from '../components';
+import { Badge,Empty,ErrorBox,Loading,Modal,PageHead,Paginator,Table,useSession,useToast } from '../components';
 import { t } from '../i18n';
 import { useLocale } from '../LanguageSwitcher';
 import type { AccountTelemetry } from '../../shared/telemetry';
@@ -62,10 +64,10 @@ function AnalyticsData({query,setPage,onMember}:{query:string;setPage:(n:number)
     <section className="panel telemetry-table"><div className="account-toolbar"><div className="tabs">{[['accounts',t('账号明细')],['platforms',t('平台汇总')],['members',t('成员汇总')]].map(([v,l])=><button key={v} className={view===v?'active':''} onClick={()=>setView(v)}>{l}</button>)}</div><small>{t('同一账号在不同平台分别统计，跨平台汇总包含各平台调用。')}</small></div>
       {view==='accounts'?data.rows.length?<><Table headers={[t('Claude 账号'),t('平台 / 归属'),t('请求数')+' / Token','RPM / TPM',t('平台消费 USD'),t('数据状态'),t('操作')]}>{data.rows.map((r:any)=>{
         const p=r.telemetry?.periods[period],a=r.telemetry?.activity,oldToday=period==='today'&&r.telemetry?.day!==data.day;
-        return <tr key={r.id}><td><strong>{r.email}</strong><small>{r.label}</small></td><td><div className="binding-list"><div><PlatformMark provider={r.provider} size="tiny"/>{r.connection_name}</div></div><small>{r.ownership_verified?r.owner_name:t('待归属')}</small></td>
+        return <tr key={r.id}><td><strong>{r.email}</strong><small>{r.label}</small></td><td><div className="binding-list"><div><PlatformIdentity provider={r.provider} connectionId={r.connection_id}/></div></div><small>{r.ownership_verified?r.owner_name:t('待归属')}</small></td>
           <td><strong>{count(oldToday?null:p?.requests)}</strong><small>{count(oldToday?null:p?.tokens)} Token</small></td><td><strong>{count(a?.rpm)}</strong><small>{count(a?.tpm)} TPM</small></td><td><Amount value={oldToday?null:p?.billedUsd}/></td>
           <td><Badge state={r.fresh?'active':'pending'} label={!r.telemetry?t('尚未采集'):r.fresh?t('有效快照'):t('快照已过期')}/><small>{dateTime(r.telemetry?.sourceAt||r.telemetry?.collectedAt)}</small></td><td><button className="text-button" onClick={()=>setSelected(r.id)}>{t('调用详情')}<ArrowUpRight size={14}/></button></td></tr>;
-      })}</Table><Paginator total={data.total} page={data.page} setPage={setPage}/></>:<Empty title={t('当前范围没有平台账号')} detail={t('完成账号授权并确认归属后，平台同步会采集调用数据。')}/>:<Table headers={[view==='platforms'?t('平台'):t('归属成员'),t('平台账号'),t('请求数'),'Token','RPM',t('平台消费 USD')]}>{(view==='platforms'?data.platforms:data.members).map((r:any)=><tr key={r.id??'unassigned'}><td>{view==='platforms'?<div className="binding-list"><div><PlatformMark provider={r.provider} size="tiny"/>{r.name}</div>{r.attribution?.unassigned>0&&<small>{t('待归属平台账号：{0}',[r.attribution.unassigned])}</small>}</div>:r.id?<button className="text-button" onClick={()=>onMember(r.id)}>{r.name}</button>:t('待归属')}</td><td>{r.fresh}/{r.bindings}<small>{t('有效 / 全部')}</small></td><td><MetricCell metric={r.requests}/></td><td><MetricCell metric={r.tokens}/></td><td><MetricCell metric={r.rpm}/></td><td><MetricCell metric={r.billedUsd} usd/></td></tr>)}</Table>}
+      })}</Table><Paginator total={data.total} page={data.page} setPage={setPage}/></>:<Empty title={t('当前范围没有平台账号')} detail={t('完成账号授权并确认归属后，平台同步会采集调用数据。')}/>:<Table headers={[view==='platforms'?t('平台'):t('归属成员'),t('平台账号'),t('请求数'),'Token','RPM',t('平台消费 USD')]}>{(view==='platforms'?data.platforms:data.members).map((r:any)=><tr key={r.id??'unassigned'}><td>{view==='platforms'?<div className="binding-list"><div><PlatformIdentity provider={r.provider} connectionId={r.id}/></div>{r.attribution?.unassigned>0&&<small>{t('待归属平台账号：{0}',[r.attribution.unassigned])}</small>}</div>:r.id?<button className="text-button" onClick={()=>onMember(r.id)}>{r.name}</button>:t('待归属')}</td><td>{r.fresh}/{r.bindings}<small>{t('有效 / 全部')}</small></td><td><MetricCell metric={r.requests}/></td><td><MetricCell metric={r.tokens}/></td><td><MetricCell metric={r.rpm}/></td><td><MetricCell metric={r.billedUsd} usd/></td></tr>)}</Table>}
     </section>
     {view==='members'&&<p className="page-note">{t("成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。")}</p>}
     <div className="notice telemetry-cache"><Activity size={18}/><div><strong>{t('缓存与请求日志的可见范围')}</strong><p>{t('当前上游权限未提供可核实到 Claude 账号的输入、输出、缓存读写 Token 和逐条请求日志。主账号 API 日志不能当作个人或团队数据，缓存命中率暂不计算。')}</p><p>{t('账号详情中的缓存补偿是美元金额，不等于缓存 Token 或缓存命中率。今日口径来自上游，结算日期仍按北京时间。')}</p></div></div>
@@ -76,7 +78,7 @@ function Metric({label,metric,usd=false}:{label:string;metric:any;usd?:boolean})
 function MetricCell({metric,usd=false}:{metric:any;usd?:boolean}){return <>{usd?<Amount value={metric.value}/>:count(metric.value)}<small>{coverage(metric)}</small></>;}
 function AccountDetail({row,day,onClose}:{row:any;day:string;onClose:()=>void}){
   useLocale();const d=row.telemetry as AccountTelemetry|null;
-  return <Modal wide title={t('账号调用详情')} subtitle={`${row.email} · ${row.connection_name}`} onClose={onClose}>{!d?<Empty title={t('尚未采集')}/>:<>
+  return <Modal wide title={t('账号调用详情')} subtitle={`${row.email} · ${platformName(row.provider)}`} onClose={onClose}><PlatformIdentity provider={row.provider} connectionId={row.connection_id}/>{!d?<Empty title={t('尚未采集')}/>:<>
     {!row.fresh&&<div className="notice amber">{t('快照已过期')} · {dateTime(d.sourceAt||d.collectedAt)}</div>}
     <div className="telemetry-detail-meta"><span>{t('归属成员')}: {row.ownership_verified?row.owner_name:t('待归属')}</span><span>{t('上游数据时间')}: {dateTime(d.sourceAt)}</span><span>{t('CCMAX 采集时间')}: {dateTime(d.collectedAt)}</span><span>{t('采集日期（北京时间）')}: {d.day}</span></div>
     <div className="telemetry-detail-grid">{[['RPM',d.activity.rpm,d.limits.rpm],['TPM',d.activity.tpm,d.limits.tpm],[t('当前并发'),d.activity.concurrent,d.limits.concurrent],[t('活跃会话'),d.activity.sessions,null]].map(([label,v,limit])=><div key={label as string}><small>{label}</small><strong>{count(v)}</strong>{limit!==null&&<small>{t('配置上限 {0}（0 表示未限制）',[count(limit)])}</small>}</div>)}</div>

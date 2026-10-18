@@ -1,14 +1,14 @@
+import { PlatformIdentity } from './PlatformIdentity';
 import { Link } from 'react-router-dom';
 import { dateTime } from './api';
 import { Amount } from './PriceDisplay';
-import { Badge,Modal,PlatformMark,Table } from './components';
+import { Badge,Modal,Table } from './components';
 import { t } from './i18n';
 import { useLocale } from './LanguageSwitcher';
 
 export function FinanceAudit({report,users,onClose}:{report:any;users:any[];onClose:()=>void}) {
   useLocale();
   const names=new Map(users.map(u=>[u.id,u.name]));
-  const platformNames:Record<string,string>={ai008:'AI008',gatelink:'Gatelink',minicc:'Mini CC Gateway'};
   return <Modal wide title={t('全平台资金核对')} subtitle={dateTime(report.checkedAt)} onClose={onClose}>
     <div className={`notice ${report.ok?'':'amber'}`}><strong>{report.ok?t('账目一致性核对通过'):t('发现账目异常，请先核对原始凭证')}</strong></div>
     <p className="form-hint">{t('已核对 {0} 个钱包、{1} 条已封账和 {2} 条预估用量。',[report.checked.wallets,report.checked.finalizedUsageDays,report.checked.provisionalUsageDays])}</p>
@@ -16,7 +16,7 @@ export function FinanceAudit({report,users,onClose}:{report:any;users:any[];onCl
     {report.inventory.awaiting_attribution>0&&<div className="notice amber"><span>{t('仍有 {0} 个待归属账号，确认归属前不产生代理收益。',[report.inventory.awaiting_attribution])} <Link to="/accounts?unassigned=1" onClick={onClose}>{t('查看待归属账号')}</Link></span></div>}
     <h3>{t('平台账单进度')}</h3>
     <Table headers={[t('平台'),t('已归属 / 平台绑定'),t('历史待核实 USD'),t('已封账原始账单 USD'),t('管理员待开票应收 USD')]}>{report.platforms.map((p:any)=><tr key={p.id}>
-      <td><div className="binding-list"><div><PlatformMark provider={p.provider} size="tiny"/>{platformNames[p.provider]}</div><small>{p.id.slice(0,8)} · <Badge state={p.enabled?p.status:'disabled'}/></small><small>{t('最近同步')} {dateTime(p.last_sync_at)}</small></div></td>
+      <td><div className="binding-list"><div><PlatformIdentity provider={p.provider} connectionId={p.id}/></div><small>{p.id.slice(0,8)} · <Badge state={p.enabled?p.status:'disabled'}/></small><small>{t('最近同步')} {dateTime(p.last_sync_at)}</small></div></td>
       <td>{p.assigned}/{p.accounts}<small>{t('待归属 {0} 个',[p.unassigned])}</small></td>
       <td><Amount value={p.awaiting_finalization_raw_usd} tone="pending"/><small>{t('{0} 条账号日用量',[p.awaiting_finalization_days])}</small></td>
       <td><Amount value={p.finalized_raw_usd}/></td><td><Amount value={p.uninvoiced_receivable_usd} tone="settlement"/></td>

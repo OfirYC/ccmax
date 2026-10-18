@@ -1051,5 +1051,8 @@
   "重新授权的原绑定或账号归属已变化，请核对": "Liên kết gốc hoặc quyền sở hữu tài khoản đã thay đổi; hãy kiểm tra",
   "重新授权的原绑定或账号归属已变化，请重新核对": "Liên kết gốc hoặc quyền sở hữu tài khoản đã thay đổi; hãy kiểm tra lại",
   "重新授权返回的账号 ID 不一致，请同步核对；未替换原绑定": "Cấp quyền lại trả về ID tài khoản khác. Hãy đồng bộ và kiểm tra; chưa thay thế liên kết gốc.",
-  "重新授权返回的账号 ID 或邮箱不一致，请同步核对；未替换原绑定": "Cấp quyền lại trả về ID hoặc email khác. Hãy đồng bộ và kiểm tra; chưa thay thế liên kết gốc."
+  "重新授权返回的账号 ID 或邮箱不一致，请同步核对；未替换原绑定": "Cấp quyền lại trả về ID hoặc email khác. Hãy đồng bộ và kiểm tra; chưa thay thế liên kết gốc.",
+  "当前结算折扣": "Tỷ lệ quyết toán hiện tại",
+  "账单冻结折扣": "Tỷ lệ cố định của hóa đơn",
+  "平台主账号凭据加密保存，仅管理员可配置。所有页面只显示平台名称和当前用户的结算价格。": "Thông tin tài khoản chính được mã hóa và chỉ quản trị viên được cấu hình. Mọi trang chỉ hiển thị tên nền tảng và tỷ lệ quyết toán của người dùng hiện tại."
 }

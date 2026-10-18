@@ -30,7 +30,9 @@ const email=z.email().max(200).transform(v=>v.toLowerCase());
 const password=z.string().min(12,'密码至少 12 位').max(200);
 const key=z.string().min(8).max(100);
 const publicUser=(u:Row)=>({id:u.id,name:u.name,email:u.email,role:u.role,parent_id:u.parent_id,active:u.active,created_at:u.created_at});
-const connectionName=(user:Row,provider:ProviderKey,connectionId:string,internalName:string)=>user.role==='owner'?internalName:`${PROVIDERS[provider].name} · ${connectionId.slice(0,8)}`;
+// All roles receive public platform identity, including administrators and CSVs.
+// Saved labels can contain master-account emails and are never display names.
+const connectionName=(_user:Row,provider:ProviderKey,connectionId:string,_internalName:string)=>`${PROVIDERS[provider].name} · ${connectionId.slice(0,8)}`;
 const publicConnectionRows=(user:Row,rows:Row[]):Row[]=>rows.map(r=>({...r,connection_name:connectionName(user,r.provider,r.connection_id,r.connection_name)}));
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const optionSchema=z.object({accountType:z.enum(['speed','stable','team','max','pro']).optional(),policyTemplateId:z.string().max(100).optional(),groupIds:z.array(z.string().max(100)).max(30).optional(),ccTemplateId:z.string().max(100).optional()}).strict();

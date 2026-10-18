@@ -155,7 +155,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect(await db.query('SELECT user_id,rate,gross_usd,profit_usd FROM earnings ORDER BY user_id')).toEqual(earningsBefore);
   });
 
-  it('hides private platform account labels from all downstream views and CSV exports',async()=>{
+  it('hides private platform account labels for every role, including admin views and CSV exports',async()=>{
     const ownerCookie=await login('owner@example.com','correct horse battery staple'),conn=await connection(),internal='private-platform-login@example.com';
     await db.query('UPDATE connections SET name=$2 WHERE id=$1',[conn.id,internal]);
     const child=(await api(ownerCookie,'POST','/api/team',{name:'Private labels',email:'private-labels@example.com',password:'private-labels-password',rates:{ai008:0.2},effectiveFrom:'1970-01-01'})).json().user,childCookie=await login(child.email,'private-labels-password');
@@ -165,12 +165,15 @@ describe('CCMAX authorization and ledger safeguards', () => {
     await enqueue(db,box,child.id,conn.id,'set_enabled',{bindingId:binding.id,enabled:false},id());
     await db.query('INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[id(),child.id,conn.id,acct.id,box.encrypt({}),'https://auth.example.com/test',new Date(Date.now()+600000)]);
     const invoice=await createInvoice(db,child,child.id,prior(),prior());
-    const paths=['/api/connections','/api/dashboard','/api/accounts','/api/jobs','/api/proxies',`/api/accounts/${acct.id}/attempts`,'/api/usage','/api/usage/export',`/api/invoices/${invoice.id}/export`];
-    for(const path of paths) {
-      const response=await api(childCookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);expect(response.body,path).toContain(`AI008 · ${conn.id.slice(0,8)}`);
+    const history=await db.query('SELECT * FROM usage_days'),earnings=await db.query('SELECT * FROM earnings');
+    const paths=['/api/connections','/api/dashboard','/api/accounts','/api/jobs','/api/proxies','/api/telemetry','/api/usage','/api/usage/export',`/api/invoices/${invoice.id}/export`,`/api/invoices/preview?from=1970-01-01&to=${prior()}`];
+    for(const cookie of [ownerCookie,childCookie])for(const path of paths) {
+      const response=await api(cookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);expect(response.body,path).toContain(`AI008 · ${conn.id.slice(0,8)}`);
     }
-    expect((await api(ownerCookie,'GET','/api/connections')).body).toContain(internal);
-    expect((await api(ownerCookie,'GET','/api/accounts')).body).toContain(internal);
+    expect((await api(childCookie,'GET',`/api/accounts/${acct.id}/attempts`)).body).not.toContain(internal);
+    expect((await db.query('SELECT name FROM connections WHERE id=$1',[conn.id]))[0].name).toBe(internal);
+    expect(await db.query('SELECT * FROM usage_days')).toEqual(history);
+    expect(await db.query('SELECT * FROM earnings')).toEqual(earnings);
   });
 
   it('settles four levels across two platforms with exact profit conservation and parent-only confirmation',async()=>{

@@ -85,6 +85,21 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect(await db.query('SELECT * FROM invoices')).toHaveLength(1);
   });
 
+  it('shows every frozen rate for the selected settlement member without substituting current or administrator prices',async()=>{
+    const accountBinding=await binding(a);
+    await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'ai008',0.25,$3,$4)",[id(),a.id,prior(),owner.id]);
+    await observe(accountBinding,'100',prior(2));await observe(accountBinding,'100',prior());
+    const frozen=await db.query('SELECT * FROM earnings ORDER BY id');
+    await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'ai008',0.15,$3,$4)",[id(),a.id,today(),owner.id]);
+    const preview=await db.transaction(tx=>previewInvoice(tx,owner,a.id,prior(2),prior()));
+    expect(preview.platforms).toHaveLength(1);
+    expect(preview.platforms[0].ready_rates.map(Number)).toEqual([0.25,0.3]);
+    expect(preview.ready).toMatchObject({gross_usd:'55.00000000'});
+    expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(frozen);
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
+  });
+
   it('rejects a changed preview before inserting any invoice, and refreshes without changing wallet funds', async () => {
     await observe(await binding(a), '100');
     const preview = await db.transaction(tx => previewInvoice(tx, owner, owner.id, prior(), prior()));

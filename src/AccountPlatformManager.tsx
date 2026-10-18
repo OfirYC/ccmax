@@ -1,3 +1,5 @@
+import { platformName } from '../shared/platforms';
+import { usePlatformCatalog } from './PlatformIdentity';
 import { useEffect, useRef, useState } from 'react';
 import { dateTime, key, post, useData } from './api';
 import { Badge, ErrorBox, Field, Modal, PlatformMark, useSession } from './components';
@@ -10,7 +12,7 @@ export default function AccountPlatformManager({account,onClose,onOnboard,onConf
   onConfirmProxy:(binding:any)=>void;onRefresh:()=>void;
 }) {
   useLocale();
-  const {user}=useSession(),accounts=useData('/api/accounts',5000),connections=useData('/api/connections'),jobs=useData('/api/jobs',1800);
+  const {user}=useSession(),accounts=useData('/api/accounts',5000),connections=usePlatformCatalog(),jobs=useData('/api/jobs',1800);
   const current=accounts.data?.accounts.find((value:any)=>value.id===account.id)||account;
   const [error,setError]=useState(''),[busy,setBusy]=useState(''),[submitted,setSubmitted]=useState<Record<string,any>>({});
   const [editing,setEditing]=useState(''),[enabled,setEnabled]=useState('active');
@@ -29,7 +31,7 @@ export default function AccountPlatformManager({account,onClose,onOnboard,onConf
     try {
       const job=await post(`/api/bindings/${binding.id}/${action==='proxy'?'proxy/sync':'status'}`,{key:key(),...(action==='status'?{enabled:value}:{})});
       setSubmitted(previous=>({...previous,[connection.id]:job}));setEditing('');void jobs.refresh();
-    } catch(error) {setError(`${connection.capabilities.name}: ${translateMessage((error as Error).message)}`);}
+    } catch(error) {setError(`${platformName(connection.provider)}: ${translateMessage((error as Error).message)}`);}
     finally {setBusy('');}
   }
   return <Modal title={t('平台账号管理')} subtitle={current.email} wide onClose={onClose}>
@@ -38,7 +40,7 @@ export default function AccountPlatformManager({account,onClose,onOnboard,onConf
     {!current.proxy_id&&<p className="notice amber">{t('请先为该账号绑定并启用专属出口代理')}</p>}
     <div className="account-platforms">{list.map((connection:any)=>{
       const binding=current.bindings.find((value:any)=>value.connection_id===connection.id);
-      const name=connection.capabilities.name,job=submitted[connection.id]&&(jobs.data?.jobs.find((value:any)=>value.id===submitted[connection.id].id)||submitted[connection.id]);
+      const name=platformName(connection.provider),job=submitted[connection.id]&&(jobs.data?.jobs.find((value:any)=>value.id===submitted[connection.id].id)||submitted[connection.id]);
       const pending=busy===connection.id||job&&['queued','running'].includes(job.state);
       const proxyReady=!!current.proxy_id&&current.proxy_enabled;
       return <section className="account-platform-card" key={connection.id} aria-label={name}>

@@ -22,7 +22,7 @@ export async function previewInvoice(db: DB, actor: Row, userId: string, from: s
   const ids = await subtree(db, user.id);
   const platforms = await db.query(`WITH scoped AS (
     SELECT u.*,b.connection_id,c.provider,c.name AS connection_name,a.ownership_verified,
-      e.id AS earning_id,e.gross_usd,e.downstream_usd,e.profit_usd,i.invoice_id
+      e.id AS earning_id,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd,i.invoice_id
     FROM usage_days u JOIN bindings b ON b.id=u.binding_id JOIN connections c ON c.id=b.connection_id
     JOIN accounts a ON a.id=b.account_id LEFT JOIN earnings e ON e.usage_id=u.id AND e.user_id=$1
     LEFT JOIN invoice_items i ON i.earning_id=e.id
@@ -36,6 +36,7 @@ export async function previewInvoice(db: DB, actor: Row, userId: string, from: s
     count(*) FILTER (WHERE state='final' AND invoice_id IS NOT NULL) AS invoiced_count,
     COALESCE(sum(gross_usd) FILTER (WHERE state='final' AND invoice_id IS NOT NULL),0) AS invoiced_gross_usd,
     count(*) FILTER (WHERE state='final' AND earning_id IS NOT NULL AND invoice_id IS NULL) AS ready_count,
+    COALESCE(array_agg(DISTINCT rate ORDER BY rate) FILTER (WHERE state='final' AND earning_id IS NOT NULL AND invoice_id IS NULL),ARRAY[]::numeric[]) AS ready_rates,
     COALESCE(sum(raw_usd) FILTER (WHERE state='final' AND earning_id IS NOT NULL AND invoice_id IS NULL),0) AS ready_raw_usd,
     COALESCE(sum(gross_usd) FILTER (WHERE state='final' AND earning_id IS NOT NULL AND invoice_id IS NULL),0) AS ready_gross_usd,
     COALESCE(sum(downstream_usd) FILTER (WHERE state='final' AND earning_id IS NOT NULL AND invoice_id IS NULL),0) AS ready_downstream_usd,

@@ -11,7 +11,7 @@ test('owner and agent complete team, usage, settlement and withdrawal flows',asy
  await page.getByRole('button',{name:'创建直属下级'}).click();
  await page.getByLabel('成员名称').fill('浏览器代理');await page.getByLabel('登录邮箱').fill('browser@example.com');await page.getByLabel('初始登录密码').fill('browser-password');await page.getByLabel('Gatelink 结算折扣').fill('0.2');await page.getByLabel('AI008 结算折扣').fill('0.1');await page.getByLabel('Mini CC Gateway 结算折扣').fill('0.15');await page.getByRole('button',{name:'创建下级账号',exact:true}).click();await expect(page.locator('.team-members-panel').getByText('浏览器代理',{exact:true})).toBeVisible();
  await page.getByRole('columnheader',{name:'Mini CC Gateway 折扣'}).waitFor();
- await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(page.getByRole('heading',{name:'Mini CC Test'})).toBeVisible();
+ await page.getByRole('link',{name:'平台管理',exact:true}).click();await expect(page.getByRole('heading',{name:'Mini CC Gateway'})).toBeVisible();
  await page.getByRole('button',{name:'添加连接',exact:true}).click();await page.getByLabel('平台',{exact:true}).selectOption('minicc');await expect(page.getByLabel('平台',{exact:true})).toHaveValue('minicc');await page.getByRole('button',{name:'取消',exact:true}).click();
  await page.getByRole('link',{name:'用量明细',exact:true}).click();await page.getByLabel('开始日期').fill('1970-01-01');await expect(page.locator('tbody tr')).toHaveCount(2);await expect(page.locator('.usage-totals')).toContainText('$200.00');
  await page.getByRole('link',{name:'账单结算',exact:true}).click();await page.getByRole('button',{name:'生成结算账单',exact:true}).click();await page.getByRole('button',{name:'生成账单',exact:true}).click();await expect(page.locator('tbody tr')).toHaveCount(1);
@@ -39,7 +39,7 @@ test('platform management hides upstream identities, displays personal prices an
  await page.getByRole('link',{name:'平台管理',exact:true}).click();
  const aiCard=page.locator('.connection-card').filter({has:page.locator('.platform-mark.ai008')});
  await page.route('**/api/connections/*/options',route=>route.fulfill({json:{requireProxy:true,policies:[{id:'policy',name:'Policy'}],groups:[{id:'group',name:'Group'}],templates:[{id:'cc',name:'CC'}]}}));
- await expect(aiCard.getByRole('heading',{name:'private-upstream-ai008@example.com',exact:true})).toBeVisible();
+ await expect(aiCard.getByRole('heading',{name:'AI008',exact:true})).toBeVisible();
  await expect(aiCard.locator('.settlement-price>strong')).toHaveText('× 0.6000');await expect(aiCard.locator('.scheduled-price')).toHaveCount(0);
  await aiCard.getByRole('link',{name:'上号到此平台',exact:true}).click();
  const ownerDialog=page.getByRole('dialog',{name:'指定平台上号'});
@@ -93,7 +93,7 @@ test('Mini CC is selectable for onboarding, token import and historical reconcil
  const pendingAccount=page.getByRole('row').filter({hasText:'mini-e2e@example.com'});
  await expect(pendingAccount).toContainText('平台管理员');await expect(pendingAccount).toContainText('待授权核实');await expect(pendingAccount).not.toContainText('待分配归属');await expect(pendingAccount.getByRole('button',{name:'分配归属',exact:true})).toHaveCount(0);
  await page.getByRole('link',{name:'用量明细',exact:true}).click();await page.getByRole('button',{name:'读取历史账单'}).click();
- await page.getByLabel('支持历史查询的平台连接').selectOption({label:'Mini CC Test'});await expect(page.getByLabel('支持历史查询的平台连接')).not.toHaveValue('');
+ const miniOption=await page.getByLabel('支持历史查询的平台连接').locator('option').filter({hasText:'Mini CC Gateway'}).getAttribute('value');await page.getByLabel('支持历史查询的平台连接').selectOption(miniOption!);await expect(page.getByLabel('支持历史查询的平台连接')).not.toHaveValue('');
  await page.getByRole('button',{name:'关闭弹窗'}).click();await page.getByRole('link',{name:'出口代理',exact:true}).click();await expect(page.locator('tbody')).toContainText('mini-e2e@example.com');await expect(page.locator('tbody')).toContainText('http://proxy.example.com:8080');await expect(page.locator('tbody')).not.toContainText('ui-private-password');
  await page.screenshot({path:'test-results/proxies-desktop.png',fullPage:true});
 });

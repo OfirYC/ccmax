@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { localToday, post, useData, yesterday } from './api';
 import { Amount } from './PriceDisplay';
+import { PlatformIdentity } from './PlatformIdentity';
 import { ErrorBox, Field, Form, Loading, Modal, Table, useSession, useToast } from './components';
 import { t } from './i18n';
 import { useLocale } from './LanguageSwitcher';
@@ -44,7 +45,7 @@ function InvoiceReview({userId,from,to,onDone}:{userId:string;from:string;to:str
   return <><ErrorBox error={error}/><button className="button" type="button" disabled={refreshing} onClick={reload}><RefreshCw size={14}/>{t('刷新预览')}</button>{data&&<>
     <div className="confirm-amount invoice-preview-total"><div className="confirm-total"><span>{t('本次结算应收 · USD')}</span><Amount value={ready.gross_usd} digits={8} tone="settlement"/></div><div className="confirm-breakdown"><div><span>{t('下级应付')}</span><Amount value={ready.downstream_usd} digits={8}/></div><div><span>{t('本人利润')}</span><Amount value={ready.profit_usd} digits={8} tone="profit"/></div></div></div>
     <p className="form-hint">{t('本次可开票 {0} 条；待归属 {1} 条、已归属待核实 {2} 条、已开票 {3} 条均不重复计入。',[ready.count,data.unassigned.count,data.provisional.count,data.invoiced.count])}</p>
-    {data.platforms.length>0&&<Table headers={[t('平台'),t('可开票记录'),t('平台账单合计'),t('应收 USD'),t('下级应付'),t('本人利润')]}>{data.platforms.map((p:any)=><tr key={p.connection_id}><td><strong>{p.connection_name}</strong><small>{p.provider==='minicc'?'Mini CC Gateway':p.provider==='ai008'?'AI008':'Gatelink'}</small></td><td>{p.ready_count}</td><td><Amount value={p.ready_raw_usd} digits={8}/></td><td><Amount value={p.ready_gross_usd} digits={8} tone="settlement"/></td><td><Amount value={p.ready_downstream_usd} digits={8}/></td><td><Amount value={p.ready_profit_usd} digits={8} tone="profit"/></td></tr>)}</Table>}
+    {data.platforms.length>0&&<Table headers={[t('平台'),t('可开票记录'),t('平台账单合计'),t('应收 USD'),t('下级应付'),t('本人利润')]}>{data.platforms.map((p:any)=><tr key={p.connection_id}><td><PlatformIdentity provider={p.provider} connectionId={p.connection_id} rates={p.ready_rates} historical showId/></td><td>{p.ready_count}</td><td><Amount value={p.ready_raw_usd} digits={8}/></td><td><Amount value={p.ready_gross_usd} digits={8} tone="settlement"/></td><td><Amount value={p.ready_downstream_usd} digits={8}/></td><td><Amount value={p.ready_profit_usd} digits={8} tone="profit"/></td></tr>)}</Table>}
     {!ready.count&&<p className="notice amber">{t('所选期间没有可结算的已核实用量')}</p>}
     {!data.withinLimit&&<ErrorBox error={t('账单金额超出单笔上限，请缩小结算日期范围')}/>}
     {Number(ready.profit_usd)<0&&<p className="notice amber">{t('本账单为负利润，确认后将按真实亏损扣减该成员余额。请核对合同价和下级应付款。')}</p>}
