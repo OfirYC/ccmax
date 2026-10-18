@@ -5,6 +5,7 @@ import { bootstrap,hashPassword,id,secretBox,today } from '../server/core.js';
 import { createApp } from '../server/app.js';
 import { saveBinding } from '../server/worker.js';
 import { ingestUsage } from '../server/billing.js';
+import { normalizeTelemetry,saveTelemetry } from '../server/telemetry.js';
 const db=await openDB();await migrate(db);
 await bootstrap(db,{ADMIN_EMAIL:'owner@example.com',ADMIN_PASSWORD:'e2e-owner-password'});
 const [owner]=await db.query("SELECT * FROM users WHERE role='owner'"),agent=id(),leaf=id(),acct=id(),box=secretBox('ab'.repeat(32));
@@ -18,6 +19,12 @@ for(const [provider,rate] of [['gatelink','0.5'],['ai008','0.6']]) {
  await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,$3,'1970-01-01')",[id(),c.id,rate]);
  for(const [user,rate] of [[agent,'0.3'],[leaf,'0.1']])await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,'1970-01-01',$5)",[id(),user,provider,rate,owner.id]);
  const b=await db.transaction(tx=>saveBinding(tx,c,{id:'fixture-'+provider,email:'claude-fixture@example.com',name:'fixture',status:'active',dailyUsd:'100',cost7d:null,cost30d:null,utilization:null}));
+ const snapshot=normalizeTelemetry('ai008',{stats:{daily_cost:100,daily_req:120,daily_tok:42000,rpm:4,tpm:1200,concurrent:1},max_rpm:50,max_tpm:50000,
+   req_24h:150,ok_24h:144,limited_24h:3,usage_windows:{req_7d:720,tokens_7d:252000,cost_7d:600}});
+ snapshot.modelsAt=new Date().toISOString();snapshot.periods.today.models=[{model:'opus',usageUsd:'80'},{model:'fable',usageUsd:'20'}];
+ await saveTelemetry(db,b.id,snapshot);
+ await db.query(`INSERT INTO telemetry_samples(binding_id,bucket_at,source_at,rpm,tpm,concurrent)
+   VALUES($1,date_trunc('hour',now())-interval '1 hour',now()-interval '1 hour',2,600,0)`,[b.id]);
  await db.transaction(tx=>ingestUsage(tx,{bindingId:b.id,day,rawUsd:'100',final:true,source:'e2e-fixture'}));
 }
 const mini=id();

@@ -4,6 +4,7 @@ import { assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
 import { ProviderClient, type ProviderKey, type UpstreamAccount } from './providers.js';
 import { accountProxy, requireConsistentBindings } from './proxies.js';
+import { saveTelemetry } from './telemetry.js';
 
 export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:string,kind:string,payload:object,key:string) {
   const subject=(payload as any).accountId??(payload as any).bindingId??(payload as any).day??null;
@@ -45,6 +46,7 @@ export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,ex
     const verified=mapping && mapping.external_id===remote.proxyExternalId?account!.proxy_id:null;
     [bound]=await tx.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1 RETURNING *',[bound.id,verified]);
   }
+  if(remote.telemetry)await saveTelemetry(tx,bound.id,remote.telemetry);
   return bound;
 }
 
@@ -85,6 +87,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       if(job.kind==='sync') {
         assert(actor.role==='owner','仅管理员可以同步共享主账号');
         const day=today(),accounts=await client.listAccounts();
+        if(typeof client.enrichTelemetry==='function')await client.enrichTelemetry(accounts);
         assert(today()===day,'同步跨越北京时间零点，请重新同步');
         await db.transaction(async tx=>{
           for(const remote of accounts) {
@@ -93,6 +96,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
           }
           await tx.query(`UPDATE bindings SET status='missing' WHERE connection_id=$1 AND NOT(external_id=ANY($2::text[]))`,[connection.id,accounts.map(a=>a.id)]);
           await tx.query(`UPDATE connections SET status='connected',last_error=NULL,last_sync_at=now() WHERE id=$1`,[connection.id]);
+          await tx.query(`DELETE FROM telemetry_samples WHERE bucket_at<now()-interval '48 hours'`);
         });
         result={accounts:accounts.length};
       } else if(job.kind==='oauth_start') {

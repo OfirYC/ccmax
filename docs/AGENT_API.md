@@ -151,3 +151,13 @@ API 密钥请求按**每个用户、每个应用实例 120 次/分钟**限流，
 API 写操作的额外审计记录密钥 ID、路由、状态码和请求 ID，具体业务操作继续记录原有审计。完整密钥、请求体、RT 和密码不进入 API 调用审计。请求与撤销可能并发，已在途请求及已提交后台任务不保证撤回。
 
 本接口供二次开发工作台，不包含模型推理转发、CCMAX 模型 API Key 或令牌额度预扣。
+
+## 上游模型活动查询
+
+`read` 密钥可调用 `GET /api/telemetry` 与 `GET /api/telemetry/trend`。查询参数：`scope=self|descendants|team`（默认 team，含本人和全部下级）、`provider`、`accountId`、`connectionId`、`ownerId`（本人或自己子树内单个成员）、`search`、`period=today|5h|7d|30d`（默认 today），主查询另支持 `page`，每页 12 个平台绑定。所有汇总先按相同权限与条件筛选再分页；未核实归属账号不向代理开放。`ownerId` 表示精确成员筛选，覆盖 scope 的成员集合，但始终限制在调用者子树内。
+
+主查询返回 `rows`、`total`、`page`、`pageSize`、`totals`、`platforms`、`members`。每项汇总为 `{value, covered, total}`：value 是十进制字符串或 null，covered 为有该项数据且快照有效的平台绑定数。一个 Claude 账号在两个平台有两个绑定，各平台调用分别计入。缺失、过期、停用、上游未检出的账号不当作零；未返回不等于无使用。
+
+行内 `telemetry` 为严格白名单的账号运营数据：`activity`（rpm/tpm/concurrent/sessions）、`limits`、`quota`、`health`（24h 请求/成功/限流）、`periods`（请求数、Token、平台计费/官方原价/缓存补偿 USD、上游模型分类消费）、`sourceAt`、`collectedAt` 和 `modelsAt`。`detail=unavailable` 表示本轮没有补充详情；不代表列表中的指标无效。缓存 Token 和逐条日志目前缺乏安全的 Claude 账号归属来源，分别为 null 和 unavailable。
+
+趋势返回 `samples`，每个点包含 `at`、RPM/TPM/并发的和及各项 `_covered`，只查询可见账号，最近 24 小时，5 分钟采样桶。缺口和覆盖差异需在客户端保留，不对采样求和还原请求数，不用来开结算账单。两个接口仅查询数据库，不触发上游请求，也不写账或发起资金转移。

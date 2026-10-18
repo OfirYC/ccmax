@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
 import { hardenSchema, extendProviders, accountProxies, integrationKeys, financialSources, signedSettlementSources } from './migrations.js';
+import { telemetryMigration } from './telemetry.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -100,6 +101,10 @@ export async function migrate(db: DB) {
     if (!done.some(row=>Number(row.version)===8)) {
       await signedSettlementSources(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (8)');
+    }
+    if (!done.some(row=>Number(row.version)===9)) {
+      await telemetryMigration(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (9)');
     }
   });
 }

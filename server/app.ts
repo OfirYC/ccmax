@@ -12,6 +12,7 @@ import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings }
 import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 import { apiKeyService } from './api-keys.js';
 import { assertWalletAccounting } from './financial-integrity.js';
+import { registerTelemetry } from './telemetry-routes.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -91,6 +92,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     }
   });
   keys.register(app);
+  registerTelemetry(app,db,connectionName);
   app.get('/health',async()=>{await db.query('SELECT 1');return {status:'ok',service:'ccmax'};});
   app.post('/api/auth/login',{config:{rateLimit:{max:8,timeWindow:'1 minute'}}},async(req,reply)=>{
     const data=z.object({email,password:z.string().min(1).max(200)}).parse(req.body);

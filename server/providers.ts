@@ -1,6 +1,8 @@
 import { AppError, assert } from './core.js';
 import Decimal from 'decimal.js';
 import { parseProxy } from './proxies.js';
+import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
+import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
 
 export const PROVIDERS = {
   gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false },
@@ -10,7 +12,7 @@ export const PROVIDERS = {
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
 export type Credentials={username:string;password:string};
-export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null};
+export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
 export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string};
 export class UpstreamError extends AppError {
   constructor(public upstreamStatus:number, message:string) { super(502,message); }
@@ -104,7 +106,7 @@ export class ProviderClient {
       const email=a.canonical_identity?.email||a.email,daily=a.daily_cost;
       assert(a.upstream_id && email,'平台未返回账号 ID / 邮箱',502);
       upstreamAmount(daily,'平台未返回有效的当日用量，保留上次成功数据');
-      return {id:String(a.upstream_id),email:String(email).toLowerCase(),name:a.name||email,status:a.status||'unknown',dailyUsd:String(daily),cost7d:a.cost_7d??null,cost30d:a.cost_30d??null,utilization:null,proxyExternalId:a.outbound_proxy_id?String(a.outbound_proxy_id):null};
+      return {id:String(a.upstream_id),email:String(email).toLowerCase(),name:a.name||email,status:a.status||'unknown',dailyUsd:String(daily),cost7d:a.cost_7d??null,cost30d:a.cost_30d??null,utilization:null,proxyExternalId:a.outbound_proxy_id?String(a.outbound_proxy_id):null,telemetry:normalizeTelemetry(this.provider,a)};
     }
     const gate=this.provider==='gatelink';
     const snapshot=gate?a.upstreamSnapshot:a;
@@ -117,7 +119,57 @@ export class ProviderClient {
       cost7d:(gate?a.upstreamCost7d:a.usage_windows?.cost_7d)??snapshot?.usage_windows?.cost_7d??null,
       cost30d:snapshot?.usage_windows?.cost_30d??null,
       utilization:(gate?a.upstreamUtilization5h:a.stats?.claude_utilization?.five_hour?.utilization)??null,
+      telemetry:normalizeTelemetry(this.provider,a),
       ...(!gate?{proxyExternalId:a.outbound_proxy_id?String(a.outbound_proxy_id):null}:{})};
+  }
+  async enrichTelemetry(accounts:UpstreamAccount[]) {
+    if(this.provider==='gatelink')return;
+    // Optional operational reads are isolated per account. An unavailable
+    // detail endpoint must not prevent inventory or financial synchronization.
+    let index=0;
+    const deadline=Date.now()+35000;
+    // Rotate the starting account so a large pool still receives detail reads
+    // over successive syncs when the optional read budget is exhausted.
+    const offset=accounts.length?Math.floor(Date.now()/300000)%accounts.length:0;
+    await Promise.all(Array.from({length:Math.min(4,accounts.length)},async()=>{
+      while(index<accounts.length&&Date.now()<deadline) {
+        const remote=accounts[(offset+index++)%accounts.length];
+        try {
+          const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(remote.id)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(remote.id)}`;
+          const d=await this.call(path),a=d.account;
+          assert(a&&String(a.upstream_id??a.id)===remote.id,'平台遥测账号身份不一致',502);
+          const email=a.email??a.canonical_identity?.email;
+          assert(!email||String(email).toLowerCase()===remote.email,'平台遥测账号邮箱不一致',502);
+          const health=remote.telemetry?.health;
+          const detailed=normalizeTelemetry(this.provider,{req_24h:health?.requests24h,ok_24h:health?.successful24h,limited_24h:health?.limited24h},d);
+          const base=remote.telemetry;
+          if(base) {
+            for(const group of ['activity','limits','quota'] as const)for(const field of Object.keys(base[group])) {
+              const values=detailed[group] as Record<string,any>;
+              if(values[field]===null)values[field]=(base[group] as Record<string,any>)[field];
+            }
+            for(const p of telemetryPeriods)for(const field of ['requests','tokens','billedUsd','officialUsd','cacheCreditUsd'] as const) {
+              if(detailed.periods[p][field]===null)(detailed.periods[p] as any)[field]=base.periods[p][field];
+            }
+          }
+          remote.telemetry=detailed;
+        }catch{/* Keep the safe account-list snapshot and its unavailable marker. */}
+      }
+    }));
+    if(this.provider!=='ai008')return;
+    for(let start=0;start<accounts.length&&Date.now()<deadline;start+=50) {
+      const batch=accounts.slice(start,start+50);
+      try {
+        const d=await this.call(`/api/admin/oauth-accounts/model-usage?ids=${encodeURIComponent(batch.map(a=>a.id).join(','))}`);
+        const generated=typeof d.generated_at==='string'?Date.parse(d.generated_at):NaN;
+        // A stale model cache must not be presented as a fresh daily result.
+        if(!Number.isFinite(generated)||generated>Date.now()+60000||Date.now()-generated>10*60000)continue;
+        for(const a of batch)if(a.telemetry&&d.accounts?.[a.id])for(const p of telemetryPeriods) {
+          a.telemetry.modelsAt=new Date(generated).toISOString();
+          a.telemetry.periods[p].models=normalizeModelAmounts(d.accounts[a.id][{today:'today','5h':'five_hour','7d':'seven_day','30d':'thirty_day'}[p]]);
+        }
+      }catch{/* Model breakdown is optional; never use the shared summary. */}
+    }
   }
   async options() {
     if(this.provider==='gatelink') {
