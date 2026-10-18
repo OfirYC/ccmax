@@ -40,6 +40,7 @@ export const apiEndpoints: ApiEndpoint[] = [
   { method: 'POST', path: '/api/accounts', scope: 'accounts:write', summary: 'Create an owned account; same owned email returns the existing account', body: object({ email, label: { ...text, maxLength: 100 } }, ['email']) },
   { method: 'POST', path: '/api/accounts/:id/proxy', scope: 'accounts:write', summary: 'Bind an owned account to a fixed proxy', body: object({ proxyId: uuid }) },
   { method: 'POST', path: '/api/accounts/:id/authorize', scope: 'accounts:write', summary: 'Queue OAuth authorization for selected platforms', body: object({ targets: { type: 'array', minItems: 1, maxItems: 10, items: object({ connectionId: uuid, options }) }, key }) },
+  { method: 'POST', path: '/api/bindings/:id/reauthorize', scope: 'accounts:write', summary: 'Reauthorize an owned verified platform account while preserving its binding and financial history', body: object({ options, key }) },
   { method: 'GET', path: '/api/accounts/:id/attempts', scope: 'read', summary: 'OAuth authorization URLs and attempts for an owned account' },
   { method: 'POST', path: '/api/oauth/:id/exchange', scope: 'accounts:write', summary: 'Submit a platform OAuth callback and queue the exchange', body: object({ callback: { ...text, maxLength: 8000 }, key }) },
   { method: 'POST', path: '/api/accounts/:id/import-token', scope: 'accounts:write', summary: 'Queue refresh-token import for AI008 or Mini CC', body: object({ connectionId: uuid, refreshToken: { ...text, minLength: 10, maxLength: 10000 }, options, key }) },

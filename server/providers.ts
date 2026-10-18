@@ -16,7 +16,7 @@ export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
 export type Credentials={username:string;password:string};
 export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string|null;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
-export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string};
+export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string;existingExternalId?:string};
 export class UpstreamError extends AppError {
   constructor(public upstreamStatus:number, message:string) { super(502,message); }
 }
@@ -302,7 +302,7 @@ export class ProviderClient {
     }
     // This upstream locks new accounts to its current default templates.
     return {name:options.email,inference_backend:'native',outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,
-      overwrite_existing:false,cc_template_id:template.id,policy_template_id:policy.id,group_ids:groups.map((g:any)=>g.id),...limits};
+      overwrite_existing:!!options.existingExternalId,...(options.existingExternalId?{replace_outbound_proxy:true}:{}),cc_template_id:template.id,policy_template_id:policy.id,group_ids:groups.map((g:any)=>g.id),...limits};
   }
   private gatelinkConfig(options:OAuthOptions) {
     this.requireProxy(options);
@@ -316,7 +316,7 @@ export class ProviderClient {
   async startOAuth(options:OAuthOptions) {
     this.requireProxy(options);
     if(this.provider==='gatelink') {
-      const data=await this.call('/api/oauth-submissions/authorize','POST',{...this.gatelinkConfig(options),overwriteExisting:false});
+      const data=await this.call('/api/oauth-submissions/authorize','POST',{...this.gatelinkConfig(options),overwriteExisting:!!options.existingExternalId});
       assert(data.authorizationUrl,'平台未返回授权地址',502);
       const pendingState=authorizationState(data.authorizationUrl);
       assert(pendingState,'平台授权地址缺少可核验的 state',502);
@@ -324,11 +324,13 @@ export class ProviderClient {
     }
     if(this.provider==='minicc') {
       await this.miniDefaults();
-      const data=await this.call('/api/accounts/auth-url','POST',{provider:'anthropic',oauth_flow:'login',name:options.email,inference_backend:'native',outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,overwrite_existing:false});
+      const data=await this.call('/api/accounts/auth-url','POST',{provider:'anthropic',oauth_flow:'login',name:options.email,inference_backend:'native',outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,overwrite_existing:!!options.existingExternalId,...(options.existingExternalId?{replace_outbound_proxy:true}:{})});
       assert(data.url && data.state,'平台未返回 OAuth URL / state',502);
       return {url:data.url,secret:{options,pendingState:data.state},expiresIn:600};
     }
-    const data=await this.call('/api/admin/oauth-accounts/auth-url','POST',this.aiConfig(options));
+    const data=options.existingExternalId
+      ?await this.call(`/api/admin/oauth-accounts/${encodeURIComponent(options.existingExternalId)}/reauthorize`,'POST',{oauth_flow:'login'})
+      :await this.call('/api/admin/oauth-accounts/auth-url','POST',this.aiConfig(options));
     assert(data.url && data.state,'平台未返回 OAuth URL / state',502);
     return {url:data.url,secret:{options,pendingState:data.state},expiresIn:600};
   }
@@ -346,7 +348,15 @@ export class ProviderClient {
       assert(data.id,'平台未返回账号 ID',502);
       return this.submittedIdentity(data,secret.options.proxyExternalId);
     }
-    const data=await this.call('/api/admin/oauth-accounts/exchange','POST',{...this.aiConfig(secret.options),code,pending_state:secret.pendingState});
+    const target=secret.options.existingExternalId;
+    const data=target
+      ?await this.call(`/api/admin/oauth-accounts/${encodeURIComponent(target)}/reauthorize/exchange`,'POST',{code,pending_state:secret.pendingState})
+      :await this.call('/api/admin/oauth-accounts/exchange','POST',{...this.aiConfig(secret.options),code,pending_state:secret.pendingState});
+    if(target) {
+      const returnedId=data.id??data.account?.id;
+      assert(returnedId===undefined||String(returnedId)===target,'重新授权返回的账号 ID 不一致，请同步核对；未替换原绑定',502);
+      return this.submittedIdentity({id:target},secret.options.proxyExternalId);
+    }
     assert(data.id,'平台未返回账号 ID',502);
     return this.submittedIdentity(data,secret.options.proxyExternalId);
   }
@@ -375,6 +385,17 @@ export class ProviderClient {
     }
     return {id:String(data.id),email:String(email).toLowerCase(),name:String(email),status:account.status||'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null,proxyExternalId:expectedProxyId};
   }
+  async verifySubmissionTarget(externalId:string,email:string) {
+    if(this.provider==='gatelink') {
+      const remote=(await this.listAccounts()).find(account=>account.id===externalId);
+      assert(remote?.email===email,'上游原账号不存在或邮箱不一致，请管理员同步核对；未覆盖其他账号',409);
+      return;
+    }
+    const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(externalId)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`;
+    const {account}=await this.call(path);
+    const identity=account?.canonical_identity?.email||account?.email;
+    assert(identity&&String(identity).toLowerCase()===email,'上游原账号不存在或邮箱不一致，请管理员同步核对；未覆盖其他账号',409);
+  }
   async setEnabled(externalId:string,enabled:boolean) {
     if(this.provider==='gatelink') {
       assert(this.user?.role==='admin','Gatelink 启停账号需要上游管理员权限，当前主账号无此权限');
@@ -382,6 +403,18 @@ export class ProviderClient {
     }
     if(this.provider==='minicc') return this.call(`/api/accounts/${encodeURIComponent(externalId)}/status`,'POST',{status:enabled?'active':'disabled'});
     return this.call(`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`,'PATCH',{status:enabled?'active':'disabled'});
+  }
+  async verifyAccountStatus(externalId:string,email:string,enabled:boolean) {
+    let status:string|undefined,identity:string|undefined;
+    if(this.provider==='gatelink') {
+      const remote=(await this.listAccounts()).find(account=>account.id===externalId);
+      status=remote?.status;identity=remote?.email;
+    } else {
+      const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(externalId)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`;
+      const {account}=await this.call(path);
+      identity=account?.canonical_identity?.email||account?.email;status=account?.status;
+    }
+    assert(identity?.toLowerCase()===email&&status===(enabled?'active':'disabled'),'上游尚未确认目标账号状态，请同步核对；本地未提前修改状态',502);
   }
   async setAccountProxy(externalId:string,options:OAuthOptions) {
     this.requireProxy(options);

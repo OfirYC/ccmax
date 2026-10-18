@@ -65,7 +65,7 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | --- | --- |
 | `read`（必选，默认） | 查询获准访问的团队、账号、平台选项、用量、任务、财务及审计，导出 CSV |
 | `team:write` | 创建直属下级、调整状态、重置密码及设置结算折扣 |
-| `accounts:write` | 创建本人账号、固定出口代理、绑定代理、OAuth 上号、RT 导入、启停和代理同步 |
+| `accounts:write` | 创建本人账号、固定出口代理、绑定代理、OAuth 上号与重新授权、RT 导入、启停和代理同步 |
 | `finance:write` | 创建/确认账单、申请提现、登记已付款或驳回提现 |
 
 权限不会扩大原有团队范围。不能管理其他团队、修改非直属下级，或更换已核实的账号归属。财务写权限应只授予确有需要的后端；实际向外部账户付款仍是线下操作。
@@ -108,6 +108,12 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 6. AI008 / Mini CC 可用 `/api/accounts/:id/import-token` 代替 OAuth，提交 `{connectionId,refreshToken,options:{},key}`。RT 为一次性敏感凭据，不能写入自己的访问日志。
 
 任务可能为 `queued`、`running`、`succeeded`、`failed`、`needs_attention`。只有 `succeeded` 表示完成；`needs_attention` 先人工核对上游，不能直接重复提交。代理固定绑定、每个平台配置和旧账号归属核对规则与网站完全一致，Mini CC 使用服务端固定默认配置。
+
+### 修复已有平台账号
+
+`POST /api/bindings/:id/reauthorize`（`accounts:write`）提交 `{options:{},key}`，返回单个 `{id,state}` 任务。仅账号已核实的本人可用，管理员不能代其他人授权。平台连接和固定代理必须已启用；允许先修复所选平台，其他绑定仍需分别核对固定代理。`options` 不能指定代理或上游目标 ID；服务端固定原绑定和代理。已有有效授权流程或执行中上号任务时返回 409，使用相同 key 和参数重试则返回原任务。
+
+授权链接、回调、查询和单次 code 规则沿用上述流程。成功时只更新原绑定的授权状态、代理核实和同步时间；原平台 ID、归属、用量和财务历史保持原样。请授权原 Claude 邮箱；如上游 ID 或邮箱不符，任务为 `needs_attention`，不替换本地绑定，先人工核对上游实际结果。启停也先核对上游身份，写入后读回实际状态，不能仅凭受理响应显示成功。Gatelink 启停须主账号具有上游管理员权限。
 
 ## 结算与重试
 
