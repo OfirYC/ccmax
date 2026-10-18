@@ -88,6 +88,6 @@ export function aggregateTelemetry(rows:Row[],period:TelemetryPeriod) {
     requests:metric(v=>period==='today'&&v.day!==today()?null:v.periods[period].requests),
     tokens:metric(v=>period==='today'&&v.day!==today()?null:v.periods[period].tokens),
     billedUsd:metric(v=>period==='today'&&v.day!==today()?null:v.periods[period].billedUsd),
-    models:['opus','fable'].map(model=>({model,...metric(v=>!v.modelsAt||Math.abs(Date.now()-Date.parse(v.modelsAt))>10*60000||(period==='today'&&v.day!==today())?null:v.periods[period].models.find(m=>m.model===model)?.usageUsd??null)})),
+    models:['opus','fable'].map(model=>({model,...metric(v=>!v.modelsAt||Math.abs(Date.now()-Date.parse(v.modelsAt))>10*60000||(period==='today'&&(v.day!==today()||beijingDay(v.modelsAt)!==today()))?null:v.periods[period].models.find(m=>m.model===model)?.usageUsd??null)})),
   };
 }

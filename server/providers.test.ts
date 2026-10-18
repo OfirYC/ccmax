@@ -14,6 +14,21 @@ describe('upstream adapter data integrity',()=>{
   it('does not turn an absent upstream usage amount into a zero-dollar snapshot',()=>{
     const c=client(()=>({}));expect(()=>c.normalize({id:'one',email:'one@example.com',stats:{}})).toThrow('有效的当日用量');
   });
+  it('rejects overlapping, truncated, changing or unidentified pages for both shared master adapters',async()=>{
+    for(const provider of ['ai008','gatelink'] as const) {
+      const row=(n:string)=>provider==='ai008'?account(n):{id:n,submittedEmail:`${n}@example.com`,upstreamDailyCost:'1.25'};
+      const page=(rows:any[],total:number,pages=1)=>provider==='ai008'?{accounts:rows,pagination:{total_rows:total,total_pages:pages}}:{items:rows,total,totalPages:pages};
+      for(const [responses,error] of [
+        [[page([row('1')],2)],'结果不完整'],
+        [[page([row('1')],2,2),page([row('1')],2,2)],'重复账号'],
+        [[page([row('1')],2,2),page([row('2')],3,2)],'账号数在分页时发生变化'],
+        [[page([{id:'missing',stats:{daily_cost:0},upstreamDailyCost:0}],1)],'可核实邮箱'],
+      ] as const) {
+        let n=0;const c=new ProviderClient(provider,{username:'fixture',password:'fixture'},async()=>Response.json(responses[n++]));
+        await expect(c.listAccounts()).rejects.toThrow(error);
+      }
+    }
+  });
   it('verifies a token import against the authoritative account list when the response contains only an ID',async()=>{
     const c=client(url=>url.endsWith('/import-rt')?{id:'real'}:url.endsWith('/real')?{account:{outbound_proxy_id:'fixed-proxy'}}:{accounts:[account('real')],pagination:{total_pages:1}});
     const remote=await c.importRefreshToken({email:'claimed@example.com',...fixedProxy},'owned-refresh-token');

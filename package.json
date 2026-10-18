@@ -8,13 +8,14 @@
   },
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "build": "tsc --noEmit && vite build && tsup server/index.ts --format esm --platform node --target node22 --out-dir dist/server --external @electric-sql/pglite --external vite --external lightningcss",
+    "build": "tsc --noEmit && vite build && tsup --config tsup.config.ts",
     "start": "node dist/server/index.js",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "verify:upstream": "tsx scripts/verify-upstream.ts",
-    "audit:finance": "tsx scripts/audit-finance.ts"
+    "audit:finance": "node dist/server/audit-finance.js",
+    "audit:data": "node dist/server/audit-attribution.js"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",

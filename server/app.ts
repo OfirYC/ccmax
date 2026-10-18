@@ -13,6 +13,8 @@ import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } fr
 import { apiKeyService } from './api-keys.js';
 import { assertWalletAccounting } from './financial-integrity.js';
 import { registerTelemetry } from './telemetry-routes.js';
+import { snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
+import { aggregateTelemetry } from './telemetry.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -288,9 +290,14 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const ids=await subtree(db,req.user.id),root=req.user.role==='owner';
     const accounts=await db.query(`SELECT a.*,u.name AS owner_name,p.name AS proxy_name,p.endpoint AS proxy_endpoint,p.enabled AS proxy_enabled FROM accounts a LEFT JOIN users u ON u.id=a.owner_id LEFT JOIN proxies p ON p.id=a.proxy_id
       WHERE a.owner_id=ANY($1::text[]) OR $2::boolean ORDER BY a.created_at DESC`,[ids,root]);
-    const bindings=await db.query(`SELECT b.*,c.provider,c.name AS connection_name FROM bindings b JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id
+    const bindings=await db.query(`SELECT b.*,c.provider,c.name AS connection_name,c.enabled,t.data FROM bindings b JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id
+      LEFT JOIN binding_telemetry t ON t.binding_id=b.id
       WHERE (a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR $2::boolean`,[ids,root]);
-    const visibleBindings=publicConnectionRows(req.user,bindings);
+    const visibleBindings=publicConnectionRows(req.user,bindings.map(({data,enabled,...b})=>{
+      const {telemetry,fresh}=snapshotView({...b,data,enabled});
+      return {...b,data_fresh:fresh,snapshot_at:telemetry?.sourceAt??telemetry?.collectedAt??null,
+        today_usd:fresh&&telemetry?.day===today()?telemetry.periods.today.billedUsd:null};
+    }));
     return {accounts:accounts.map(a=>({...a,bindings:visibleBindings.filter(b=>b.account_id===a.id)})),providers:PROVIDERS};
   });
   app.post('/api/accounts/:id/proxy',async req=>{
@@ -339,7 +346,14 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
         const [p]=await tx.query('SELECT owner_id FROM proxies WHERE id=$1',[a.proxy_id]);
         assert(p.owner_id===req.user.id||p.owner_id===u.id,'该账号的固定代理由其他成员上传，请先核对代理和账号归属',409);
       }
-      await tx.query('UPDATE accounts SET owner_id=$2,ownership_verified=true WHERE id=$1',[target,d.userId]);await audit(tx,req.user.id,'account.assign',target,{userId:d.userId});
+      await tx.query('UPDATE accounts SET owner_id=$2,ownership_verified=true WHERE id=$1',[target,d.userId]);
+      // Inventory observations can predate ownership verification. Allocate all
+      // open days now, preserving their original bill and frozen root price.
+      // Missing historical contracts roll back the assignment with an error.
+      const pending=await tx.query(`SELECT d.* FROM usage_days d JOIN bindings b ON b.id=d.binding_id
+        WHERE b.account_id=$1 AND d.state='provisional' ORDER BY d.day,b.id`,[target]);
+      for(const day of pending)await ingestUsage(tx,{bindingId:day.binding_id,day:dayString(day.day),rawUsd:day.raw_usd,final:false,source:day.source,evidence:day.evidence});
+      await audit(tx,req.user.id,'account.assign',target,{userId:d.userId,allocatedDays:pending.length});
     });return {ok:true};
   });
   app.post('/api/accounts/:id/authorize',async req=>{
@@ -445,9 +459,11 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       COALESCE(sum(CASE WHEN u.state='final' THEN e.profit_usd ELSE 0 END),0) AS final_profit FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1`,[req.user.id]);
     const daily=await db.query(`SELECT u.day,sum(u.raw_usd) AS raw_usd,sum(e.gross_usd) AS gross_usd,sum(e.profit_usd) AS profit_usd
       FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1 GROUP BY u.day ORDER BY u.day DESC LIMIT 14`,[req.user.id]);
-    const platforms=await db.query(`SELECT c.id,c.provider,c.name,c.status,c.last_sync_at,count(b.id) AS account_count,COALESCE(sum(b.daily_usd),0) AS daily_usd
-      FROM connections c LEFT JOIN bindings b ON b.connection_id=c.id LEFT JOIN accounts a ON a.id=b.account_id
-      WHERE c.enabled=true AND ((a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR b.id IS NULL OR $2::boolean) GROUP BY c.id ORDER BY c.created_at`,[ids,req.user.role==='owner']);
+    const snapshots=await visibleTelemetry(db,req.user,telemetryFilters.parse({}),connectionName);
+    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).map(c=>{
+      const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today');
+      return {...c,account_count:group.length,daily_usd:metrics.billedUsd.value,daily_covered:metrics.billedUsd.covered};
+    });
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
     const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];
     return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:PROVIDERS,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};

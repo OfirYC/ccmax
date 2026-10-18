@@ -930,5 +930,9 @@
   "完成平台同步后开始记录，不回填历史流量。": "Bắt đầu ghi sau khi đồng bộ nền tảng; không dựng lại lưu lượng trước đó.",
   "24 小时前": "24 giờ trước",
   "现在": "Bây giờ",
-  "金色采样点表示覆盖不完整；采样只描述当时速率，不用于还原请求数或结算。": "Điểm vàng là phạm vi chưa đầy đủ. Mẫu chỉ thể hiện tốc độ lúc đọc, không dùng để tính số yêu cầu hay quyết toán."
+  "金色采样点表示覆盖不完整；采样只描述当时速率，不用于还原请求数或结算。": "Điểm vàng là phạm vi chưa đầy đủ. Mẫu chỉ thể hiện tốc độ lúc đọc, không dùng để tính số yêu cầu hay quyết toán.",
+  "今日有效数据暂缺": "Chưa có dữ liệu hợp lệ hôm nay",
+  "已归属团队账单累计": "Tổng hóa đơn nhóm đã xác nhận",
+  "今日平台金额与模型调用采用相同有效快照；待归属数据仅管理员可见，确认归属后才计入团队收益。": "Số tiền nền tảng hôm nay dùng cùng ảnh chụp hợp lệ với hoạt động mô hình. Dữ liệu chưa phân bổ chỉ quản trị viên thấy và chỉ tính vào thu nhập nhóm sau khi xác nhận chủ sở hữu.",
+  "成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。": "Tổng thành viên chỉ gồm tài khoản do chính thành viên sở hữu. Cấp dưới có dòng riêng. Tổng các dòng bằng tổng phạm vi hiện tại, không cộng trùng nhóm."
 }

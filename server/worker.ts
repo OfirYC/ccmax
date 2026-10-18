@@ -89,16 +89,20 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         const day=today(),accounts=await client.listAccounts();
         if(typeof client.enrichTelemetry==='function')await client.enrichTelemetry(accounts);
         assert(today()===day,'同步跨越北京时间零点，请重新同步');
+        let skippedDaily=0;
         await db.transaction(async tx=>{
           for(const remote of accounts) {
             const bound=await saveBinding(tx,connection,remote);
+            // Gatelink caches may still contain yesterday's daily counter.
+            // Keep the source snapshot for inspection without booking it today.
+            if(remote.telemetry&&(remote.telemetry.day!==day||!remote.telemetry.sourceAt)) {skippedDaily++;continue;}
             await ingestUsage(tx,{bindingId:bound.id,day,rawUsd:remote.dailyUsd,final:false,source:'live_snapshot'});
           }
           await tx.query(`UPDATE bindings SET status='missing' WHERE connection_id=$1 AND NOT(external_id=ANY($2::text[]))`,[connection.id,accounts.map(a=>a.id)]);
           await tx.query(`UPDATE connections SET status='connected',last_error=NULL,last_sync_at=now() WHERE id=$1`,[connection.id]);
           await tx.query(`DELETE FROM telemetry_samples WHERE bucket_at<now()-interval '48 hours'`);
         });
-        result={accounts:accounts.length};
+        result={accounts:accounts.length,skippedDaily};
       } else if(job.kind==='oauth_start') {
         const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[payload.accountId,actor.id]);
         assert(account,'账号归属不匹配');

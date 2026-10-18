@@ -1,4 +1,4 @@
-import { afterEach,beforeEach,describe,expect,it } from 'vitest';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import { normalizeTelemetry,aggregateTelemetry,saveTelemetry } from './telemetry.js';
 import { ProviderClient } from './providers.js';
 import { openTestDB } from './test-db.js';
@@ -61,6 +61,14 @@ describe('upstream operational telemetry',()=>{
     const result=aggregateTelemetry([{telemetry:d,fresh:true},{telemetry:missing,fresh:true},{telemetry:old,fresh:true},{telemetry:d,fresh:false}],'today');
     expect(result.rpm).toEqual({value:'6',covered:3,total:4});expect(result.billedUsd).toEqual({value:'0.125',covered:1,total:4});
     expect(result.requests.value).toBe('42');expect(result.tokens.value).toBe('12000');
+  });
+  it('excludes a prior-day model cache immediately after Beijing midnight even inside the freshness window',()=>{
+    vi.useFakeTimers({toFake:['Date']});
+    try {
+      vi.setSystemTime(new Date('2026-10-18T16:02:00Z'));const d=normalizeTelemetry('ai008',upstream());
+      d.modelsAt='2026-10-18T15:59:00Z';d.periods.today.models=[{model:'opus',usageUsd:'777'}];
+      const result=aggregateTelemetry([{telemetry:d,fresh:true}],'today');expect(result.requests.value).toBe('42');expect(result.models[0].value).toBeNull();
+    }finally{vi.useRealTimers();}
   });
 });
 

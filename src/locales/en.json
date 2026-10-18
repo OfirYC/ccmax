@@ -930,5 +930,9 @@
   "完成平台同步后开始记录，不回填历史流量。": "Recording starts with platform sync; earlier traffic is not reconstructed.",
   "24 小时前": "24 hours ago",
   "现在": "Now",
-  "金色采样点表示覆盖不完整；采样只描述当时速率，不用于还原请求数或结算。": "Gold points indicate partial coverage. Samples show observed rates, not request totals or settlement evidence."
+  "金色采样点表示覆盖不完整；采样只描述当时速率，不用于还原请求数或结算。": "Gold points indicate partial coverage. Samples show observed rates, not request totals or settlement evidence.",
+  "今日有效数据暂缺": "Current-day data unavailable",
+  "已归属团队账单累计": "Attributed team bills to date",
+  "今日平台金额与模型调用采用相同有效快照；待归属数据仅管理员可见，确认归属后才计入团队收益。": "Today’s platform amounts use the same valid snapshots as Model activity. Unassigned data is visible only to the administrator and enters team earnings after ownership is verified.",
+  "成员汇总仅计算该成员本人名下账号；下级用量列在各自成员行。全部成员行之和等于当前范围总计，不重复累加团队。": "Member totals include only accounts owned by that member. Descendants appear in their own rows. Member rows add up to the current scope without counting teams twice."
 }

@@ -72,31 +72,35 @@ export class ProviderClient {
   }
   async listAccounts():Promise<UpstreamAccount[]> {
     const result:UpstreamAccount[]=[];
-    const seen=new Set<string>();let miniTotal:number|undefined;
+    const seen=new Set<string>(),emails=new Set<string>();let declaredTotal:number|undefined;
     for(let page=1;page<=1000;page++) {
       const data=await this.call(this.provider==='gatelink'?`/api/submissions?page=${page}&pageSize=100`:this.provider==='minicc'?`/api/accounts?page=${page}&page_size=100`:`/api/admin/oauth-accounts?page_mode=1&page=${page}&page_size=100`);
       const items=this.provider==='gatelink'?data.items:data.accounts;
       assert(Array.isArray(items),'平台账号列表格式变化',502);
       if(this.provider==='minicc') {
         assert(Number.isInteger(data.pages) && data.pages>=1 && Number.isInteger(data.total) && data.total>=0,'平台分页格式变化',502);
-        assert(miniTotal===undefined||miniTotal===data.total,'平台账号数在分页时发生变化，请重新同步',502);
-        miniTotal=data.total;
-      }
-      for(const a of items) {
-        const email=this.provider==='gatelink'?(a.upstreamEmail||a.submittedEmail||a.email):(a.email||a.canonical_identity?.email);
-        if(this.provider==='minicc') assert(email,'平台未返回可核实邮箱，本次同步未提交',502);
-        if(!email) continue;
-        const normalized=this.normalize(a);
-        if(this.provider==='minicc') assert(!seen.has(normalized.id),'平台分页出现重复账号，本次同步未提交',502);
-        seen.add(normalized.id);result.push(normalized);
       }
       const totalPages=this.provider==='gatelink'?data.totalPages:this.provider==='minicc'?data.pages:(data.pagination?.total_pages??data.pagination?.totalPages);
-      const total=this.provider==='gatelink'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
+      const total=this.provider==='gatelink'?data.total:this.provider==='minicc'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
+      if(total!==undefined) {
+        assert(Number.isInteger(Number(total))&&Number(total)>=0,'平台分页格式变化',502);
+        assert(declaredTotal===undefined||declaredTotal===Number(total),'平台账号数在分页时发生变化，请重新同步',502);
+        declaredTotal=Number(total);
+      }
+      if(totalPages!==undefined)assert(Number.isInteger(Number(totalPages))&&Number(totalPages)>=0,'平台分页格式变化',502);
+      for(const a of items) {
+        const email=this.provider==='gatelink'?(a.upstreamEmail||a.submittedEmail||a.email):(a.email||a.canonical_identity?.email);
+        assert(email,'平台未返回可核实邮箱，本次同步未提交',502);
+        const normalized=this.normalize(a);
+        assert(!seen.has(normalized.id),'平台分页出现重复账号，本次同步未提交',502);
+        assert(!emails.has(normalized.email),'平台同一邮箱对应多个账号，本次同步未提交',502);
+        seen.add(normalized.id);emails.add(normalized.email);result.push(normalized);
+      }
       if(totalPages!==undefined) {
-        if(page>=Number(totalPages)) { assert(miniTotal===undefined||result.length===miniTotal,'平台账号结果不完整，本次同步未提交',502);return result; }
+        if(page>=Number(totalPages)) { assert(declaredTotal===undefined||result.length===declaredTotal,'平台账号结果不完整，本次同步未提交',502);return result; }
         assert(items.length>0,'平台分页提前结束',502);continue;
       }
-      if(total!==undefined) { if(result.length>=Number(total))return result;assert(items.length>0,'平台分页提前结束',502);continue; }
+      if(total!==undefined) { if(result.length>=Number(total)){assert(result.length===Number(total),'平台账号结果不完整，本次同步未提交',502);return result;}assert(items.length>0,'平台分页提前结束',502);continue; }
       if(items.length<100) return result;
     }
     throw new UpstreamError(0,'平台账号超过分页上限，本次同步未提交');

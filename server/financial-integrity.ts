@@ -11,7 +11,7 @@ const sameMoney = (a: Decimal.Value, b: Decimal.Value) => new Decimal(a).eq(b);
 
 // Reconcile frozen prices, never today's contracts. Sealed legacy records are
 // preserved, but an incomplete or inconsistent chain cannot create new credit.
-export async function assertUsageAccounting(db: DB, usageIds: string[]) {
+export async function assertUsageAccounting(db: DB, usageIds: string[], options:{allowProvisional?:boolean}={}) {
   if (!usageIds.length) return;
   const ids = [...new Set(usageIds)];
   const usages = await db.query(`SELECT d.*,a.owner_id,a.ownership_verified FROM usage_days d
@@ -32,7 +32,7 @@ export async function assertUsageAccounting(db: DB, usageIds: string[]) {
   if (usages.length !== ids.length) accountingConflict();
   for (const usage of usages) {
     const members = chains.get(usage.id) || [], rows = priced.get(usage.id) || [];
-    if (usage.state !== 'final' || !usage.ownership_verified || !members.length || members[0].role !== 'owner' || rows.length !== members.length) accountingConflict();
+    if ((usage.state !== 'final' && !(options.allowProvisional&&usage.state==='provisional')) || !usage.ownership_verified || !members.length || members[0].role !== 'owner' || rows.length !== members.length) accountingConflict();
     const byUser = new Map(rows.map(row => [row.user_id, row]));
     for (let index = 0; index < members.length; index++) {
       const member = members[index], earning = byUser.get(member.id), next = byUser.get(members[index + 1]?.id);

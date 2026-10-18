@@ -1,5 +1,5 @@
 import { t, getLocale } from './i18n';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 export type RecordData=Record<string,any>;
 export async function api<T=any>(url:string,options:RequestInit={}) : Promise<T> {
   const response=await fetch(url,{...options,headers:{...(options.body!==undefined?{'Content-Type':'application/json'}:{}),'x-ccmax-request':'1',...options.headers},credentials:'same-origin'});
@@ -10,8 +10,14 @@ export const post=<T=any>(url:string,body:unknown)=>api<T>(url,{method:'POST',bo
 export const mutate=(url:string,method:string,body:unknown)=>api(url,{method,body:JSON.stringify(body)});
 export function useData<T=any>(url:string,poll=0) {
   const [data,setData]=useState<T|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
-  const refresh=useCallback(async()=>{try{const d=await api<T>(url);setData(d);setError('');}catch(e){setError((e as Error).message);}finally{setLoading(false);}},[url]);
-  useEffect(()=>{let active=true;setLoading(true);api<T>(url).then(d=>{if(active){setData(d);setError('');}}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});const t=poll?setInterval(refresh,poll):null;return()=>{active=false;if(t)clearInterval(t);};},[url,poll,refresh]);
+  const generation=useRef(0),currentUrl=useRef(url);currentUrl.current=url;
+  const refresh=useCallback(async()=>{
+    const request=++generation.current,active=()=>request===generation.current&&currentUrl.current===url;
+    try{const d=await api<T>(url);if(active()){setData(d);setError('');}}
+    catch(e){if(active())setError((e as Error).message);}
+    finally{if(active())setLoading(false);}
+  },[url]);
+  useEffect(()=>{setLoading(true);void refresh();const timer=poll?setInterval(refresh,poll):null;return()=>{generation.current++;if(timer)clearInterval(timer);};},[url,poll,refresh]);
   return {data,error,loading,refresh};
 }
 export const money=(n:any,digits=2)=>new Intl.NumberFormat(getLocale()==='zh-CN'?'en-US':getLocale(),{style:'currency',currency:'USD',minimumFractionDigits:digits,maximumFractionDigits:digits}).format(n||0);
