@@ -3,7 +3,8 @@ import { useLocale } from '../LanguageSwitcher';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight, Check, KeyRound, Link2, Plus, RefreshCw, Settings2, ShieldCheck, Zap } from 'lucide-react';
-import { dateTime, day, key, money, mutate, post, localToday, useData } from '../api';
+import { dateTime, day, key, mutate, post, localToday, useData } from '../api';
+import { Amount, RateField } from '../PriceDisplay';
 import { Badge, Empty, ErrorBox, Field, Form, Loading, Modal, PageHead, PlatformMark, Submit, useSession, useToast } from '../components';
 
 export default function Platforms(){useLocale();
@@ -46,7 +47,7 @@ export default function Platforms(){useLocale();
       <Field label={t("连接名称")} hint={t("仅管理员可见；下级使用系统生成的平台名称。")}><input name="name" required defaultValue={edit.name||''} placeholder={t("例如：AI008 主账号")} maxLength={80}/></Field>
       <Field label={edit.id?t("新的登录账号（留空保留）"):t("登录账号")}><input name="username" autoComplete="off" required={!edit.id} placeholder={t("平台登录邮箱或用户名")}/></Field>
       <Field label={edit.id?t("新的密码（留空保留）"):t("登录密码")}><input type="password" name="password" autoComplete="new-password" required={!edit.id}/></Field>
-      <Field label={t("上游给你的结算折扣")} hint={t("0–1，例如 0.3 表示平台账单 $100，你收到 $30。修改从次日北京时间生效，历史日账单按当日留档价格计算。")}><input name="payoutRate" type="number" min="0" max="1" step="0.0001" required defaultValue={edit.upcoming_payout_rate??edit.payout_rate??''}/></Field>
+      <RateField name="payoutRate" label={t("上游给你的结算折扣")} recipient="self" hint={t("0–1，例如 0.3 表示平台账单 $100，你收到 $30。修改从次日北京时间生效，历史日账单按当日留档价格计算。")} defaultValue={edit.upcoming_payout_rate??edit.payout_rate??''}/>
       {!edit.id&&<Field label={t("初始折扣生效日")} hint={t("如需导入历史日账单，请填写真实合同起始日期。")}><input name="effectiveFrom" type="date" required max={localToday()} defaultValue={localToday()}/></Field>}
       {edit.id&&<label className="check-row"><input type="checkbox" name="enabled" defaultChecked={edit.enabled}/>{t("启用这条连接")}</label>}
       <div className="modal-actions"><button className="button" type="button" onClick={()=>setEdit(null)}>{t("取消")}</button><Submit>{edit.id?t("保存配置"):t("保存并连接")}</Submit></div>
@@ -56,10 +57,10 @@ export default function Platforms(){useLocale();
 
 function SettlementPrice({connection:c,root}:{connection:any;root:boolean}) {useLocale();
   const priced=c.settlement_rate!==null&&c.settlement_rate!==undefined,upcoming=c.upcoming_settlement_rate!==null&&c.upcoming_settlement_rate!==undefined;
-  return <div className="settlement-price">
-    <span>{root?t("上游给我的结算折扣"):t("我的结算折扣")}</span>
+  return <div className={`settlement-price${priced?'':' unpriced'}`}>
+    <div className="price-heading"><span>{root?t("上游给我的结算折扣"):t("我的结算折扣")}</span><span className="price-status">{priced?t("当前生效"):t("待设置")}</span></div>
     <strong>{priced?`× ${Number(c.settlement_rate).toFixed(4)}`:t("未定价")}</strong>
-    {priced?<><p>{t("平台账单 $100，结算 {0}", [money(Number(c.settlement_rate)*100)])}</p>{c.settlement_effective_date&&<small>{t("当前价格自 {0} 生效", [day(c.settlement_effective_date)])}</small>}</>:<p>{t("请联系直属上级设置该平台的结算折扣。")}</p>}
-    {upcoming&&<div className="scheduled-price"><b>{t("待生效 ×")} {Number(c.upcoming_settlement_rate).toFixed(4)}</b><small>{t("{0} 00:00 北京时间生效", [day(c.upcoming_settlement_date)])}</small></div>}
+    {priced?<>{c.settlement_effective_date&&<small>{t("当前价格自 {0} 生效", [day(c.settlement_effective_date)])}</small>}<div className="settlement-example"><span>{t("平台账单 $100 · 应收示例")}</span><div>{t("结算")} <Amount value={Number(c.settlement_rate)*100} digits={2} tone="settlement"/><small>{t("USD · 示例金额")}</small></div></div></>:<p>{t("请联系直属上级设置该平台的结算折扣。")}</p>}
+    {upcoming&&<div className="scheduled-price"><b>{t("待生效 ×")} {Number(c.upcoming_settlement_rate).toFixed(4)}</b><small>{t("{0} 00:00 北京时间生效", [day(c.upcoming_settlement_date)])}</small><small>{priced?t("生效前继续按当前价格结算"):t("生效前尚未定价，暂不可结算")}</small></div>}
   </div>;
 }
