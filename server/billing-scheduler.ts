@@ -65,7 +65,8 @@ export async function scheduleDailyBilling(db: DB, box: SecretBox, now = new Dat
 
 export async function scheduleBillingSnapshots(db: DB, box: SecretBox, now = new Date()) {
   const time=new Date(now.getTime()+8*3600000),minute=time.getUTCHours()*60+time.getUTCMinutes();
-  if(minute<23*60+55 && minute>10)return [];
+  const closing=minute>=23*60+55||minute<=10;
+  if(!closing && minute%5!==0)return [];
   return db.transaction(async tx=>{
     await tx.query('SELECT pg_advisory_xact_lock(7164023)');
     const [owner]=await tx.query("SELECT * FROM users WHERE role='owner' AND active=true");

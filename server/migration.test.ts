@@ -40,7 +40,7 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect(flags.find(a=>a.id===assigned)?.ownership_verified).toBe(true);
   await expect(db.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[sealed,other])).rejects.toThrow('immutable');
   await db.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[sealed]);
-  expect(await db.query('SELECT * FROM migrations')).toHaveLength(12);
+  expect(await db.query('SELECT * FROM migrations')).toHaveLength(13);
   expect(await db.query('SELECT * FROM oauth_code_claims')).toEqual([]);
 
   expect(await db.query('SELECT * FROM binding_telemetry')).toEqual([]);

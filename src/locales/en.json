@@ -1127,5 +1127,8 @@
   "每天 02:00 后（北京时间）": "Daily after 02:00 (Beijing time)",
   "每日自动更新": "Updates automatically each day",
   "填写真实合同起始日期。": "Enter the actual contract start date.",
-  "账单详情": "Bill details"
+  "账单详情": "Bill details",
+  "账单已生成": "Bill generated",
+  "当日用量数据待补齐": "Daily usage data pending",
+  "账号归属待确认，账单已保留": "Account ownership pending; bill saved"
 }

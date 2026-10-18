@@ -16,16 +16,16 @@ test('an administrator sees automatic bill updates without collection or import 
   await page.route('**/api/billing/days?**',route=>route.fulfill({json:{rows:[{
     connection_id:c.id,provider:c.provider,connection_name:'private-upstream-snapshot@example.com',day,basis:'snapshot',state:updated?'succeeded':'needs_attention',statement_id:'snapshot-fixture',
     attempts:2,account_count:5,finalized_count:updated?5:4,issue_count:updated?0:1,raw_usd:'123.45678901',last_attempt_at:day+'T18:00:00Z',
-    error:null,issues:[{externalId:'missing-snapshot',message:'日终快照缺失或距离零点超过 10 分钟，等待核对'}],
+    error:null,issues:[{externalId:'missing-snapshot',message:'当日用量数据待补齐'}],
   }],total:1,page:1}}));
   await page.getByRole('link',{name:'用量明细',exact:true}).click();
   const panel=page.locator('.daily-billing-panel');await expect(panel.getByRole('heading',{name:'账单更新记录',exact:true})).toBeVisible();
-  await expect(panel).not.toContainText('private-upstream-');await expect(panel.getByText('快照预估',{exact:true})).toBeVisible();await expect(panel).toContainText('4 / 5');
+  await expect(panel).not.toContainText('private-upstream-');await expect(panel).toContainText('账单已生成');await expect(panel.getByText('快照预估',{exact:true})).toBeVisible();await expect(panel).toContainText('4 / 5');
   await expect(panel.getByRole('link',{name:'原始日账单'})).toHaveAttribute('href','/api/billing/statements/snapshot-fixture');
   await panel.getByRole('button',{name:'详情',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'账单详情'});
   await expect(dialog).toContainText('快照预估');await expect(dialog).toContainText('missing-snapshot');
-  await expect(dialog).toContainText('日终快照缺失');await page.getByRole('button',{name:'关闭弹窗'}).click();
+  await expect(dialog).toContainText('当日用量数据待补齐');await page.getByRole('button',{name:'关闭弹窗'}).click();
   await page.screenshot({path:'test-results/daily-billing-desktop.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});await expect(panel.getByText('快照预估',{exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
@@ -53,4 +53,20 @@ test('agents see the estimate label on their automatic invoice without access to
   await expect(page.getByRole('row').filter({hasText:'CC-SNAPSHOT'})).toContainText('快照预估');
   await page.getByRole('link',{name:'用量明细',exact:true}).click();await expect(page.getByRole('heading',{name:'账单更新记录',exact:true})).toHaveCount(0);await expect(page.getByText('每天北京时间 02:00 后自动更新昨日账单。',{exact:true})).toBeVisible();
   expect((await page.request.get('/api/billing/days')).status()).toBe(403);
+});
+
+test('a day with no usable source stays pending without an invented zero bill or permission error',async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
+  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
+  await expect(page.getByRole('heading',{name:'你好，平台管理员',exact:true})).toBeVisible();
+  await page.route('**/api/billing/days?**',route=>route.fulfill({json:{rows:[{
+    connection_id:'pending',provider:'gatelink',day:'2026-10-18',basis:'snapshot',state:'awaiting_data',statement_id:null,
+    account_count:1,finalized_count:0,issue_count:1,raw_usd:null,error:null,source_error:'HTTP 403',
+    issues:[{externalId:'pending',message:'当日用量数据待补齐'}],
+  }],total:1,page:1}}));
+  await page.getByRole('link',{name:'用量明细',exact:true}).click();const panel=page.locator('.daily-billing-panel');
+  await expect(panel).toContainText('当日用量数据待补齐');await expect(panel.locator('.amount-cell')).toHaveText('—');
+  await expect(panel.getByRole('link',{name:'原始日账单'})).toHaveCount(0);
+  await panel.getByRole('button',{name:'详情',exact:true}).click();const dialog=page.getByRole('dialog',{name:'账单详情'});
+  await expect(dialog).toContainText('当日用量数据待补齐');await expect(dialog.getByRole('alert')).toHaveCount(0);await expect(dialog).not.toContainText('403');await expect(dialog).not.toContainText('失败');
 });

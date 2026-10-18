@@ -1127,5 +1127,8 @@
   "每天 02:00 后（北京时间）": "Hằng ngày sau 02:00 (giờ Bắc Kinh)",
   "每日自动更新": "Tự động cập nhật hằng ngày",
   "填写真实合同起始日期。": "Nhập ngày bắt đầu hợp đồng thực tế.",
-  "账单详情": "Chi tiết hóa đơn"
+  "账单详情": "Chi tiết hóa đơn",
+  "账单已生成": "Đã tạo hóa đơn",
+  "当日用量数据待补齐": "Đang chờ bổ sung dữ liệu sử dụng trong ngày",
+  "账号归属待确认，账单已保留": "Đang chờ xác nhận chủ tài khoản; hóa đơn đã được lưu"
 }

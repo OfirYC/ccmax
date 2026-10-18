@@ -6,7 +6,7 @@ import { createInvoiceInTransaction, ingestUsage } from './billing.js';
 import { invoiceItems } from './invoice-preview.js';
 import { assertUsageAccounting } from './financial-integrity.js';
 
-export type DailyAmount = { externalId: string; rawUsd: string };
+export type DailyAmount = { externalId: string; rawUsd: string; sourceAt?:string|null; collectedAt?:string; origin?:string };
 type Issue = { externalId?: string; userId?: string; message: string };
 const safeError = (error: unknown) => error instanceof AppError ? error.message : '账单处理失败，将自动重试';
 
@@ -43,7 +43,7 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
     try { amount = new Decimal(row.rawUsd); } catch { throw new AppError(502, '历史用量金额或账号重复，未写入账本'); }
     assert(amount.isFinite() && amount.gte(0) && amount.lte(MAX_USD), '历史用量金额或账号重复，未写入账本', 502);
     return { externalId: row.externalId, rawUsd: amount.toFixed(),
-      ...(basis==='snapshot'?{sourceAt:(row as any).sourceAt,collectedAt:(row as any).collectedAt}:{}) };
+      ...(basis==='snapshot'?{sourceAt:row.sourceAt??null,collectedAt:row.collectedAt,origin:row.origin??'upstream'}:{}) };
   }).sort((a, b) => a.externalId < b.externalId ? -1 : a.externalId > b.externalId ? 1 : 0);
   const checksum = createHash('sha256').update(JSON.stringify([basis,rows])).digest('hex');
   const statement = await db.transaction(async tx => {
@@ -65,21 +65,24 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
   // discard another agent's valid statement or hide the original source.
   for (const row of rows) {
     try {
-      await db.transaction(async tx => {
-        const [binding] = await tx.query('SELECT id FROM bindings WHERE connection_id=$1 AND external_id=$2', [connection.id, row.externalId]);
+      const recorded=await db.transaction(async tx => {
+        const [binding] = await tx.query(`SELECT b.id,a.owner_id,a.ownership_verified FROM bindings b
+          JOIN accounts a ON a.id=b.account_id WHERE b.connection_id=$1 AND b.external_id=$2`, [connection.id, row.externalId]);
         assert(binding, '历史账单账号尚未同步，请同步平台账号', 409);
-        const usageId = await ingestUsage(tx, { bindingId: binding.id, day, rawUsd: row.rawUsd, final: autoFinalize,
-          source: basis==='upstream'?'upstream_daily':'daily_snapshot',sourceAt:row.sourceAt,
+        const owned=!!binding.owner_id&&binding.ownership_verified;
+        const usageId = await ingestUsage(tx, { bindingId: binding.id, day, rawUsd: row.rawUsd, final: autoFinalize&&owned,
+          source: basis==='upstream'?'upstream_daily':'daily_snapshot',sourceAt:row.sourceAt??undefined,
           evidence: `upstream_statement:${statement.id};sha256:${checksum}` });
-        if(!autoFinalize) {
-          await tx.query(`UPDATE billing_entries SET state='blocked',usage_id=$4,error='快照预估已存档，等待审核或启用快照自动出账' WHERE connection_id=$1 AND day=$2 AND external_id=$3`,[connection.id,day,row.externalId,usageId]);
-          return;
+        if(!autoFinalize||!owned) {
+          const message=!owned?'账号归属待确认，账单已保留':'快照预估已存档，等待审核或启用快照自动出账';
+          await tx.query(`UPDATE billing_entries SET state='blocked',usage_id=$4,error=$5 WHERE connection_id=$1 AND day=$2 AND external_id=$3`,[connection.id,day,row.externalId,usageId,message]);
+          return message;
         }
         await assertUsageAccounting(tx, [usageId]);
         await tx.query(`UPDATE billing_entries SET state='recorded',usage_id=$4,error=NULL WHERE connection_id=$1 AND day=$2 AND external_id=$3`, [connection.id,day,row.externalId,usageId]);
       });
-      if(autoFinalize)finalized++;
-      else issues.push({externalId:row.externalId,message:'快照预估已存档，等待审核或启用快照自动出账'});
+      if(recorded)issues.push({externalId:row.externalId,message:recorded});
+      else finalized++;
     } catch (error) {
       const message=safeError(error);
       issues.push({ externalId: row.externalId, message });
@@ -99,12 +102,20 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
   issues.push(...invoices.issues);
   const state = issues.length ? 'needs_attention' : 'succeeded';
   await db.transaction(async tx => {
-    await tx.query(`UPDATE billing_days SET state=$3,finalized_count=$4,issue_count=$5,issues=$6,error=$7,
+    await tx.query(`UPDATE billing_days SET state=$3,finalized_count=$4,issue_count=$5,issues=$6,error=NULL,source_error=$7,
       completed_at=now(),next_attempt_at=now()+CASE WHEN $3='succeeded' THEN interval '6 hours' ELSE interval '1 hour' END
       WHERE connection_id=$1 AND day=$2`, [connection.id, day, state, finalized, issues.length, JSON.stringify(issues.slice(0,100)),options.sourceError??null]);
     await audit(tx, owner.id, 'billing.daily', statement.id, { connectionId: connection.id, day, accounts: rows.length, finalized, issues: issues.length, invoices: invoices.created });
   });
   return { day, statementId: statement.id, basis, accounts: rows.length, finalized, issueCount: issues.length, invoices: invoices.created, state };
+}
+
+export async function awaitSnapshotBilling(db:DB,connectionId:string,day:string,issues:Issue[],sourceError:string) {
+  const state=issues.some(issue=>issue.message!=='当日用量数据待补齐')?'needs_attention':'awaiting_data';
+  await db.query(`UPDATE billing_days SET state=$3,basis='snapshot',error=NULL,source_error=$4,
+    account_count=$5,issue_count=$5,issues=$6,completed_at=NULL,next_attempt_at=now()+interval '1 hour'
+    WHERE connection_id=$1 AND day=$2`,[connectionId,day,state,sourceError,issues.length,JSON.stringify(issues.slice(0,100))]);
+  return {day,basis:'snapshot',state,accounts:issues.length,finalized:0,issueCount:issues.length,invoices:0};
 }
 
 export async function failDailyBilling(db: DB, connectionId: string, day: string, message: string) {

@@ -5,7 +5,7 @@ import { ingestUsage } from './billing.js';
 import { ProviderClient, UpstreamError, type ProviderKey, type UpstreamAccount } from './providers.js';
 import { accountProxy } from './proxies.js';
 import { saveTelemetry } from './telemetry.js';
-import { failDailyBilling, recordDailyStatement } from './daily-billing.js';
+import { awaitSnapshotBilling, failDailyBilling, recordDailyStatement } from './daily-billing.js';
 import { saveBillingSnapshot, snapshotDay } from './billing-snapshots.js';
 
 export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:string,kind:string,payload:object,key:string) {
@@ -137,7 +137,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
             // Gatelink caches may still contain yesterday's daily counter.
             // Keep the source snapshot for inspection without booking it today.
             if(remote.dailyUsd===null || remote.telemetry&&(remote.telemetry.day!==day||!remote.telemetry.sourceAt)) {skippedDaily++;continue;}
-            await ingestUsage(tx,{bindingId:bound.id,day,rawUsd:remote.dailyUsd,final:false,source:'live_snapshot'});
+            await ingestUsage(tx,{bindingId:bound.id,day,rawUsd:remote.dailyUsd,final:false,source:'live_snapshot',sourceAt:remote.telemetry?.sourceAt??undefined});
           }
           await tx.query(`UPDATE bindings SET status='missing' WHERE connection_id=$1 AND NOT(external_id=ANY($2::text[]))`,[connection.id,accounts.map(a=>a.id)]);
           await tx.query(`UPDATE connections SET status='connected',last_error=NULL,last_sync_at=now() WHERE id=$1`,[connection.id]);
@@ -226,8 +226,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
             WHERE d.connection_id=$1 AND d.day=$2 AND s.basis='upstream'`,[connection.id,payload.day]);
           if(official)rows=official.rows;
           else {
-            try {fallback=await snapshotDay(db,connection,payload.day);}
-            catch(snapshotError) {throw new UpstreamError(error.upstreamStatus,`${error.message}；${snapshotError instanceof Error?snapshotError.message:'日终快照不可用'}`);}
+            fallback=await snapshotDay(db,connection,payload.day);
             rows=fallback.rows;sourceError=error.message;
           }
         }
@@ -241,9 +240,11 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
             await db.transaction(async tx=>{for(const remote of accounts)await saveBinding(tx,connection,remote);});
           } catch { /* Missing identities remain archived and are retried. */ }
         }
-        result=await recordDailyStatement(db,connection,actor,payload.day,rows,fallback?{
-          basis:'snapshot',autoFinalize:connection.snapshot_billing,issues:fallback.issues,sourceError,
-        }:{});
+        result=fallback&&!rows.length
+          ?await awaitSnapshotBilling(db,connection.id,payload.day,fallback.issues,sourceError!)
+          :await recordDailyStatement(db,connection,actor,payload.day,rows,fallback?{
+            basis:'snapshot',autoFinalize:connection.snapshot_billing,issues:fallback.issues,sourceError,
+          }:{});
       } else if(job.kind==='reconcile') {
         assert(actor.role==='owner','仅管理员可读取历史对账数据');
         assert(payload.day<today(),'只能查询已结束日期');
@@ -251,7 +252,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         const bindings=await db.query('SELECT id,external_id FROM bindings WHERE connection_id=$1',[connection.id]);
         result={day:payload.day,candidates:rows.map(r=>({bindingId:bindings.find(b=>b.external_id===r.externalId)?.id??null,externalId:r.externalId,day:payload.day,rawUsd:r.rawUsd})),reviewRequired:true};
       }
-      await db.query(`UPDATE jobs SET state=$4,result=$2,payload=$3,completed_at=now() WHERE id=$1`,[job.id,JSON.stringify(result),box.encrypt({}),result.state==='needs_attention'?'needs_attention':'succeeded']);
+      await db.query(`UPDATE jobs SET state=$4,result=$2,payload=$3,completed_at=now() WHERE id=$1`,[job.id,JSON.stringify(result),box.encrypt({}),['needs_attention','awaiting_data'].includes(result.state)?'needs_attention':'succeeded']);
     } catch(error) {
       const message=error instanceof Error?error.message:'任务执行失败';
       // OAuth codes and credential imports are one-use. Never blindly retry an

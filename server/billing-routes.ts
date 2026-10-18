@@ -14,12 +14,12 @@ export function registerBilling(app: FastifyInstance, db: DB, box: SecretBox) {
     assert(q.from<=q.to,'开始日期不能晚于结束日期');
     const params=[q.from,q.to,q.provider];
     const [totals]=await db.query(`SELECT count(*)::int AS count,count(*) FILTER(WHERE d.state='succeeded')::int AS succeeded,
-      count(*) FILTER(WHERE d.state IN ('failed','needs_attention'))::int AS attention
+      count(*) FILTER(WHERE d.state IN ('failed','needs_attention','awaiting_data'))::int AS attention
       FROM billing_days d JOIN connections c ON c.id=d.connection_id WHERE d.day BETWEEN $1 AND $2 AND ($3='' OR c.provider=$3)`,params);
     const rows=await db.query(`SELECT d.*,c.provider,c.name AS connection_name,s.raw_usd,s.created_at AS source_at
       FROM billing_days d JOIN connections c ON c.id=d.connection_id LEFT JOIN upstream_statements s ON s.id=d.statement_id
       WHERE d.day BETWEEN $1 AND $2 AND ($3='' OR c.provider=$3) ORDER BY d.day DESC,c.provider,c.id LIMIT 12 OFFSET $4`,[...params,(q.page-1)*12]);
-    return {rows:rows.map(row=>({...row,connection_name:`${platformName(row.provider)} · ${row.connection_id.slice(0,8)}`})),totals,page:q.page,total:totals.count,timezone:'Asia/Shanghai',dailyAfter:'02:00'};
+    return {rows:rows.map(({source_error,...row})=>({...row,connection_name:`${platformName(row.provider)} · ${row.connection_id.slice(0,8)}`})),totals,page:q.page,total:totals.count,timezone:'Asia/Shanghai',dailyAfter:'02:00'};
   });
   app.post('/api/billing/collect',async req=>{
     await requireOwner(req.user);

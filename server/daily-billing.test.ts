@@ -109,9 +109,9 @@ describe('automatic daily billing',()=>{
     expect(snapshot.issues).toHaveLength(0);
   });
 
-  it('rejects old, missing and regressed end-of-day snapshots while preserving their observations',async()=>{
-    await expect(snapshotDay(db,connection,day)).rejects.toThrow('没有当天有效快照');
-    await saveAt('23:40:00','100');expect((await snapshotDay(db,connection,day)).issues).toHaveLength(1);
+  it('uses the last available same-day snapshot while retaining missing and regressed counters as issues',async()=>{
+    expect(await snapshotDay(db,connection,day)).toMatchObject({rows:[],issues:[{message:'当日用量数据待补齐'}]});
+    await saveAt('23:40:00','100');expect((await snapshotDay(db,connection,day)).rows).toMatchObject([{rawUsd:'100.00000000'}]);
     await saveAt('23:59:00','0');const result=await snapshotDay(db,connection,day);
     expect(result.rows).toHaveLength(0);expect(result.issues[0].message).toContain('回退');
     expect(await db.query('SELECT * FROM billing_snapshots')).toHaveLength(2);
@@ -161,7 +161,63 @@ describe('automatic daily billing',()=>{
     expect(saved.state).toBe('succeeded');expect(saved.result).toMatchObject({basis:'snapshot',finalized:1,invoices:3});
     expect((await db.query('SELECT * FROM invoices')).every(i=>i.estimated)).toBe(true);
     expect((await db.query('SELECT source FROM usage_days'))[0].source).toBe('daily_snapshot');
-    const [progress]=await db.query('SELECT * FROM billing_days');expect(progress.basis).toBe('snapshot');expect(progress.error).toContain('403');
+    const [progress]=await db.query('SELECT * FROM billing_days');expect(progress.basis).toBe('snapshot');expect(progress.error).toBeNull();expect(progress.source_error).toContain('403');
+  });
+
+  it('always prefers the directly readable daily statement over an available snapshot',async()=>{
+    await saveAt('23:59:00','99');
+    await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
+    await enqueue(db,box,owner.id,connection.id,'daily_billing',{day},id());
+    await createWorker(db,box,()=>({login:async()=>({}),historicalDay:async()=>[{externalId:'real',rawUsd:'100'}]} as unknown as ProviderClient)).runOne();
+    expect((await db.query('SELECT basis,error FROM billing_days'))[0]).toEqual({basis:'upstream',error:null});
+    expect((await db.query('SELECT raw_usd,source FROM usage_days'))[0]).toEqual({raw_usd:'100.00000000',source:'upstream_daily'});
+    expect((await db.query('SELECT estimated FROM invoices')).every(i=>!i.estimated)).toBe(true);
+  });
+
+  it('recovers pre-archive counters from 23:59:58 without inventing an upstream timestamp or requiring a manual import',async()=>{
+    const capturedAt=new Date(day+'T23:59:58+08:00');
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day,rawUsd:'802.581353',final:false,source:'live_snapshot'}));
+    await db.query('UPDATE usage_days SET updated_at=$2 WHERE binding_id=$1',[binding.id,capturedAt]);
+    await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
+    const job=await enqueue(db,box,owner.id,connection.id,'daily_billing',{day},id());
+    await createWorker(db,box,()=>({login:async()=>({}),historicalDay:async()=>{throw new UpstreamError(403,'history HTTP 403');}} as unknown as ProviderClient)).runOne();
+    expect((await db.query('SELECT state,result FROM jobs WHERE id=$1',[job.id]))[0]).toMatchObject({state:'succeeded',result:{basis:'snapshot',finalized:1,invoices:3}});
+    const [statement]=await db.query('SELECT * FROM upstream_statements');
+    expect(statement.rows).toMatchObject([{rawUsd:'802.581353',sourceAt:null,collectedAt:capturedAt.toISOString(),origin:'usage_archive'}]);
+    expect((await db.query('SELECT * FROM billing_snapshots'))[0]).toMatchObject({source_at:null,origin:'usage_archive',raw_usd:'802.58135300'});
+    expect((await db.query('SELECT * FROM invoices')).every(i=>i.estimated)).toBe(true);
+    await snapshotDay(db,connection,day);expect(await db.query('SELECT * FROM billing_snapshots')).toHaveLength(1);
+  });
+
+  it('archives snapshot bills for unassigned accounts while preserving their amounts for later automatic settlement',async()=>{
+    binding=await account('unassigned-snapshot',null,false);
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day,rawUsd:'857.442890',final:false,source:'live_snapshot'}));
+    await db.query('UPDATE usage_days SET updated_at=$2 WHERE binding_id=$1',[binding.id,new Date(day+'T23:59:58+08:00')]);
+    const snapshot=await snapshotDay(db,connection,day);
+    const result=await recordDailyStatement(db,connection,owner,day,snapshot.rows,{basis:'snapshot'});
+    expect(result).toMatchObject({state:'needs_attention',accounts:1,invoices:0});
+    expect((await db.query('SELECT * FROM upstream_statements'))[0].raw_usd).toBe('857.44289000');
+    expect((await db.query('SELECT source,raw_usd,state FROM usage_days'))[0]).toEqual({source:'daily_snapshot',raw_usd:'857.44289000',state:'provisional'});
+    expect(await db.query('SELECT * FROM earnings')).toHaveLength(0);
+    await db.query('UPDATE accounts SET owner_id=$2,ownership_verified=true WHERE id=$1',[binding.account_id,leaf.id]);
+    expect(await recordDailyStatement(db,connection,owner,day,(await snapshotDay(db,connection,day)).rows,{basis:'snapshot'})).toMatchObject({state:'succeeded',invoices:3});
+  });
+
+  it('keeps a missing snapshot pending without creating a zero bill or surfacing an expected 403 as a failure',async()=>{
+    await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
+    const job=await enqueue(db,box,owner.id,connection.id,'daily_billing',{day},id());
+    await createWorker(db,box,()=>({login:async()=>({}),historicalDay:async()=>{throw new UpstreamError(403,'history HTTP 403');}} as unknown as ProviderClient)).runOne();
+    expect((await db.query('SELECT state,error,result FROM jobs WHERE id=$1',[job.id]))[0]).toMatchObject({state:'needs_attention',error:null,result:{state:'awaiting_data'}});
+    expect((await db.query('SELECT state,error,basis,source_error FROM billing_days'))[0]).toEqual({state:'awaiting_data',error:null,basis:'snapshot',source_error:'history HTTP 403'});
+    expect(await db.query('SELECT * FROM upstream_statements')).toHaveLength(0);
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
+  });
+
+  it('does not recover a next-day observation as an old daily bill or accept invalid snapshot amounts',async()=>{
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day,rawUsd:'100',final:false,source:'live_snapshot'}));
+    expect((await snapshotDay(db,connection,day)).rows).toHaveLength(0);
+    for(const rawUsd of ['-1','NaN','Infinity','invalid'])expect(await saveBillingSnapshot(db,binding.id,observation(day,'23:59:00',rawUsd))).toBe(false);
+    expect(await db.query('SELECT * FROM billing_snapshots')).toHaveLength(0);
   });
 
   it('keeps snapshots provisional if automatic estimates are disabled and never falls back from invalid historical data',async()=>{
@@ -192,6 +248,8 @@ describe('automatic daily billing',()=>{
     expect(await scheduleBillingSnapshots(db,box,at)).toHaveLength(1);
     expect(await db.query("SELECT * FROM jobs WHERE kind='billing_snapshot'")).toHaveLength(1);
     expect(await scheduleBillingSnapshots(db,box,new Date(today()+'T00:11:00+08:00'))).toHaveLength(0);
+    expect(await scheduleBillingSnapshots(db,box,new Date(today()+'T12:30:00+08:00'))).toHaveLength(1);
+    expect(await scheduleBillingSnapshots(db,box,new Date(today()+'T12:31:00+08:00'))).toHaveLength(0);
   });
 
   it('allows only administrators to collect, inspect or download raw statements and exports estimated billing basis',async()=>{
@@ -201,8 +259,8 @@ describe('automatic daily billing',()=>{
       const cookie=String(login.headers['set-cookie']).split(';')[0],headers={cookie,'x-ccmax-request':'1'};
       const [session]=await db.query('SELECT * FROM sessions');
       await saveAt('23:59:00','100');const snapshot=await snapshotDay(db,connection,day);
-      const result=await recordDailyStatement(db,connection,owner,day,snapshot.rows,{basis:'snapshot'});
-      const progress=await app.inject({url:'/api/billing/days',headers});expect(progress.statusCode).toBe(200);expect(progress.json().rows[0].basis).toBe('snapshot');expect(progress.json().rows[0].connection_name).toMatch(/^AI008/);expect(progress.body).not.toContain('Private upstream');
+      const result=await recordDailyStatement(db,connection,owner,day,snapshot.rows,{basis:'snapshot',sourceError:'history HTTP 403'});
+      const progress=await app.inject({url:'/api/billing/days',headers});expect(progress.statusCode).toBe(200);expect(progress.json().rows[0].basis).toBe('snapshot');expect(progress.json().rows[0].connection_name).toMatch(/^AI008/);expect(progress.body).not.toContain('Private upstream');expect(progress.body).not.toContain('403');expect(progress.body).not.toContain('source_error');
       expect((await app.inject({url:'/api/billing/statements/'+result.statementId,headers})).json().rows[0].sourceAt).toBeDefined();
       const [invoice]=await db.query('SELECT * FROM invoices WHERE user_id=$1',[owner.id]);
       const exported=await app.inject({url:'/api/invoices/'+invoice.id+'/export',headers});expect(exported.body).toContain('快照预估');
