@@ -36,6 +36,14 @@ export async function scheduleDailyBilling(db: DB, box: SecretBox, now = new Dat
     await tx.query('SELECT pg_advisory_xact_lock(7164023)');
     const [owner] = await tx.query("SELECT * FROM users WHERE role='owner' AND active=true");
     if (!owner) return [];
+    // During a rolling deployment an old worker can finish after the migration
+    // and restore its obsolete 403/no-snapshot failure. Recover that expected
+    // fallback automatically instead of waiting for the old failure backoff.
+    await tx.query(`UPDATE billing_days d SET state='awaiting_data',error=NULL,
+      source_error=COALESCE(d.source_error,d.error),next_attempt_at=now()
+      FROM connections c WHERE c.id=d.connection_id AND c.snapshot_billing
+      AND d.state='failed' AND d.basis='snapshot'
+      AND d.error ~ '读取历史日账单失败（HTTP (403|404)'`);
     const through = billingThrough(now), current = billingDayAt(now);
     const connections = await tx.query(`SELECT c.id,LEAST((c.created_at AT TIME ZONE 'Asia/Shanghai')::date,
       (SELECT min(r.effective_date) FROM connection_rates r WHERE r.connection_id=c.id),

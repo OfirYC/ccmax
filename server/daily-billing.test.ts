@@ -252,6 +252,19 @@ describe('automatic daily billing',()=>{
     expect(await scheduleBillingSnapshots(db,box,new Date(today()+'T12:31:00+08:00'))).toHaveLength(0);
   });
 
+  it('automatically recovers an obsolete history-permission failure written by an older worker during deployment',async()=>{
+    await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
+    const message='Gatelink 读取历史日账单失败（HTTP 403）；当前主账号无此权限；没有当天有效快照，无法补建历史金额';
+    await db.query(`UPDATE billing_days SET state='failed',basis='snapshot',error=$1,next_attempt_at=now()+interval '2 days'`,[message]);
+    expect(await scheduleDailyBilling(db,box,new Date(today()+'T23:00:00+08:00'))).toHaveLength(1);
+    const [progress]=await db.query('SELECT state,error,source_error FROM billing_days');
+    expect(progress).toEqual({state:'queued',error:null,source_error:message});
+    await db.query("UPDATE jobs SET state='failed'");
+    await db.query("UPDATE billing_days SET state='failed',error='Gatelink 登录失败（HTTP 403）',next_attempt_at=now()+interval '2 days'");
+    expect(await scheduleDailyBilling(db,box,new Date(today()+'T23:00:00+08:00'))).toHaveLength(0);
+    expect((await db.query('SELECT error FROM billing_days'))[0].error).toContain('登录失败');
+  });
+
   it('allows only administrators to collect, inspect or download raw statements and exports estimated billing basis',async()=>{
     const {app}=await createApp(db,{encryptionKey:'bd'.repeat(32),appUrl:'http://localhost:3000'});
     try {
