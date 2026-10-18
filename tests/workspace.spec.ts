@@ -29,7 +29,7 @@ test('owner and agent complete team, usage, settlement and withdrawal flows',asy
 test('Mini CC is selectable for onboarding, token import and historical reconciliation',async({page})=>{
  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
  // Only the platform options are mocked. Never send fixture credentials to a live upstream.
- await page.route('**/api/connections/*/options',route=>route.fulfill({json:{configurationLocked:true,proxyMode:'direct',policies:[{id:'default-policy',name:'Default policy'}],groups:[{id:'team',name:'Default group'}],templates:[{id:'default-cc',name:'Default CC'}],defaults:{policyTemplateId:'default-policy',groupIds:['team'],ccTemplateId:'default-cc'}}}));
+ await page.route('**/api/connections/*/options',route=>route.fulfill({json:{configurationLocked:true,proxyMode:'manual',requireProxy:true,policies:[{id:'default-policy',name:'Default policy'}],groups:[{id:'team',name:'Default group'}],templates:[{id:'default-cc',name:'Default CC'}],defaults:{policyTemplateId:'default-policy',groupIds:['team'],ccTemplateId:'default-cc'}}}));
  await page.getByRole('link',{name:'账号管理',exact:false}).first().click();
  await page.getByRole('button',{name:'新增账号 / 多平台上号',exact:true}).click();
  await page.getByLabel('Claude 账号邮箱').fill('mini-e2e@example.com');await page.getByRole('button',{name:'下一步：选择平台'}).click();
@@ -37,10 +37,17 @@ test('Mini CC is selectable for onboarding, token import and historical reconcil
  const dialog=page.getByRole('dialog');
  await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');await expect(dialog.getByLabel('账号策略')).toBeDisabled();
  await expect(dialog.getByLabel('分组',{exact:true})).toBeDisabled();await expect(dialog.getByLabel('CC 模板',{exact:true})).toHaveValue('default-cc');
+ await expect(dialog.getByRole('button',{name:'一键生成所选平台授权链接'})).toBeDisabled();
+ await dialog.getByRole('button',{name:'添加新代理',exact:true}).click();
+ await dialog.getByLabel('代理名称',{exact:true}).fill('Mini account fixed proxy');await dialog.getByLabel('代理地址',{exact:true}).fill('http://ui-user:ui-private-password@proxy.example.com:8080');
+ await dialog.getByRole('button',{name:'添加并绑定代理',exact:true}).click();
+ await expect(dialog.getByText('固定出口代理：Mini account fixed proxy',{exact:true})).toBeVisible();
  await expect(dialog.getByRole('button',{name:'一键生成所选平台授权链接'})).toBeEnabled();
  await dialog.getByRole('button',{name:'Refresh token 导入',exact:true}).click();
  await dialog.getByLabel('目标平台',{exact:true}).selectOption({label:'Mini CC Test'});await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');
  await dialog.getByRole('button',{name:'关闭弹窗'}).click();
  await page.getByRole('link',{name:'用量明细',exact:true}).click();await page.getByRole('button',{name:'读取历史账单'}).click();
  await page.getByLabel('支持历史查询的平台连接').selectOption({label:'Mini CC Test'});await expect(page.getByLabel('支持历史查询的平台连接')).not.toHaveValue('');
+ await page.getByRole('button',{name:'关闭弹窗'}).click();await page.getByRole('link',{name:'出口代理',exact:true}).click();await expect(page.locator('tbody')).toContainText('mini-e2e@example.com');await expect(page.locator('tbody')).toContainText('http://proxy.example.com:8080');await expect(page.locator('tbody')).not.toContainText('ui-private-password');
+ await page.screenshot({path:'test-results/proxies-desktop.png',fullPage:true});
 });

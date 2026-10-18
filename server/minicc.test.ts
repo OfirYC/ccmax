@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderClient } from './providers.js';
 
+const fixedProxy={proxy:'http://user:pass@proxy.example.com:8080',proxyExternalId:'fixed-proxy'};
 const meta=()=>({
   groups:[{id:'other',name:'Other'},{id:'team',name:'Team'}],
   policyTemplates:[{id:'custom',name:'Custom'},{id:'default',name:'Default',is_default:true,group_ids:['team','deleted'],policy:{max_rpm:75,max_tpm:80000000,max_concurrent:20,max_sessions:100}}],
@@ -53,7 +54,7 @@ describe('Mini CC Gateway adapter',()=>{
 
   it('exposes only locked defaults and filters deleted groups and proxy secrets',async()=>{
     const options=await client(()=>meta()).options();
-    expect(options).toMatchObject({configurationLocked:true,proxyMode:'direct',defaults:{policyTemplateId:'default',ccTemplateId:'default-cc',groupIds:['team']}});
+    expect(options).toMatchObject({configurationLocked:true,proxyMode:'manual',requireProxy:true,defaults:{policyTemplateId:'default',ccTemplateId:'default-cc',groupIds:['team']}});
     expect(JSON.stringify(options)).not.toContain('secret-pass');
     expect(JSON.stringify(options)).not.toContain('deleted');
     await expect(client(()=>({...meta(),ccTemplates:[]})).options()).rejects.toThrow('默认策略或 CC 模板');
@@ -64,19 +65,19 @@ describe('Mini CC Gateway adapter',()=>{
     const c=client((path,body)=>{
       if(path==='/api/meta')return meta();
       if(path==='/api/accounts/import-rt') {
-        expect(body).toMatchObject({refresh_token:'owned-token',overwrite_existing:false,outbound_proxy_mode:'direct',outbound_proxy_id:null,
+        expect(body).toMatchObject({refresh_token:'owned-token',overwrite_existing:false,outbound_proxy_mode:'manual',outbound_proxy_id:'fixed-proxy',
           policy_template_id:'default',cc_template_id:'default-cc',group_ids:['team'],max_rpm:75,max_tpm:80000000,max_concurrent:20,max_sessions:100});
         expect(body).not.toHaveProperty('account_type');return {id:'real',email:'claimed@example.com'};
       }
-      expect(path).toBe('/api/accounts/real/detail');return {account:{email:'owned@example.com'}};
+      expect(path).toBe('/api/accounts/real/detail');return {account:{email:'owned@example.com',outbound_proxy_id:'fixed-proxy'}};
     });
-    const remote=await c.importRefreshToken({email:'claimed@example.com',policyTemplateId:'custom',ccTemplateId:'custom-cc',groupIds:['other'],proxy:'untrusted'},'owned-token');
+    const remote=await c.importRefreshToken({email:'claimed@example.com',policyTemplateId:'custom',ccTemplateId:'custom-cc',groupIds:['other'],...fixedProxy},'owned-token');
     expect(remote).toMatchObject({id:'real',email:'owned@example.com'});
   });
 
   it('refuses ownership when neither detail nor the account list verifies an email',async()=>{
-    const c=client(path=>path==='/api/meta'?meta():path.endsWith('import-rt')?{id:'missing',name:'claimed@example.com'}:path.endsWith('/detail')?{account:{name:'claimed@example.com'}}:{accounts:[],pages:1,total:0});
-    await expect(c.importRefreshToken({email:'claimed@example.com'},'owned-token')).rejects.toThrow('可验证的真实邮箱');
+    const c=client(path=>path==='/api/meta'?meta():path.endsWith('import-rt')?{id:'missing',name:'claimed@example.com'}:path.endsWith('/detail')?{account:{name:'claimed@example.com',outbound_proxy_id:'fixed-proxy'}}:{accounts:[],pages:1,total:0});
+    await expect(c.importRefreshToken({email:'claimed@example.com',...fixedProxy},'owned-token')).rejects.toThrow('可验证的真实邮箱');
   });
 
   it('uses Mini CC OAuth endpoints, exact state and code#state without overwriting accounts',async()=>{
@@ -85,9 +86,9 @@ describe('Mini CC Gateway adapter',()=>{
       if(path==='/api/meta')return meta();
       if(path==='/api/accounts/auth-url') {expect(body.overwrite_existing).toBe(false);return {url:'https://auth.example/authorize',state:'expected'};}
       if(path==='/api/accounts/exchange'){exchanged++;expect(body.code).toBe('once#expected');expect(body.pending_state).toBe('expected');expect(body.overwrite_existing).toBe(false);return {id:'real'};}
-      return {account:{canonical_identity:{email:'real@example.com'}}};
+      return {account:{canonical_identity:{email:'real@example.com'},outbound_proxy_id:'fixed-proxy'}};
     });
-    const oauth=await c.startOAuth({email:'real@example.com'});
+    const oauth=await c.startOAuth({email:'real@example.com',...fixedProxy});
     await expect(c.exchangeOAuth(oauth.secret,'once#wrong')).rejects.toThrow('state');
     await expect(c.exchangeOAuth(oauth.secret,'once')).rejects.toThrow('完整回调');expect(exchanged).toBe(0);
     expect((await c.exchangeOAuth(oauth.secret,'https://callback.example/?code=once&state=expected')).email).toBe('real@example.com');

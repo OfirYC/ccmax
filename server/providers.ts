@@ -1,5 +1,6 @@
 import { AppError, assert } from './core.js';
 import Decimal from 'decimal.js';
+import { parseProxy } from './proxies.js';
 
 export const PROVIDERS = {
   gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false },
@@ -9,8 +10,8 @@ export const PROVIDERS = {
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
 export type Credentials={username:string;password:string};
-export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string;cost7d:string|null;cost30d:string|null;utilization:number|null};
-export type OAuthOptions={email:string;proxy?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string};
+export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null};
+export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string};
 export class UpstreamError extends AppError {
   constructor(public upstreamStatus:number, message:string) { super(502,message); }
 }
@@ -103,7 +104,7 @@ export class ProviderClient {
       const email=a.canonical_identity?.email||a.email,daily=a.daily_cost;
       assert(a.upstream_id && email,'平台未返回账号 ID / 邮箱',502);
       upstreamAmount(daily,'平台未返回有效的当日用量，保留上次成功数据');
-      return {id:String(a.upstream_id),email:String(email).toLowerCase(),name:a.name||email,status:a.status||'unknown',dailyUsd:String(daily),cost7d:a.cost_7d??null,cost30d:a.cost_30d??null,utilization:null};
+      return {id:String(a.upstream_id),email:String(email).toLowerCase(),name:a.name||email,status:a.status||'unknown',dailyUsd:String(daily),cost7d:a.cost_7d??null,cost30d:a.cost_30d??null,utilization:null,proxyExternalId:a.outbound_proxy_id?String(a.outbound_proxy_id):null};
     }
     const gate=this.provider==='gatelink';
     const snapshot=gate?a.upstreamSnapshot:a;
@@ -115,7 +116,8 @@ export class ProviderClient {
       dailyUsd:String(daily),
       cost7d:(gate?a.upstreamCost7d:a.usage_windows?.cost_7d)??snapshot?.usage_windows?.cost_7d??null,
       cost30d:snapshot?.usage_windows?.cost_30d??null,
-      utilization:(gate?a.upstreamUtilization5h:a.stats?.claude_utilization?.five_hour?.utilization)??null};
+      utilization:(gate?a.upstreamUtilization5h:a.stats?.claude_utilization?.five_hour?.utilization)??null,
+      ...(!gate?{proxyExternalId:a.outbound_proxy_id?String(a.outbound_proxy_id):null}:{})};
   }
   async options() {
     if(this.provider==='gatelink') {
@@ -124,7 +126,7 @@ export class ProviderClient {
     }
     if(this.provider==='minicc') {
       const {policy,template,groups}=await this.miniDefaults();
-      return {requireProxy:false,accountTypes:[],configurationLocked:true,proxyMode:'direct',
+      return {requireProxy:true,accountTypes:[],configurationLocked:true,proxyMode:'manual',
         policies:[{id:policy.id,name:policy.name}],templates:[{id:template.id,name:template.name}],
         groups:groups.map((g:any)=>({id:g.id,name:g.name})),
         defaults:{policyTemplateId:policy.id,ccTemplateId:template.id,groupIds:groups.map((g:any)=>String(g.id))}};
@@ -136,16 +138,78 @@ export class ProviderClient {
       const list=Array.isArray(data)?data:(data.items??data[key]??[]);
       return list.map((v:any)=>({id:v.id,name:v.name}));
     };
-    return {requireProxy:false,accountTypes:['max','pro','team'],groups:clean(groups,'groups'),policies:clean(policies,'templates'),templates:clean(templates,'templates')};
+    return {requireProxy:true,accountTypes:['max','pro','team'],groups:clean(groups,'groups'),policies:clean(policies,'templates'),templates:clean(templates,'templates')};
   }
   private aiConfig(options:OAuthOptions) {
+    this.requireProxy(options);
     return {provider:'anthropic',oauth_flow:'login',name:options.email,inference_backend:'native',
       ...(options.accountType?{account_type:options.accountType}:{}),
-      outbound_proxy_mode:options.proxy?'manual':'auto',outbound_proxy_id:options.proxy||null,
+      outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,
       ...(options.policyTemplateId?{policy_template_id:options.policyTemplateId}:{}),
       ...(options.groupIds?.length?{group_ids:options.groupIds}:{}),
       ...(options.ccTemplateId?{cc_template_id:options.ccTemplateId}:{}),
     };
+  }
+  private requireProxy(options:OAuthOptions) {
+    assert(options.proxy,'每个账号必须绑定专属出口代理');parseProxy(options.proxy);
+    if(this.provider!=='gatelink')assert(options.proxyExternalId,'平台代理映射尚未确认，已阻止上号');
+  }
+  private proxyMatches(record:any,url:string,full:boolean) {
+    const expected=parseProxy(url),raw=record.url??record.proxy_url??record.uri;
+    if(typeof raw==='string') {try{return parseProxy(raw).url===expected.url;}catch{return false;}}
+    const scheme=String(record.scheme||'').replace(/:$/,'').replace(/^socks5$/,'socks5h');
+    if(scheme!==expected.scheme||String(record.host).toLowerCase()!==expected.host||Number(record.port)!==expected.port)return false;
+    if(record.username!==undefined && String(record.username??'')!==expected.username)return false;
+    if(record.password!==undefined && String(record.password??'')!==expected.password)return false;
+    return !full||(Object.hasOwn(record,'username')&&Object.hasOwn(record,'password'));
+  }
+  private usableProxy(record:any,existing=false) {
+    const full=record?.at_bound_account_limit===true;
+    assert(record && record.status!=='disabled' && !record.missing && (record.selectable!==false||(existing&&full)) && (existing||!full),'平台代理已停用、失效或达到绑定上限，已阻止上号',502);
+    const id=this.provider==='minicc'?(record.upstream_id??record.id):record.id;
+    assert(typeof id==='string'&&id.length>0,'平台未返回有效的代理 ID',502);return id;
+  }
+  private async remoteProxies() {
+    const result:any[]=[];
+    for(let page=1;page<=1000;page++) {
+      const path=this.provider==='minicc'?`/api/proxies/manage?page=${page}`:`/api/admin/outbound-proxies?page=${page}&limit=100`;
+      const data=await this.call(path);
+      assert(Array.isArray(data.proxies) && Number.isInteger(data.total) && data.total>=0,'平台代理列表格式变化',502);
+      result.push(...data.proxies);
+      if(result.length>=data.total) {
+        const ids=result.map(p=>String(this.provider==='minicc'?(p.upstream_id??p.id):p.id));
+        assert(result.length===data.total && new Set(ids).size===ids.length,'平台代理分页结果不完整或重复',502);return result;
+      }
+      assert(data.proxies.length>0,'平台代理分页不完整',502);
+    }
+    throw new UpstreamError(0,'平台代理分页超过上限');
+  }
+  async verifyProxyMapping(url:string,externalId:string) {
+    const records=await this.remoteProxies();
+    const record=records.find(p=>String(this.provider==='minicc'?(p.upstream_id??p.id):p.id)===externalId);
+    assert(record && this.proxyMatches(record,url,false),'上游代理地址与账号固定代理不符或不可核实，已阻止上号',502);
+    // Capacity limits apply to new assignments, not identity checks on a
+    // proxy already occupied by this account. Upstream writes enforce capacity.
+    return this.usableProxy(record,true);
+  }
+  async provisionProxy(url:string) {
+    const normalized=parseProxy(url).url;
+    if(this.provider==='gatelink')return null;
+    const before=await this.remoteProxies();
+    const exact=before.filter(p=>this.proxyMatches(p,normalized,true));
+    assert(exact.length<=1,'上游出现重复代理，请管理员核对平台映射',502);
+    if(exact.length===1)return this.usableProxy(exact[0]);
+    const ids=new Set(before.map(p=>String(this.provider==='minicc'?(p.upstream_id??p.id):p.id)));
+    const imported=await this.call(this.provider==='minicc'?'/api/proxies/import':'/api/admin/outbound-proxies/import','POST',{text:normalized});
+    assert(!imported.failed && !(imported.errors?.length),'上游代理导入或连通测试失败，请在平台核对代理后重试',502);
+    const after=await this.remoteProxies();
+    const matches=after.filter(p=>this.proxyMatches(p,normalized,true));
+    if(matches.length===1)return this.usableProxy(matches[0]);
+    const fresh=after.filter(p=>!ids.has(String(this.provider==='minicc'?(p.upstream_id??p.id):p.id)));
+    // A successful single import plus exactly one new matching record proves
+    // provenance even when the upstream masks credentials in its read API.
+    assert(Number(imported.imported)===1 && fresh.length===1 && this.proxyMatches(fresh[0],normalized,false),'上游代理已存在或导入结果不明确，请管理员核实平台映射后继续',502);
+    return this.usableProxy(fresh[0]);
   }
   private async miniDefaults() {
     const meta=await this.call('/api/meta');
@@ -156,6 +220,7 @@ export class ProviderClient {
     return {policy,template,groups};
   }
   private async miniConfig(options:OAuthOptions) {
+    this.requireProxy(options);
     const {policy,template,groups}=await this.miniDefaults();
     const limits:Record<string,number>={};
     for(const field of ['max_rpm','max_tpm','max_concurrent','max_sessions']) {
@@ -163,10 +228,11 @@ export class ProviderClient {
       limits[field]=policy.policy[field];
     }
     // This upstream locks new accounts to its current default templates.
-    return {name:options.email,inference_backend:'native',outbound_proxy_mode:'direct',outbound_proxy_id:null,
+    return {name:options.email,inference_backend:'native',outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,
       overwrite_existing:false,cc_template_id:template.id,policy_template_id:policy.id,group_ids:groups.map((g:any)=>g.id),...limits};
   }
   async startOAuth(options:OAuthOptions) {
+    this.requireProxy(options);
     if(this.provider==='gatelink') {
       assert(options.proxy,'Gatelink 要求为每个账号填写独立出口代理');
       const data=await this.call('/api/oauth-submissions/authorize','POST',{accountType:options.accountType||'speed',oauthFlow:'login',loginMethod:options.email,proxy:options.proxy,overwriteExisting:false});
@@ -175,7 +241,7 @@ export class ProviderClient {
     }
     if(this.provider==='minicc') {
       await this.miniDefaults();
-      const data=await this.call('/api/accounts/auth-url','POST',{provider:'anthropic',oauth_flow:'login',name:options.email,inference_backend:'native',outbound_proxy_mode:'direct',outbound_proxy_id:null,overwrite_existing:false});
+      const data=await this.call('/api/accounts/auth-url','POST',{provider:'anthropic',oauth_flow:'login',name:options.email,inference_backend:'native',outbound_proxy_mode:'manual',outbound_proxy_id:options.proxyExternalId,overwrite_existing:false});
       assert(data.url && data.state,'平台未返回 OAuth URL / state',502);
       return {url:data.url,secret:{options,pendingState:data.state},expiresIn:600};
     }
@@ -184,6 +250,7 @@ export class ProviderClient {
     return {url:data.url,secret:{options,pendingState:data.state},expiresIn:600};
   }
   async exchangeOAuth(secret:any,callback:string) {
+    this.requireProxy(secret.options);
     if(this.provider==='gatelink') {
       const data=await this.call('/api/oauth-submissions/exchange','POST',{callback,loginMethod:secret.options.email,accountType:secret.options.accountType||'speed',oauthFlow:'login',proxy:secret.options.proxy});
       assert(data.item,'平台未返回已提交账号',502);
@@ -200,44 +267,50 @@ export class ProviderClient {
       assert(state && state===secret.pendingState,'此平台需要完整回调地址或 code#state，OAuth state 必须匹配');
       const data=await this.call('/api/accounts/exchange','POST',{...await this.miniConfig(secret.options),code:`${code}#${state}`,pending_state:secret.pendingState});
       assert(data.id,'平台未返回账号 ID',502);
-      return this.submittedIdentity(data);
+      return this.submittedIdentity(data,secret.options.proxyExternalId);
     }
     const data=await this.call('/api/admin/oauth-accounts/exchange','POST',{...this.aiConfig(secret.options),code,pending_state:secret.pendingState});
     assert(data.id,'平台未返回账号 ID',502);
-    return this.submittedIdentity(data);
+    return this.submittedIdentity(data,secret.options.proxyExternalId);
   }
   async importRefreshToken(options:OAuthOptions,refreshToken:string) {
     assert(PROVIDERS[this.provider].refreshTokenImport,'此平台不支持 refresh token 导入，需单独完成 OAuth 授权');
     if(this.provider==='minicc') {
       const data=await this.call('/api/accounts/import-rt','POST',{...await this.miniConfig(options),refresh_token:refreshToken});
       assert(data.id,'平台未返回账号 ID',502);
-      return this.submittedIdentity(data);
+      return this.submittedIdentity(data,options.proxyExternalId);
     }
     const data=await this.call('/api/admin/oauth-accounts/import-rt','POST',{...this.aiConfig(options),refresh_token:refreshToken});
     assert(data.id,'平台未返回账号 ID',502);
-    return this.submittedIdentity(data);
+    return this.submittedIdentity(data,options.proxyExternalId);
   }
-  private async submittedIdentity(data:any):Promise<UpstreamAccount> {
+  private async submittedIdentity(data:any,expectedProxyId:string|undefined):Promise<UpstreamAccount> {
     // The label supplied by the user is never proof of ownership. If the write
     // response omits the canonical email, verify it against the upstream list.
-    let email=data.canonical_identity?.email||data.email;
-    if(this.provider==='minicc') {
-      // A user-controlled name in the import response is never an identity.
-      const detail=await this.call(`/api/accounts/${encodeURIComponent(data.id)}/detail`);
-      const account=detail.account;
-      assert(account,'平台未返回可验证的真实邮箱，请同步后由管理员核对归属',502);
-      email=account.canonical_identity?.email||account.email;
-    }
+    const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(data.id)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(data.id)}`;
+    const {account}=await this.call(path);
+    assert(account,'平台未返回可验证的真实邮箱，请同步后由管理员核对归属',502);
+    assert(String(account.outbound_proxy_id||'')===expectedProxyId,'上游实际绑定代理与账号固定代理不一致，请管理员核对',502);
+    const email=account.canonical_identity?.email||account.email;
     if(!email) {
       const remote=(await this.listAccounts()).find(a=>a.id===String(data.id));
-      assert(remote,'平台未返回可验证的真实邮箱，请同步后由管理员核对归属',502);return remote;
+      assert(remote && remote.proxyExternalId===expectedProxyId,'平台未返回可验证的真实邮箱或一致的代理，请同步后由管理员核对归属',502);return remote;
     }
-    return {id:String(data.id),email:String(email).toLowerCase(),name:String(email),status:'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null};
+    return {id:String(data.id),email:String(email).toLowerCase(),name:String(email),status:account.status||'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null,proxyExternalId:expectedProxyId};
   }
   async setEnabled(externalId:string,enabled:boolean) {
     if(this.provider==='gatelink') return this.call(`/api/admin/accounts/${encodeURIComponent(externalId)}/enabled`,'POST',{enabled});
     if(this.provider==='minicc') return this.call(`/api/accounts/${encodeURIComponent(externalId)}/status`,'POST',{status:enabled?'active':'disabled'});
     return this.call(`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`,'PATCH',{status:enabled?'active':'disabled'});
+  }
+  async setAccountProxy(externalId:string,options:OAuthOptions) {
+    this.requireProxy(options);
+    assert(this.provider!=='gatelink','Gatelink 当前权限不支持修改已有账号代理，请在上游修改后由管理员核实');
+    if(this.provider==='minicc')await this.call(`/api/accounts/${encodeURIComponent(externalId)}/policy`,'POST',{outbound_proxy_id:options.proxyExternalId});
+    else await this.call(`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`,'PATCH',{outbound_proxy_id:options.proxyExternalId});
+    const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(externalId)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`;
+    const {account}=await this.call(path);
+    assert(account && String(account.outbound_proxy_id||'')===options.proxyExternalId,'上游实际代理未匹配，请核对后重试',502);
   }
   async historicalDay(day:string):Promise<{externalId:string;rawUsd:string}[]> {
     assert(PROVIDERS[this.provider].historicalUsage,'当前平台没有历史结算接口权限，请导入上游确认的日账单');

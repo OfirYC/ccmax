@@ -1,7 +1,8 @@
 import { describe,it,expect } from 'vitest';
 import { ProviderClient } from './providers.js';
 
-const account=(id:string)=>({id,email:`${id}@example.com`,stats:{daily_cost:'1.25'},status:'active'});
+const account=(id:string)=>({id,email:`${id}@example.com`,stats:{daily_cost:'1.25'},status:'active',outbound_proxy_id:'fixed-proxy'});
+const fixedProxy={proxy:'http://user:pass@proxy.example.com:8080',proxyExternalId:'fixed-proxy'};
 const client=(handler:(url:string,init?:RequestInit)=>any)=>new ProviderClient('ai008',{username:'test',password:'test'},async(url,init)=>Response.json(await handler(String(url),init)));
 
 describe('upstream adapter data integrity',()=>{
@@ -14,17 +15,17 @@ describe('upstream adapter data integrity',()=>{
     const c=client(()=>({}));expect(()=>c.normalize({id:'one',email:'one@example.com',stats:{}})).toThrow('有效的当日用量');
   });
   it('verifies a token import against the authoritative account list when the response contains only an ID',async()=>{
-    const c=client(url=>url.endsWith('/import-rt')?{id:'real'}:{accounts:[account('real')],pagination:{total_pages:1}});
-    const remote=await c.importRefreshToken({email:'claimed@example.com'},'owned-refresh-token');
+    const c=client(url=>url.endsWith('/import-rt')?{id:'real'}:url.endsWith('/real')?{account:{outbound_proxy_id:'fixed-proxy'}}:{accounts:[account('real')],pagination:{total_pages:1}});
+    const remote=await c.importRefreshToken({email:'claimed@example.com',...fixedProxy},'owned-refresh-token');
     expect(remote.email).toBe('real@example.com');
   });
   it('fails closed if a write has no authoritative identity to verify',async()=>{
-    const c=client(url=>url.endsWith('/import-rt')?{id:'missing'}:{accounts:[],pagination:{total_pages:1}});
-    await expect(c.importRefreshToken({email:'claimed@example.com'},'owned-refresh-token')).rejects.toThrow('可验证的真实邮箱');
+    const c=client(url=>url.endsWith('/import-rt')?{id:'missing'}:url.endsWith('/missing')?{account:{outbound_proxy_id:'fixed-proxy'}}:{accounts:[],pagination:{total_pages:1}});
+    await expect(c.importRefreshToken({email:'claimed@example.com',...fixedProxy},'owned-refresh-token')).rejects.toThrow('可验证的真实邮箱');
   });
   it('checks OAuth state before sending a one-use code upstream',async()=>{
     let calls=0;const c=client(()=>{calls++;return {};});
-    await expect(c.exchangeOAuth({options:{email:'a@example.com'},pendingState:'expected'},'https://callback.example/?code=once&state=wrong')).rejects.toThrow('state');expect(calls).toBe(0);
+    await expect(c.exchangeOAuth({options:{email:'a@example.com',...fixedProxy},pendingState:'expected'},'https://callback.example/?code=once&state=wrong')).rejects.toThrow('state');expect(calls).toBe(0);
   });
   it('does not leak upstream response bodies through errors',async()=>{
     const c=new ProviderClient('ai008',{username:'test',password:'test'},async()=>new Response('token=private-secret',{status:403}));

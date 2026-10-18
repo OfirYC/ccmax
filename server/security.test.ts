@@ -116,6 +116,10 @@ describe('CCMAX authorization and ledger safeguards', () => {
   async function account(user:any,email='claude@example.com',verified=true) {
     const [a]=await db.query('INSERT INTO accounts(id,owner_id,email,ownership_verified) VALUES($1,$2,$3,$4) RETURNING *',[id(),user.id,email,verified]);return a;
   }
+  async function bindProxy(cookie:string,acct:any,url='http://test-user:test-secret@proxy.example.com:8080') {
+    const response=await api(cookie,'POST','/api/proxies',{name:'Fixed test proxy',url});expect(response.statusCode).toBe(200);
+    const proxyId=response.json().id;expect((await api(cookie,'POST',`/api/accounts/${acct.id}/proxy`,{proxyId})).statusCode).toBe(200);return proxyId;
+  }
   async function observe(bindingId:string,rawUsd:string,final=false,day=prior()) {
     return db.transaction(tx=>ingestUsage(tx,{bindingId,day,rawUsd,final,source:'test',evidence:'verified test statement'}));
   }
@@ -194,7 +198,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const connections=(await api(cookie,'GET','/api/connections')).json();
     expect(connections.connections[0].capabilities.refreshTokenImport).toBe(true);
     expect(JSON.stringify(connections)).not.toContain('private-password');
-    const acct=await account(owner,'new-mini@example.com',false);
+    const acct=await account(owner,'new-mini@example.com',false);await bindProxy(cookie,acct);
     const imported=await api(cookie,'POST',`/api/accounts/${acct.id}/import-token`,{connectionId:cid,refreshToken:'owned-private-refresh-token',options:{},key:id()});
     expect(imported.statusCode).toBe(200);
     const [job]=await db.query('SELECT * FROM jobs WHERE id=$1',[imported.json().id]);
@@ -264,7 +268,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
   });
 
   it('makes batch onboarding atomic and prevents duplicate or cross-account task reuse',async()=>{
-    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'jobs@example.com',false),conn=await connection(),box=secretBox(key);
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'jobs@example.com',false),conn=await connection(),box=secretBox(key);await bindProxy(cookie,acct);
     const result=await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:[{connectionId:conn.id,options:{}},{connectionId:id(),options:{}}],key:id()});
     expect(result.statusCode).toBe(400);expect(await db.query('SELECT * FROM jobs')).toHaveLength(0);
     const requestKey=id(),job=await enqueue(db,box,owner.id,conn.id,'oauth_start',{accountId:acct.id},requestKey);
@@ -291,6 +295,155 @@ describe('CCMAX authorization and ledger safeguards', () => {
     await db.query("UPDATE jobs SET state='running',started_at=now()-interval '31 minutes' WHERE id=$1",[job.id]);
     const worker=createWorker(db,box);await worker.recover();
     const [stored]=await db.query('SELECT * FROM jobs WHERE id=$1',[job.id]);expect(stored.state).toBe('needs_attention');expect(box.decrypt(stored.payload)).toEqual({});expect(await worker.runOne()).toBe(false);
+  });
+
+  it('encrypts proxy credentials, isolates teams and reserves one proxy for one account',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'");
+    const acct=await account(owner,'proxy-one@example.com',false),other=await account(owner,'proxy-two@example.com',false),proxyId=await bindProxy(cookie,acct);
+    const [stored]=await db.query('SELECT * FROM proxies WHERE id=$1',[proxyId]);
+    expect(stored.secret).not.toContain('test-secret');expect(secretBox(key).decrypt(stored.secret).url).toContain('test-secret');
+    const shown=JSON.stringify((await api(cookie,'GET','/api/proxies')).json());expect(shown).not.toContain('test-secret');expect(shown).not.toContain('test-user');
+    expect((await api(cookie,'POST',`/api/accounts/${other.id}/proxy`,{proxyId})).statusCode).toBe(409);
+    expect((await api(cookie,'POST','/api/proxies',{name:'Same proxy, rotated password',url:'http://test-user:changed-password@PROXY.example.com:8080'})).statusCode).toBe(409);
+    const p2=(await api(cookie,'POST','/api/proxies',{name:'Second',url:'https://other.example.com:8443'})).json().id;
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/proxy`,{proxyId:p2})).statusCode).toBe(409);
+    await expect(db.query('UPDATE accounts SET proxy_id=$2 WHERE id=$1',[acct.id,p2])).rejects.toThrow('immutable');
+    await expect(db.query("UPDATE proxies SET secret='changed' WHERE id=$1",[proxyId])).rejects.toThrow('immutable');
+    const u=(await api(cookie,'POST','/api/team',{name:'Proxy sibling',email:'proxy-sibling@example.com',password:'proxy-sibling-password',rates:{ai008:0.2}})).json().user;
+    const siblingCookie=await login(u.email,'proxy-sibling-password'),siblingAccount=(await api(siblingCookie,'POST','/api/accounts',{email:'sibling-claude@example.com'})).json().account;
+    expect((await api(siblingCookie,'GET','/api/proxies')).json().proxies).toHaveLength(0);
+    expect((await api(siblingCookie,'POST',`/api/accounts/${siblingAccount.id}/proxy`,{proxyId:p2})).statusCode).toBe(403);
+    expect((await api(siblingCookie,'PATCH',`/api/proxies/${proxyId}`,{enabled:false})).statusCode).toBe(403);
+    const siblingProxy=(await api(siblingCookie,'POST','/api/proxies',{name:'Sibling-owned proxy',url:'http://sibling.proxy.example.com:8080'})).json().id;
+    expect((await api(cookie,'POST',`/api/accounts/${other.id}/proxy`,{proxyId:siblingProxy})).statusCode).toBe(403);
+    expect((await api(siblingCookie,'POST',`/api/accounts/${siblingAccount.id}/proxy`,{proxyId:siblingProxy})).statusCode).toBe(200);
+    expect((await api(cookie,'POST',`/api/accounts/${siblingAccount.id}/assign`,{userId:owner.id})).statusCode).toBe(409);
+    expect((await api(cookie,'POST','/api/proxies',{name:'Invalid',url:'http://private-user:private-secret@proxy.example.com/path'})).statusCode).toBe(400);
+  });
+
+  it('requires a proxy for every onboarding path and rechecks it before a queued job executes',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'mandatory@example.com',false),conn=await connection();
+    const targets=[{connectionId:conn.id,options:{}}];
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets,key:id()})).statusCode).toBe(400);
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/import-token`,{connectionId:conn.id,refreshToken:'private-owned-token',options:{},key:id()})).statusCode).toBe(400);
+    const proxyId=await bindProxy(cookie,acct);
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:[{connectionId:conn.id,options:{proxy:'https://bypass.example.com:443'}}],key:id()})).statusCode).toBe(400);
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/import-token`,{connectionId:conn.id,refreshToken:'private-owned-token',options:{proxyExternalId:'bypass'},key:id()})).statusCode).toBe(400);
+    const queued=await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets,key:id()});expect(queued.statusCode).toBe(200);
+    const [job]=await db.query('SELECT * FROM jobs WHERE id=$1',[queued.json().jobs[0].id]);expect(secretBox(key).decrypt(job.payload).proxyId).toBe(proxyId);
+    await api(cookie,'PATCH',`/api/proxies/${proxyId}`,{enabled:false});
+    let requests=0;
+    const {ProviderClient}=await import('./providers.js');
+    const worker=createWorker(db,secretBox(key),(p,c)=>new ProviderClient(p,c,async()=>{requests++;return Response.json({});}));
+    await worker.runOne();expect(requests).toBe(0);
+    expect((await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state).toBe('failed');
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets,key:id()})).statusCode).toBe(400);
+  });
+
+  it('detects upstream proxy drift without changing sealed usage and restores verification after reconciliation',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'drift@example.com'),conn=await connection('minicc'),proxyId=await bindProxy(cookie,acct);
+    await db.query('INSERT INTO proxy_bindings(id,proxy_id,connection_id,external_id) VALUES($1,$2,$3,$4)',[id(),proxyId,conn.id,'expected-proxy']);
+    const observed={...remote('drift',acct.email),proxyExternalId:'expected-proxy'};
+    const binding=await db.transaction(tx=>saveBinding(tx,conn,observed));expect(binding.proxy_id).toBe(proxyId);
+    await observe(binding.id,'100',true);
+    const changed=await db.transaction(tx=>saveBinding(tx,conn,{...observed,proxyExternalId:'wrong-proxy'}));expect(changed.proxy_id).toBeNull();
+    const second=await connection('ai008');
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:[{connectionId:second.id,options:{}}],key:id()})).statusCode).toBe(409);
+    expect((await api(cookie,'POST',`/api/bindings/${binding.id}/status`,{enabled:true,key:id()})).statusCode).toBe(409);
+    const restored=await db.transaction(tx=>saveBinding(tx,conn,observed));expect(restored.proxy_id).toBe(proxyId);
+    expect((await db.query('SELECT raw_usd,state FROM usage_days'))[0]).toMatchObject({raw_usd:'100.00000000',state:'final'});
+    expect((await db.query('SELECT profit_usd FROM earnings'))[0].profit_usd).toBe('50.00000000');
+    const foreign=(await api(cookie,'POST','/api/proxies',{name:'Foreign proxy',url:'http://different.example.com:80'})).json().id;
+    await expect(db.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1',[binding.id,foreign])).rejects.toThrow('differs');
+  });
+
+  it('repairs legacy platform bindings through audited fixed-proxy jobs and restricts manual confirmation to Gatelink administrators',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'legacy-proxy@example.com'),proxyId=await bindProxy(cookie,acct),box=secretBox(key);
+    const {ProviderClient}=await import('./providers.js');
+    const actual=new Map<string,string>(),writes:string[]=[];
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
+      const path=new URL(String(input)).pathname,body=init.body?JSON.parse(String(init.body)):{};
+      if(path==='/api/login')return Response.json({role:'supplier'},{headers:{'set-cookie':'mini_session=test; Path=/; HttpOnly'}});
+      if(path==='/api/me')return Response.json({authenticated:true,user:{role:'supplier'}});
+      if(path.endsWith('/auth/admin-login'))return Response.json({user:{role:'admin'},accessToken:'session'});
+      if(path.endsWith('/proxies/manage')||path.endsWith('/outbound-proxies'))return Response.json({total:1,proxies:[{id:'fixed',upstream_id:'fixed',scheme:'http',host:'proxy.example.com',port:8080,status:'active',at_bound_account_limit:true,selectable:false}]});
+      if(body.outbound_proxy_id) {actual.set(provider,body.outbound_proxy_id);writes.push(provider);return Response.json({});}
+      return Response.json({account:{email:acct.email,outbound_proxy_id:actual.get(provider)}});
+    }));
+    const bindings=[];
+    for(const provider of ['ai008','minicc','gatelink']) {
+      const conn=await connection(provider),binding=await db.transaction(tx=>saveBinding(tx,conn,remote(`legacy-${provider}`,acct.email)));bindings.push(binding);
+      expect(binding.proxy_id).toBeNull();
+      if(provider==='gatelink')continue;
+      await db.query('INSERT INTO proxy_bindings(id,proxy_id,connection_id,external_id) VALUES($1,$2,$3,$4)',[id(),proxyId,conn.id,'fixed']);
+      expect((await api(cookie,'POST',`/api/bindings/${binding.id}/proxy/confirm`,{evidence:'Cannot bypass the real upstream verification'})).statusCode).toBe(400);
+      const queued=await api(cookie,'POST',`/api/bindings/${binding.id}/proxy/sync`,{key:id()});expect(queued.statusCode).toBe(200);
+      await worker.runOne();expect((await db.query('SELECT state FROM jobs WHERE id=$1',[queued.json().id]))[0].state).toBe('succeeded');
+    }
+    expect(writes.sort()).toEqual(['ai008','minicc']);
+    const gate=bindings[2];
+    expect((await api(cookie,'POST',`/api/bindings/${gate.id}/proxy/sync`,{key:id()})).statusCode).toBe(400);
+    expect((await api(cookie,'POST',`/api/bindings/${gate.id}/proxy/confirm`,{evidence:'Verified the same proxy URL and authentication in Gatelink'})).statusCode).toBe(200);
+    expect((await db.query('SELECT proxy_id FROM bindings WHERE account_id=$1',[acct.id])).every(b=>b.proxy_id===proxyId)).toBe(true);
+    expect(await db.query("SELECT id FROM audits WHERE action IN ('binding.proxy.sync','binding.proxy.manual_confirm')")).toHaveLength(3);
+    const child=(await api(cookie,'POST','/api/team',{name:'Proxy child',email:'proxy-child@example.com',password:'proxy-child-password',rates:{ai008:0.2}})).json().user;
+    const childCookie=await login(child.email,'proxy-child-password');
+    expect((await api(childCookie,'POST',`/api/bindings/${gate.id}/proxy/confirm`,{evidence:'Untrusted confirmation'})).statusCode).toBe(403);
+    expect((await api(childCookie,'POST',`/api/bindings/${bindings[0].id}/proxy/sync`,{key:id()})).statusCode).toBe(403);
+  });
+
+  it('uses the same encrypted account proxy through all three OAuth flows and verifies final bindings',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'all-platforms@example.com',false),proxyId=await bindProxy(cookie,acct),box=secretBox(key);
+    const conns=await Promise.all(['gatelink','ai008','minicc'].map(p=>connection(p)));
+    const {ProviderClient}=await import('./providers.js');
+    const imported=new Set<string>(),actualProxyUrls:string[]=[];
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
+      const path=new URL(String(input)).pathname,body=init.body?JSON.parse(String(init.body)):{};
+      if(path==='/api/login')return Response.json({role:'supplier'},{headers:{'set-cookie':'mini_session=test; Path=/; HttpOnly'}});
+      if(path==='/api/me')return Response.json({authenticated:true,user:{role:'supplier'}});
+      if(path.endsWith('/auth/login'))return Response.json({user:{role:'supplier'},csrfToken:'csrf'});
+      if(path.endsWith('/auth/admin-login'))return Response.json({user:{role:'admin'},accessToken:'session'});
+      if(path==='/api/meta')return Response.json({groups:[{id:'group',name:'Group'}],policyTemplates:[{id:'policy',name:'Policy',is_default:true,group_ids:['group'],policy:{max_rpm:1,max_tpm:1,max_concurrent:1,max_sessions:1}}],ccTemplates:[{id:'cc',name:'CC',is_default:true}]});
+      if(path.endsWith('/proxies/manage')||path.endsWith('/outbound-proxies'))return Response.json({proxies:imported.has(provider)?[{id:'local',upstream_id:`remote-${provider}`,...(provider==='ai008'?{id:`remote-${provider}`} : {}),scheme:'http',host:'proxy.example.com',port:8080,status:'active'}]:[],total:imported.has(provider)?1:0});
+      if(path.endsWith('/proxies/import')||path.endsWith('/outbound-proxies/import')) {
+        actualProxyUrls.push(body.text);imported.add(provider);return Response.json({imported:1,failed:0});
+      }
+      if(path.endsWith('/authorize')) {actualProxyUrls.push(body.proxy);return Response.json({authorizationUrl:'https://auth.example.com/gate'});}
+      if(path.endsWith('/auth-url')) {
+        expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
+        return Response.json({url:`https://auth.example.com/${provider}`,state:`state-${provider}`});
+      }
+      if(path.endsWith('/exchange')) {
+        if(provider==='gatelink') {actualProxyUrls.push(body.proxy);return Response.json({item:{id:'acct-gate',upstreamEmail:acct.email,upstreamDailyCost:0}});}
+        expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
+        return Response.json({id:`acct-${provider}`});
+      }
+      if(path.endsWith('/detail')||path.endsWith('/acct-ai008'))return Response.json({account:{email:acct.email,outbound_proxy_id:`remote-${provider}`}});
+      throw new Error('Unexpected mocked upstream endpoint');
+    }));
+    const started=await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:conns.map(c=>({connectionId:c.id,options:{}})),key:id()});expect(started.statusCode).toBe(200);
+    for(let i=0;i<3;i++)await worker.runOne();
+    const attempts=await db.query('SELECT * FROM oauth_attempts');expect(attempts).toHaveLength(3);
+    const exchanges:{attemptId:string;callback:string;key:string}[]=[];
+    for(const attempt of attempts) {
+      const secret=box.decrypt(attempt.secret);expect(secret.proxyId).toBe(proxyId);expect(secret.options.proxy).toBe('http://test-user:test-secret@proxy.example.com:8080');
+      const callback=secret.pendingState?`one-use#${secret.pendingState}`:'gate-callback';
+      const request={attemptId:attempt.id,callback,key:id()};exchanges.push(request);
+      expect((await api(cookie,'POST',`/api/oauth/${attempt.id}/exchange`,{callback,key:request.key})).statusCode).toBe(200);
+    }
+    for(let i=0;i<3;i++)await worker.runOne();
+    const jobs=await db.query('SELECT kind,state,error FROM jobs');expect(jobs.every(j=>j.state==='succeeded')).toBe(true);
+    expect(await db.query('SELECT * FROM bindings WHERE proxy_id=$1',[proxyId])).toHaveLength(3);
+    expect(new Set(actualProxyUrls)).toEqual(new Set(['http://test-user:test-secret@proxy.example.com:8080']));
+    expect(await db.query('SELECT * FROM proxy_bindings WHERE proxy_id=$1',[proxyId])).toHaveLength(2);
+    await api(cookie,'PATCH',`/api/proxies/${proxyId}`,{enabled:false});
+    for(const request of exchanges) {
+      const url=`/api/oauth/${request.attemptId}/exchange`;
+      const retry=await api(cookie,'POST',url,{callback:request.callback,key:request.key});
+      expect(retry.statusCode).toBe(200);expect(retry.json().state).toBe('succeeded');
+      expect((await api(cookie,'POST',url,{callback:'changed-callback',key:request.key})).statusCode).toBe(409);
+    }
+    expect(await db.query('SELECT id FROM jobs')).toHaveLength(6);
   });
 
 });

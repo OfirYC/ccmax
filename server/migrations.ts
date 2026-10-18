@@ -1,6 +1,46 @@
 import type { DB } from './db.js';
 import { PROVIDER_KEYS } from './providers.js';
 
+export async function accountProxies(tx:DB) {
+  await tx.query('ALTER TABLE jobs DROP CONSTRAINT jobs_kind_check');
+  await tx.query("ALTER TABLE jobs ADD CONSTRAINT jobs_kind_check CHECK(kind IN ('sync','reconcile','oauth_start','oauth_exchange','import_rt','set_enabled','set_proxy'))");
+  await tx.query('DROP INDEX jobs_one_submission');
+  await tx.query(`CREATE UNIQUE INDEX jobs_one_submission ON jobs(connection_id,subject_id)
+    WHERE subject_id IS NOT NULL AND kind IN ('oauth_start','oauth_exchange','import_rt','set_proxy') AND state IN ('queued','running')`);
+  await tx.query(`CREATE TABLE proxies (
+    id text PRIMARY KEY,owner_id text NOT NULL REFERENCES users(id),name text NOT NULL,
+    endpoint text NOT NULL,secret text NOT NULL,fingerprint text NOT NULL UNIQUE,
+    enabled boolean NOT NULL DEFAULT true,created_at timestamptz NOT NULL DEFAULT now())`);
+  await tx.query('ALTER TABLE accounts ADD COLUMN proxy_id text UNIQUE REFERENCES proxies(id)');
+  await tx.query('ALTER TABLE bindings ADD COLUMN proxy_id text REFERENCES proxies(id)');
+  await tx.query(`CREATE TABLE proxy_bindings (
+    id text PRIMARY KEY,proxy_id text NOT NULL REFERENCES proxies(id),connection_id text NOT NULL REFERENCES connections(id),
+    external_id text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(proxy_id,connection_id),UNIQUE(connection_id,external_id))`);
+  await tx.query(`CREATE FUNCTION ccmax_guard_proxy() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_TABLE_NAME='accounts' THEN
+        IF OLD.proxy_id IS NOT NULL AND NEW.proxy_id IS DISTINCT FROM OLD.proxy_id THEN
+          RAISE EXCEPTION 'CCMAX: account proxy is immutable' USING ERRCODE='23514';
+        END IF;
+      ELSIF (NEW.id,NEW.owner_id,NEW.secret,NEW.fingerprint,NEW.endpoint) IS DISTINCT FROM (OLD.id,OLD.owner_id,OLD.secret,OLD.fingerprint,OLD.endpoint) THEN
+        RAISE EXCEPTION 'CCMAX: proxy identity is immutable' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query('CREATE TRIGGER account_proxy BEFORE UPDATE ON accounts FOR EACH ROW EXECUTE FUNCTION ccmax_guard_proxy()');
+  await tx.query('CREATE TRIGGER proxy_identity BEFORE UPDATE ON proxies FOR EACH ROW EXECUTE FUNCTION ccmax_guard_proxy()');
+  await tx.query(`CREATE FUNCTION ccmax_guard_binding_proxy() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.proxy_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM accounts WHERE id=NEW.account_id AND proxy_id=NEW.proxy_id) THEN
+        RAISE EXCEPTION 'CCMAX: binding proxy differs from account proxy' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query('CREATE TRIGGER binding_proxy BEFORE INSERT OR UPDATE ON bindings FOR EACH ROW EXECUTE FUNCTION ccmax_guard_binding_proxy()');
+  await tx.query('CREATE INDEX proxies_owner ON proxies(owner_id)');
+}
+
 export async function extendProviders(tx: DB) {
   // Existing deployments retain their connections, rates and financial history.
   // New platform prices require an explicit contract; never copy another rate.

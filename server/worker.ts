@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
 import { ProviderClient, type ProviderKey, type UpstreamAccount } from './providers.js';
+import { accountProxy, requireConsistentBindings } from './proxies.js';
 
 export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:string,kind:string,payload:object,key:string) {
   const subject=(payload as any).accountId??(payload as any).bindingId??(payload as any).day??null;
@@ -23,7 +24,7 @@ export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:stri
   const retry=await duplicate();assert(retry,'此账号已有正在执行的上号任务，请等待完成',409);return retry;
 }
 
-export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,expectedAccount?:Row) {
+export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,expectedAccount?:Row,proxyId?:string) {
   let account=expectedAccount;
   if(account) {
     [account]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[account.id]);
@@ -33,12 +34,17 @@ export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,ex
   else {
     [account]=await tx.query(`INSERT INTO accounts(id,email,label) VALUES($1,$2,$3) ON CONFLICT(email) DO UPDATE SET email=EXCLUDED.email RETURNING *`,[id(),remote.email,remote.name]);
   }
-  const [bound]=await tx.query(`INSERT INTO bindings(id,account_id,connection_id,external_id,status,daily_usd,cost_7d,cost_30d,utilization)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(connection_id,external_id) DO UPDATE SET
+  let [bound]=await tx.query(`INSERT INTO bindings(id,account_id,connection_id,external_id,status,daily_usd,cost_7d,cost_30d,utilization,proxy_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(connection_id,external_id) DO UPDATE SET
     status=EXCLUDED.status,daily_usd=EXCLUDED.daily_usd,cost_7d=EXCLUDED.cost_7d,cost_30d=EXCLUDED.cost_30d,
-    utilization=EXCLUDED.utilization,last_seen_at=now() RETURNING *`,
-    [id(),account!.id,connection.id,remote.id,remote.status,remote.dailyUsd,remote.cost7d,remote.cost30d,remote.utilization]);
+    utilization=EXCLUDED.utilization,proxy_id=COALESCE(EXCLUDED.proxy_id,bindings.proxy_id),last_seen_at=now() RETURNING *`,
+    [id(),account!.id,connection.id,remote.id,remote.status,remote.dailyUsd,remote.cost7d,remote.cost30d,remote.utilization,proxyId??null]);
   assert(bound.account_id===account!.id,'上游账号归属冲突',409);
+  if(connection.provider!=='gatelink' && account!.proxy_id && remote.proxyExternalId!==undefined) {
+    const [mapping]=await tx.query('SELECT external_id FROM proxy_bindings WHERE proxy_id=$1 AND connection_id=$2',[account!.proxy_id,connection.id]);
+    const verified=mapping && mapping.external_id===remote.proxyExternalId?account!.proxy_id:null;
+    [bound]=await tx.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1 RETURNING *',[bound.id,verified]);
+  }
   return bound;
 }
 
@@ -62,10 +68,19 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       const payload=box.decrypt(job.payload),client=clientFactory(connection.provider,box.decrypt(connection.credentials));
       let result:Record<string,any>={};
       let attempt:Row|undefined;
+      let proxy:any;
+      if(['oauth_start','oauth_exchange','import_rt','set_proxy'].includes(job.kind)) {
+        assert(payload.proxyId,'旧上号任务缺少账号代理快照，请重新发起上号');
+        proxy=await accountProxy(db,box,payload.accountId,payload.proxyId);
+        if(job.kind!=='set_proxy')await requireConsistentBindings(db,payload.accountId,proxy.id);
+      }
       if(job.kind==='oauth_exchange') {
         [attempt]=await db.query(`SELECT * FROM oauth_attempts WHERE id=$1 AND user_id=$2 AND connection_id=$3`,[payload.attemptId,actor.id,connection.id]);
         assert(attempt && attempt.state==='exchanging' && new Date(attempt.expires_at)>new Date(),'授权已过期或状态不允许交换');
-        const secret=box.decrypt(attempt.secret);client.restoreSession(secret.session);
+        const secret=box.decrypt(attempt.secret);
+        assert(secret.proxyId===proxy.id && secret.options?.proxy===proxy.url,'OAuth 代理快照不一致，请重新授权');
+        client.restoreSession(secret.session);
+        if(connection.provider!=='gatelink')await client.verifyProxyMapping(proxy.url,secret.options.proxyExternalId);
       } else await client.login();
       if(job.kind==='sync') {
         assert(actor.role==='owner','仅管理员可以同步共享主账号');
@@ -85,27 +100,43 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         assert(account,'账号归属不匹配');
         const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
         assert(!bound,'平台已存在该账号，请由管理员核对归属后使用');
-        const oauth=await client.startOAuth({...payload.options,email:account.email});
+        const options=await submissionOptions(client,connection,proxy,{...payload.options,email:account.email});
+        const oauth=await client.startOAuth(options);
         const oauthId=id();
         await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
           VALUES($1,$2,$3,$4,$5,$6,$7)`,[oauthId,actor.id,connection.id,account.id,
-          box.encrypt({...oauth.secret,session:client.exportSession()}),oauth.url,new Date(Date.now()+oauth.expiresIn*1000)]);
+          box.encrypt({...oauth.secret,proxyId:proxy.id,session:client.exportSession()}),oauth.url,new Date(Date.now()+oauth.expiresIn*1000)]);
         result={accountId:account.id,attemptId:oauthId,authorizationUrl:oauth.url,expiresIn:oauth.expiresIn};
       } else if(job.kind==='oauth_exchange'||job.kind==='import_rt') {
         const accountId=attempt?.account_id??payload.accountId;
         const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,actor.id]);assert(account,'账号归属不匹配');
         const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
         assert(!bound,'平台已存在该账号，未重复写入，请由管理员核对归属');
-        const remote=job.kind==='oauth_exchange'?await client.exchangeOAuth(box.decrypt(attempt!.secret),payload.callback):await client.importRefreshToken({...payload.options,email:account.email},payload.refreshToken);
+        const remote=job.kind==='oauth_exchange'?await client.exchangeOAuth(box.decrypt(attempt!.secret),payload.callback):await client.importRefreshToken(await submissionOptions(client,connection,proxy,{...payload.options,email:account.email}),payload.refreshToken);
         await db.transaction(async tx=>{
-          await saveBinding(tx,connection,remote,account);
+          await accountProxy(tx,box,account.id,proxy.id);
+          await saveBinding(tx,connection,remote,account,proxy.id);
           if(attempt) await tx.query(`UPDATE oauth_attempts SET state='done',secret=$2,authorization_url='' WHERE id=$1`,[attempt.id,box.encrypt({})]);
           await audit(tx,actor.id,'account.submitted',account.id,{connectionId:connection.id,externalId:remote.id});
         });
         result={accountId:account.id,externalId:remote.id};
+      } else if(job.kind==='set_proxy') {
+        const [binding]=await db.query(`SELECT b.*,a.owner_id,a.ownership_verified FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1 AND b.account_id=$2 AND b.connection_id=$3`,[payload.bindingId,payload.accountId,connection.id]);
+        assert(binding && ((binding.ownership_verified&&binding.owner_id===actor.id)||actor.role==='owner'),'不能修改该账号的代理');
+        const options=await submissionOptions(client,connection,proxy,{email:''});
+        await client.setAccountProxy(binding.external_id,options);
+        await db.transaction(async tx=>{
+          await accountProxy(tx,box,binding.account_id,proxy.id);
+          await tx.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1',[binding.id,proxy.id]);
+          await audit(tx,actor.id,'binding.proxy.sync',binding.id,{proxyId:proxy.id});
+        });result={bindingId:binding.id,proxyId:proxy.id};
       } else if(job.kind==='set_enabled') {
         const [binding]=await db.query(`SELECT b.*,a.owner_id,a.ownership_verified FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1 AND b.connection_id=$2`,[payload.bindingId,connection.id]);
         assert(binding && ((binding.ownership_verified&&binding.owner_id===actor.id)||actor.role==='owner'),'不能操作该账号');
+        if(payload.enabled) {
+          const proxy=await accountProxy(db,box,binding.account_id);
+          await requireConsistentBindings(db,binding.account_id,proxy.id);
+        }
         await client.setEnabled(binding.external_id,payload.enabled);
         await db.query('UPDATE bindings SET status=$2 WHERE id=$1',[binding.id,payload.enabled?'active':'disabled']);
         result={enabled:payload.enabled};
@@ -121,7 +152,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       const message=error instanceof Error?error.message:'任务执行失败';
       // OAuth codes and credential imports are one-use. Never blindly retry an
       // external mutation after a timeout or crash; reconcile the inventory first.
-      const uncertain=['oauth_exchange','import_rt','set_enabled'].includes(job.kind);
+      const uncertain=['oauth_exchange','import_rt','set_enabled','set_proxy'].includes(job.kind);
       await db.query(`UPDATE jobs SET state=$2,error=$3,payload=$4,completed_at=now() WHERE id=$1`,[job.id,uncertain?'needs_attention':'failed',message,box.encrypt({})]);
       if(job.kind==='oauth_exchange') {
         try {
@@ -132,6 +163,21 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       if(job.kind==='sync') await db.query(`UPDATE connections SET status='error',last_error=$2 WHERE id=$1`,[job.connection_id,message]);
     }
     return true;
+  }
+  async function submissionOptions(client:ProviderClient,connection:Row,proxy:any,options:any) {
+    let externalId:string|undefined;
+    if(connection.provider!=='gatelink') {
+      let [mapping]=await db.query('SELECT * FROM proxy_bindings WHERE proxy_id=$1 AND connection_id=$2',[proxy.id,connection.id]);
+      if(mapping)await client.verifyProxyMapping(proxy.url,mapping.external_id);
+      else {
+        const remote=await client.provisionProxy(proxy.url);assert(remote,'上游代理映射未确认');
+        await db.query('INSERT INTO proxy_bindings(id,proxy_id,connection_id,external_id) VALUES($1,$2,$3,$4) ON CONFLICT(proxy_id,connection_id) DO NOTHING',[id(),proxy.id,connection.id,remote]);
+        [mapping]=await db.query('SELECT * FROM proxy_bindings WHERE proxy_id=$1 AND connection_id=$2',[proxy.id,connection.id]);
+        assert(mapping?.external_id===remote,'平台代理映射发生冲突',409);
+      }
+      externalId=mapping.external_id;
+    }
+    return {...options,proxy:proxy.url,proxyExternalId:externalId};
   }
   return {
     runOne,

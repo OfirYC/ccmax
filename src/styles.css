@@ -11,3 +11,5 @@
 .icon-button.mobile-menu{display:none}@media(max-width:880px){.icon-button.mobile-menu{display:grid}}
 
 .platform-mark.minicc{color:#4d6f9a;background:#e9f0f9}
+
+.proxy-setup{padding:16px;background:#f6faf8;border:1px solid var(--line);border-radius:8px;margin:16px 0}.proxy-setup h3{margin:0 0 8px;font-size:14px}
