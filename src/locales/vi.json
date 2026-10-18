@@ -1018,5 +1018,8 @@
   "OAuth state 不匹配：请使用此平台当前授权链接生成的回调，不能跨平台复用": "OAuth state không khớp: dùng callback từ liên kết ủy quyền hiện tại của nền tảng này. Không dùng lại giữa các nền tảng.",
   "此授权缺少可核验的 state，请重新生成授权链接": "Ủy quyền này thiếu state có thể xác minh. Hãy tạo liên kết ủy quyền mới.",
   "平台授权地址缺少可核验的 state": "Liên kết ủy quyền của nền tảng thiếu state có thể xác minh",
-  "此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权": "Mã này đã được gửi và không thể dùng lại giữa các nền tảng. Hãy mở liên kết riêng của nền tảng đích để ủy quyền lại."
+  "此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权": "Mã này đã được gửi và không thể dùng lại giữa các nền tảng. Hãy mở liên kết riêng của nền tảng đích để ủy quyền lại.",
+  "待核实归属": "Chờ xác minh chủ sở hữu",
+  "核实归属": "Xác minh chủ sở hữu",
+  "通过 CCMAX 完成授权并核对真实邮箱后，账号自动归属提交成员。待授权账号保留成员记录；来源不明的同步账号需管理员核实分配。": "Tài khoản tự động thuộc về thành viên đã gửi sau khi cấp quyền và xác minh email thực trong CCMAX. Tài khoản chờ cấp quyền vẫn lưu thành viên; tài khoản đồng bộ chưa rõ chủ sở hữu cần quản trị viên xác minh và phân bổ."
 }

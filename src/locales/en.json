@@ -1018,5 +1018,8 @@
   "OAuth state 不匹配：请使用此平台当前授权链接生成的回调，不能跨平台复用": "OAuth state mismatch: use the callback from this platform’s current authorization link. Callbacks cannot be reused across platforms.",
   "此授权缺少可核验的 state，请重新生成授权链接": "This authorization has no verifiable state. Generate a new authorization link.",
   "平台授权地址缺少可核验的 state": "The platform authorization link has no verifiable state",
-  "此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权": "This code was already submitted and cannot be reused across platforms. Open the target platform’s own link to authorize again."
+  "此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权": "This code was already submitted and cannot be reused across platforms. Open the target platform’s own link to authorize again.",
+  "待核实归属": "Ownership pending verification",
+  "核实归属": "Verify ownership",
+  "通过 CCMAX 完成授权并核对真实邮箱后，账号自动归属提交成员。待授权账号保留成员记录；来源不明的同步账号需管理员核实分配。": "Accounts are automatically assigned to the submitting member after authorization and email verification in CCMAX. Pending accounts retain their member record; synced accounts with unknown ownership need administrator review and assignment."
 }

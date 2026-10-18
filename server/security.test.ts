@@ -484,8 +484,13 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect(await db.query('SELECT * FROM jobs')).toHaveLength(1);
   });
 
-  it('uses the same encrypted account proxy through all three OAuth flows and verifies final bindings',async()=>{
-    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'all-platforms@example.com',false),proxyId=await bindProxy(cookie,acct),box=secretBox(key);
+  it('automatically verifies the submitting agent through all three OAuth flows without manual assignment',async()=>{
+    const ownerCookie=await login('owner@example.com','correct horse battery staple');
+    const created=await api(ownerCookie,'POST','/api/team',{name:'Onboarding agent',email:'onboarding-agent@example.com',password:'onboarding-agent-password',rates:{gatelink:0.2,ai008:0.2,minicc:0.2}});
+    expect(created.statusCode).toBe(200);const member=created.json().user,cookie=await login(member.email,'onboarding-agent-password');
+    const submitted=await api(cookie,'POST','/api/accounts',{email:'all-platforms@example.com'});expect(submitted.statusCode).toBe(200);
+    const acct=submitted.json().account,proxyId=await bindProxy(cookie,acct),box=secretBox(key);
+    expect(acct).toMatchObject({owner_id:member.id,submitted_by:member.id,ownership_verified:false});
     const conns=await Promise.all(['gatelink','ai008','minicc'].map(p=>connection(p)));
     const {ProviderClient}=await import('./providers.js');
     const imported=new Set<string>(),actualProxyUrls:string[]=[];
@@ -527,6 +532,9 @@ describe('CCMAX authorization and ledger safeguards', () => {
     for(let i=0;i<3;i++)await worker.runOne();
     const jobs=await db.query('SELECT kind,state,error FROM jobs');expect(jobs.every(j=>j.state==='succeeded')).toBe(true);
     expect(await db.query('SELECT * FROM bindings WHERE proxy_id=$1',[proxyId])).toHaveLength(3);
+    const visible=(await api(cookie,'GET','/api/accounts')).json().accounts.find((a:any)=>a.id===acct.id);
+    expect(visible).toMatchObject({owner_id:member.id,submitted_by:member.id,ownership_verified:true});expect(visible.bindings).toHaveLength(3);
+    expect(await db.query("SELECT id FROM audits WHERE action='account.assign'")).toHaveLength(0);
     expect((await db.query("SELECT daily_usd FROM bindings WHERE external_id='acct-gate'"))[0].daily_usd).toBeNull();
     expect(await db.query('SELECT * FROM usage_days')).toHaveLength(0);
     expect(await db.query('SELECT * FROM earnings')).toHaveLength(0);
