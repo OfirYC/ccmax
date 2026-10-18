@@ -2,9 +2,10 @@ import { AppError, assert,MAX_USD } from './core.js';
 import Decimal from 'decimal.js';
 import { parseProxy } from './proxies.js';
 import { gatelinkFailure } from './gatelink-errors.js';
-import { statefulOAuthCallback } from './oauth-callback.js';
 import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
 import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
+import { authorizationState } from '../shared/oauth.js';
+import { statefulOAuthCallback } from './oauth-callback.js';
 
 export const PROVIDERS = {
   gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false,statusRequiresAdmin:true },
@@ -317,7 +318,9 @@ export class ProviderClient {
     if(this.provider==='gatelink') {
       const data=await this.call('/api/oauth-submissions/authorize','POST',{...this.gatelinkConfig(options),overwriteExisting:false});
       assert(data.authorizationUrl,'平台未返回授权地址',502);
-      return {url:data.authorizationUrl,secret:{options},expiresIn:Math.min(data.expiresInSeconds||600,1800)};
+      const pendingState=authorizationState(data.authorizationUrl);
+      assert(pendingState,'平台授权地址缺少可核验的 state',502);
+      return {url:data.authorizationUrl,secret:{options,pendingState},expiresIn:Math.min(data.expiresInSeconds||600,1800)};
     }
     if(this.provider==='minicc') {
       await this.miniDefaults();
@@ -331,13 +334,13 @@ export class ProviderClient {
   }
   async exchangeOAuth(secret:any,callback:string) {
     this.requireProxy(secret.options);
+    const code=statefulOAuthCallback(callback,secret.pendingState);
     if(this.provider==='gatelink') {
       const data=await this.call('/api/oauth-submissions/exchange','POST',{...this.gatelinkConfig(secret.options),callback:callback.trim()});
       assert(data.item,'平台未返回已提交账号',502);
       assert(data.item.upstreamEmail,'平台未返回可核实的真实邮箱，请由管理员同步核对归属',502);
       return this.normalize(data.item);
     }
-    const code=statefulOAuthCallback(callback,secret.pendingState);
     if(this.provider==='minicc') {
       const data=await this.call('/api/accounts/exchange','POST',{...await this.miniConfig(secret.options),code,pending_state:secret.pendingState});
       assert(data.id,'平台未返回账号 ID',502);

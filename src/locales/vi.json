@@ -1001,5 +1001,22 @@
   "授权时请确认 Claude 登录邮箱与上方账号一致；不一致时请切换账号后重新授权。": "Kiểm tra email đang đăng nhập Claude trùng với tài khoản ở trên. Nếu khác, hãy đổi tài khoản rồi cấp quyền lại.",
   "此平台需要完整回调地址或 code#state，OAuth state 必须匹配": "Nền tảng này yêu cầu URL callback đầy đủ hoặc code#state với OAuth state khớp",
   "OAuth state 不匹配": "OAuth state không khớp với lần cấp quyền này",
-  "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "Email hoặc chủ sở hữu tài khoản từ nền tảng khác với tài khoản đã gửi; cần quản trị viên kiểm tra"
+  "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "Email hoặc chủ sở hữu tài khoản từ nền tảng khác với tài khoản đã gửi; cần quản trị viên kiểm tra",
+  "多平台分别授权": "Ủy quyền riêng từng nền tảng",
+  "选择 3 个平台就需要分别完成 3 次授权。每个平台的链接、回调和授权码独立，不能共用。": "Chọn 3 nền tảng cần 3 lần ủy quyền riêng. Mỗi nền tảng có liên kết, callback và mã dùng một lần riêng.",
+  "批量生成独立授权链接": "Tạo các liên kết ủy quyền riêng",
+  "粘贴 {0} 的完整回调或 code#state": "Dán callback đầy đủ hoặc code#state cho {0}",
+  "只接受此平台当前链接生成的完整回调或 code#state，单独的 code 无法核对平台。": "Dùng callback đầy đủ hoặc code#state từ liên kết hiện tại của nền tảng này. Chỉ mã code không thể xác định phiên ủy quyền.",
+  "完整回调 URL 或 code#state": "URL callback đầy đủ hoặc code#state",
+  "提交 {0} 的授权": "Gửi ủy quyền cho {0}",
+  "批量提交各平台独立授权": "Gửi các ủy quyền riêng theo nền tảng",
+  "请至少填写一个平台的完整授权回调": "Nhập callback ủy quyền đầy đủ cho ít nhất một nền tảng",
+  "同一个授权码不能用于多个平台，请分别打开各平台链接授权": "Một mã không thể dùng cho nhiều nền tảng. Hãy mở liên kết riêng của từng nền tảng để ủy quyền.",
+  "请输入有效的完整回调地址或 code#state": "Nhập URL callback đầy đủ hợp lệ hoặc code#state",
+  "授权未完成，请重新打开此平台的授权链接": "Chưa hoàn tất ủy quyền. Hãy mở lại liên kết ủy quyền của nền tảng này.",
+  "请粘贴完整回调地址或 code#state，必须保留 state": "Dán URL callback đầy đủ hoặc code#state, giữ nguyên giá trị state",
+  "OAuth state 不匹配：请使用此平台当前授权链接生成的回调，不能跨平台复用": "OAuth state không khớp: dùng callback từ liên kết ủy quyền hiện tại của nền tảng này. Không dùng lại giữa các nền tảng.",
+  "此授权缺少可核验的 state，请重新生成授权链接": "Ủy quyền này thiếu state có thể xác minh. Hãy tạo liên kết ủy quyền mới.",
+  "平台授权地址缺少可核验的 state": "Liên kết ủy quyền của nền tảng thiếu state có thể xác minh",
+  "此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权": "Mã này đã được gửi và không thể dùng lại giữa các nền tảng. Hãy mở liên kết riêng của nền tảng đích để ủy quyền lại."
 }

@@ -81,12 +81,12 @@ test('Mini CC is selectable for onboarding, token import and historical reconcil
  const dialog=page.getByRole('dialog');
  await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');await expect(dialog.getByLabel('账号策略')).toBeDisabled();
  await expect(dialog.getByLabel('分组',{exact:true})).toBeDisabled();await expect(dialog.getByLabel('CC 模板',{exact:true})).toHaveValue('default-cc');
- await expect(dialog.getByRole('button',{name:'一键生成所选平台授权链接'})).toBeDisabled();
+ await expect(dialog.getByRole('button',{name:'批量生成独立授权链接'})).toBeDisabled();
  await dialog.getByRole('button',{name:'添加新代理',exact:true}).click();
  await dialog.getByLabel('代理名称',{exact:true}).fill('Mini account fixed proxy');await dialog.getByLabel('代理地址',{exact:true}).fill('http://ui-user:ui-private-password@proxy.example.com:8080');
  await dialog.getByRole('button',{name:'添加并绑定代理',exact:true}).click();
  await expect(dialog.getByText('固定出口代理：Mini account fixed proxy',{exact:true})).toBeVisible();
- await expect(dialog.getByRole('button',{name:'一键生成所选平台授权链接'})).toBeEnabled();
+ await expect(dialog.getByRole('button',{name:'批量生成独立授权链接'})).toBeEnabled();
  await dialog.getByRole('button',{name:'Refresh token 导入',exact:true}).click();
  await dialog.getByLabel('目标平台',{exact:true}).selectOption({label:'Mini CC Gateway · 我的结算折扣 × 0.7000'});await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');
  await dialog.getByRole('button',{name:'关闭弹窗'}).click();

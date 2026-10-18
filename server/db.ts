@@ -112,5 +112,17 @@ export async function migrate(db: DB) {
       await tx.query('ALTER TABLE bindings ALTER COLUMN daily_usd DROP NOT NULL');
       await tx.query('INSERT INTO migrations(version) VALUES (10)');
     }
+    if (!done.some(row=>Number(row.version)===11)) {
+      // A code is single-use across every platform for its submitting user.
+      // Retain only its hash after jobs erase the sensitive callback payload.
+      await tx.query(`CREATE TABLE oauth_code_claims (
+        user_id text NOT NULL REFERENCES users(id),
+        code_hash text NOT NULL,
+        attempt_id text NOT NULL UNIQUE REFERENCES oauth_attempts(id),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY(user_id,code_hash)
+      )`);
+      await tx.query('INSERT INTO migrations(version) VALUES (11)');
+    }
   });
 }

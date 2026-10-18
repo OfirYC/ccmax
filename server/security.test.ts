@@ -442,6 +442,48 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect((await api(childCookie,'POST',`/api/bindings/${bindings[0].id}/proxy/sync`,{key:id()})).statusCode).toBe(403);
   });
 
+  it('keeps each platform attempt usable after a callback for another platform or an incomplete code',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'callback-check@example.com',false),proxyId=await bindProxy(cookie,acct),box=secretBox(key);
+    for(const provider of ['gatelink','ai008','minicc']){
+      const conn=await connection(provider),attemptId=id(),pendingState=`state-${provider}`;
+      // Exercise pre-fix Gatelink attempts whose state was only in the URL.
+      const secret={options:{email:acct.email,proxy:'http://test-user:test-secret@proxy.example.com:8080'},proxyId,...(provider==='gatelink'?{}:{pendingState})};
+      await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7)`,[attemptId,owner.id,conn.id,acct.id,box.encrypt(secret),`https://auth.example.com/?state=${pendingState}`,new Date(Date.now()+600000)]);
+      for(const callback of ['wrong-code#other-platform','incomplete-code','https://callback.example/?code=ambiguous&state='+pendingState+'&state=other']){
+        const response=await api(cookie,'POST',`/api/oauth/${attemptId}/exchange`,{callback,key:id()});
+        expect(response.statusCode).toBe(400);
+        expect(response.body).not.toContain('wrong-code');
+        expect((await db.query('SELECT state FROM oauth_attempts WHERE id=$1',[attemptId]))[0].state).toBe('pending');
+      }
+      expect((await api(cookie,'POST',`/api/oauth/${attemptId}/exchange`,{callback:`unique-${provider}#${pendingState}`,key:id()})).statusCode).toBe(200);
+      expect(box.decrypt((await db.query('SELECT secret FROM oauth_attempts WHERE id=$1',[attemptId]))[0].secret).pendingState).toBe(pendingState);
+    }
+    expect(await db.query('SELECT * FROM jobs')).toHaveLength(3);
+    expect(await db.query('SELECT * FROM oauth_code_claims')).toHaveLength(3);
+    expect(await db.query('SELECT * FROM bindings')).toHaveLength(0);
+  });
+
+  it('claims a code once across concurrent platform requests while preserving safe idempotent retries',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'one-code@example.com',false),proxyId=await bindProxy(cookie,acct),box=secretBox(key);
+    const attempts:{attemptId:string;requestKey:string;callback:string}[]=[];
+    for(const provider of ['ai008','minicc']){
+      const conn=await connection(provider),attemptId=id(),pendingState=`state-${provider}`,requestKey=id();
+      await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7)`,[attemptId,owner.id,conn.id,acct.id,box.encrypt({options:{email:acct.email},proxyId,pendingState}),`https://auth.example.com/?state=${pendingState}`,new Date(Date.now()+600000)]);
+      attempts.push({attemptId,requestKey,callback:`private-same-code#${pendingState}`});
+    }
+    const send=(attempt:typeof attempts[number])=>api(cookie,'POST',`/api/oauth/${attempt.attemptId}/exchange`,{callback:attempt.callback,key:attempt.requestKey});
+    const results=await Promise.all(attempts.map(send));
+    expect(results.map(r=>r.statusCode).sort()).toEqual([200,409]);
+    const accepted=results.findIndex(r=>r.statusCode===200),rejected=1-accepted;
+    expect((await send(attempts[accepted])).json().id).toBe(results[accepted].json().id);
+    expect((await db.query('SELECT state FROM oauth_attempts WHERE id=$1',[attempts[rejected].attemptId]))[0].state).toBe('pending');
+    const claims=await db.query('SELECT * FROM oauth_code_claims');
+    expect(claims).toHaveLength(1);expect(JSON.stringify(claims)).not.toContain('private-same-code');
+    expect(await db.query('SELECT * FROM jobs')).toHaveLength(1);
+  });
+
   it('uses the same encrypted account proxy through all three OAuth flows and verifies final bindings',async()=>{
     const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'all-platforms@example.com',false),proxyId=await bindProxy(cookie,acct),box=secretBox(key);
     const conns=await Promise.all(['gatelink','ai008','minicc'].map(p=>connection(p)));
@@ -458,7 +500,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
       if(path.endsWith('/proxies/import')||path.endsWith('/outbound-proxies/import')) {
         actualProxyUrls.push(body.text);imported.add(provider);return Response.json({imported:1,failed:0});
       }
-      if(path.endsWith('/authorize')) {actualProxyUrls.push(body.proxy);return Response.json({authorizationUrl:'https://auth.example.com/gate'});}
+      if(path.endsWith('/authorize')) {actualProxyUrls.push(body.proxy);return Response.json({authorizationUrl:'https://auth.example.com/gate?state=state-gatelink'});}
       if(path.endsWith('/auth-url')) {
         expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
         return Response.json({url:`https://auth.example.com/${provider}`,state:`state-${provider}`});
@@ -466,7 +508,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
       if(path.endsWith('/exchange')) {
         if(provider==='gatelink') {actualProxyUrls.push(body.proxy);return Response.json({item:{id:'acct-gate',upstreamEmail:acct.email}});}
         expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
-        expect(body.code).toBe(`one-use#state-${provider}`);expect(body.pending_state).toBe(`state-${provider}`);
+        expect(body.code).toBe(`one-use-${conns.find(c=>c.provider===provider)!.id}#state-${provider}`);expect(body.pending_state).toBe(`state-${provider}`);
         return Response.json({id:`acct-${provider}`});
       }
       if(path.endsWith('/detail')||path.endsWith('/acct-ai008'))return Response.json({account:{email:acct.email,outbound_proxy_id:`remote-${provider}`}});
@@ -478,15 +520,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const exchanges:{attemptId:string;callback:string;key:string}[]=[];
     for(const attempt of attempts) {
       const secret=box.decrypt(attempt.secret);expect(secret.proxyId).toBe(proxyId);expect(secret.options.proxy).toBe('http://test-user:test-secret@proxy.example.com:8080');
-      if(secret.pendingState) {
-        for(const callback of ['one-use',`one-use#state-other-platform`]) {
-          const invalid=await api(cookie,'POST',`/api/oauth/${attempt.id}/exchange`,{callback,key:id()});
-          expect(invalid.statusCode).toBe(400);
-          expect((await db.query('SELECT state FROM oauth_attempts WHERE id=$1',[attempt.id]))[0].state).toBe('pending');
-          expect(await db.query("SELECT id FROM jobs WHERE kind='oauth_exchange' AND connection_id=$1",[attempt.connection_id])).toHaveLength(0);
-        }
-      }
-      const callback=secret.pendingState?`one-use#${secret.pendingState}`:'gate-callback';
+      const callback=`one-use-${attempt.connection_id}#${secret.pendingState}`;
       const request={attemptId:attempt.id,callback,key:id()};exchanges.push(request);
       expect((await api(cookie,'POST',`/api/oauth/${attempt.id}/exchange`,{callback,key:request.key})).statusCode).toBe(200);
     }

@@ -41,7 +41,7 @@ describe('Gatelink OAuth request contract',()=>{
       exchanges++;
       return Response.json({item:{id:'new-submission',upstreamEmail:'real@example.com',upstreamDailyCost:daily,status:'active'}});
     });
-    const remote=await c.exchangeOAuth({options:{email:'real@example.com',proxy:'http://proxy.example.com:8080'}},'once#state');
+    const remote=await c.exchangeOAuth({options:{email:'real@example.com',proxy:'http://proxy.example.com:8080'},pendingState:'state'},'once#state');
     expect(remote).toMatchObject({id:'new-submission',email:'real@example.com',dailyUsd:null});
     expect(remote.telemetry?.periods.today.billedUsd).toBeNull();
     expect(exchanges).toBe(1);

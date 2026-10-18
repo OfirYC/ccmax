@@ -8,7 +8,6 @@ import { AppError, assert, audit, dayString, hashPassword, id, nextDay, requireD
 import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, withdrawalDestination } from './billing.js';
 import { enqueue } from './worker.js';
 import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './providers.js';
-import { statefulOAuthCallback } from './oauth-callback.js';
 import { accountProxy, parseProxy, proxyFingerprint, requireConsistentBindings } from './proxies.js';
 import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 import { apiKeyService } from './api-keys.js';
@@ -18,6 +17,8 @@ import { previewInvoice } from './invoice-preview.js';
 import { registerTelemetry } from './telemetry-routes.js';
 import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
+import { authorizationState } from '../shared/oauth.js';
+import { validateOAuthCallback } from './oauth-callback.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -396,8 +397,14 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       const secret=box.decrypt(a.secret);assert(secret.proxyId,'旧授权流程没有固定代理，请重新授权');
       const proxy=await accountProxy(tx,box,a.account_id,secret.proxyId);await requireConsistentBindings(tx,a.account_id,proxy.id);
       assert(a.state==='pending' && new Date(a.expires_at)>new Date(),'授权已过期或已经提交，请核对任务状态',409);
-      const [connection]=await tx.query('SELECT provider FROM connections WHERE id=$1',[a.connection_id]);
-      if(connection.provider!=='gatelink')statefulOAuthCallback(d.callback,secret.pendingState);
+      // Reject a wrong-platform callback before consuming the attempt or code.
+      // Old Gatelink attempts stored the state only inside their authorization URL.
+      const pendingState=secret.pendingState||authorizationState(a.authorization_url);
+      const {code}=validateOAuthCallback(d.callback,pendingState);
+      const [claim]=await tx.query(`INSERT INTO oauth_code_claims(user_id,code_hash,attempt_id) VALUES($1,$2,$3)
+        ON CONFLICT DO NOTHING RETURNING attempt_id`,[req.user.id,digest(req.user.id+':'+code),a.id]);
+      assert(claim,'此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权',409);
+      if(!secret.pendingState)await tx.query('UPDATE oauth_attempts SET secret=$2 WHERE id=$1',[a.id,box.encrypt({...secret,pendingState})]);
       await tx.query(`UPDATE oauth_attempts SET state='exchanging' WHERE id=$1`,[a.id]);
       return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:proxy.id,attemptId,callback:d.callback},d.key);
     });

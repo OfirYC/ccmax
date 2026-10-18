@@ -1001,5 +1001,22 @@
   "授权时请确认 Claude 登录邮箱与上方账号一致；不一致时请切换账号后重新授权。": "Check that the email signed in to Claude matches the account above. If it differs, switch accounts and authorize again.",
   "此平台需要完整回调地址或 code#state，OAuth state 必须匹配": "This platform requires the full callback URL or code#state with a matching OAuth state",
   "OAuth state 不匹配": "OAuth state does not match this authorization",
-  "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "The upstream email or account owner differs from the submitted account; administrator review is required"
+  "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "The upstream email or account owner differs from the submitted account; administrator review is required",
+  "多平台分别授权": "Authorize each platform",
+  "选择 3 个平台就需要分别完成 3 次授权。每个平台的链接、回调和授权码独立，不能共用。": "Selecting 3 platforms requires 3 separate authorizations. Each platform has its own link, callback and single-use code.",
+  "批量生成独立授权链接": "Generate separate authorization links",
+  "粘贴 {0} 的完整回调或 code#state": "Paste the full callback or code#state for {0}",
+  "只接受此平台当前链接生成的完整回调或 code#state，单独的 code 无法核对平台。": "Use the full callback or code#state from this platform’s current link. A code alone cannot identify its authorization flow.",
+  "完整回调 URL 或 code#state": "Full callback URL or code#state",
+  "提交 {0} 的授权": "Submit authorization for {0}",
+  "批量提交各平台独立授权": "Submit separate platform authorizations",
+  "请至少填写一个平台的完整授权回调": "Enter a full authorization callback for at least one platform",
+  "同一个授权码不能用于多个平台，请分别打开各平台链接授权": "A code cannot be used for multiple platforms. Open each platform’s own link to authorize it.",
+  "请输入有效的完整回调地址或 code#state": "Enter a valid full callback URL or code#state",
+  "授权未完成，请重新打开此平台的授权链接": "Authorization was not completed. Reopen this platform’s authorization link.",
+  "请粘贴完整回调地址或 code#state，必须保留 state": "Paste the full callback URL or code#state, keeping the state value",
+  "OAuth state 不匹配：请使用此平台当前授权链接生成的回调，不能跨平台复用": "OAuth state mismatch: use the callback from this platform’s current authorization link. Callbacks cannot be reused across platforms.",
+  "此授权缺少可核验的 state，请重新生成授权链接": "This authorization has no verifiable state. Generate a new authorization link.",
+  "平台授权地址缺少可核验的 state": "The platform authorization link has no verifiable state",
+  "此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权": "This code was already submitted and cannot be reused across platforms. Open the target platform’s own link to authorize again."
 }
