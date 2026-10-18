@@ -13,7 +13,7 @@ export const PROVIDERS = {
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
 export type Credentials={username:string;password:string};
-export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
+export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string|null;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
 export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string};
 export class UpstreamError extends AppError {
   constructor(public upstreamStatus:number, message:string) { super(502,message); }
@@ -128,9 +128,12 @@ export class ProviderClient {
     const email=(gate?(a.upstreamEmail||a.submittedEmail||a.email):(a.email||a.canonical_identity?.email))?.toLowerCase();
     assert(a.id && email,'平台未返回账号 ID / 邮箱',502);
     const daily=gate?a.upstreamDailyCost:a.stats?.daily_cost;
-    upstreamAmount(daily,'平台未返回有效的当日用量，保留上次成功数据');
+    // New Gatelink submissions can have an identity before any usage snapshot.
+    // Keep that inventory row, with no dollar value to ingest. Malformed or
+    // negative amounts still fail validation instead of silently disappearing.
+    if(!gate || daily!==null&&daily!==undefined)upstreamAmount(daily,'平台未返回有效的当日用量，保留上次成功数据');
     return {id:String(a.id),email,name:a.name||email,status:gate?(a.upstreamStatus||a.status||'unknown'):(a.status||'unknown'),
-      dailyUsd:String(daily),
+      dailyUsd:daily===null||daily===undefined?null:String(daily),
       cost7d:(gate?a.upstreamCost7d:a.usage_windows?.cost_7d)??snapshot?.usage_windows?.cost_7d??null,
       cost30d:snapshot?.usage_windows?.cost_30d??null,
       utilization:(gate?a.upstreamUtilization5h:a.stats?.claude_utilization?.five_hour?.utilization)??null,

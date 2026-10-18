@@ -2,6 +2,7 @@ import Decimal from 'decimal.js';
 import type { DB, Row } from './db.js';
 import { AppError, ancestry, assert, audit, dayString, id, MAX_USD, sum, today, usd, type SecretBox } from './core.js';
 import { assertFundingAccounting, assertInvoiceAccounting, assertUsageAccounting, assertWalletAccounting } from './financial-integrity.js';
+import { invoiceItems, invoicePreviewToken } from './invoice-preview.js';
 
 export type UsageInput = { bindingId: string; day: string; rawUsd: string; final: boolean; source: string; evidence?: string };
 
@@ -64,13 +65,13 @@ export async function ingestUsage(tx: DB, input: UsageInput) {
   return usageId;
 }
 
-export async function createInvoice(db: DB, actor: Row, userId: string, from: string, to: string) {
+export async function createInvoice(db: DB, actor: Row, userId: string, from: string, to: string, previewToken?: string) {
   assert(from<=to && to<today(),'仅可结算已经结束的北京时间日期');
   return db.transaction(async tx=>{
     const [user]=await tx.query('SELECT * FROM users WHERE id=$1 FOR UPDATE',[userId]);
     assert(user && (user.id===actor.id || user.parent_id===actor.id),'只能为自己或直属下级生成账单',403);
-    const items=await tx.query(`SELECT e.* FROM earnings e JOIN usage_days u ON u.id=e.usage_id
-      LEFT JOIN invoice_items i ON i.earning_id=e.id WHERE e.user_id=$1 AND u.state='final' AND u.day BETWEEN $2 AND $3 AND i.earning_id IS NULL`,[userId,from,to]);
+    const items=await invoiceItems(tx,userId,from,to);
+    assert(!previewToken || previewToken===invoicePreviewToken(userId,from,to,items),'可开票明细已变化，请刷新预览后重新确认',409);
     assert(items.length,'所选期间没有可结算的已核实用量');
     await assertUsageAccounting(tx,items.map(item=>item.usage_id));
     const totals=['gross_usd','downstream_usd','profit_usd'].map(field=>sum(items.map(item=>item[field])));

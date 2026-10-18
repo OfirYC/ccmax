@@ -980,5 +980,21 @@
   "数据归属或收益链异常，请核对原始记录。": "Quyền sở hữu hoặc chuỗi thu nhập không nhất quán; hãy kiểm tra bản ghi gốc.",
   "账号启停": "Bật / tắt tài khoản",
   "需要上游管理员权限": "Cần quyền quản trị viên trên nền tảng nguồn",
-  "Gatelink 启停账号需要上游管理员权限，当前主账号无此权限": "Bật hoặc tắt tài khoản Gatelink cần quyền quản trị viên trên nền tảng nguồn; tài khoản chính hiện tại không có quyền này"
+  "Gatelink 启停账号需要上游管理员权限，当前主账号无此权限": "Bật hoặc tắt tài khoản Gatelink cần quyền quản trị viên trên nền tảng nguồn; tài khoản chính hiện tại không có quyền này",
+  "我的结算进度": "Tiến độ quyết toán của tôi",
+  "截至昨日的全部历史用量 · 北京时间": "Toàn bộ mức dùng đến hôm qua · giờ Bắc Kinh",
+  "已封账待开票应收": "Khoản phải thu đã chốt, chưa lập hóa đơn",
+  "已归属待核实原始用量": "Mức dùng gốc đã xác định chủ, chờ xác minh",
+  "待归属原始用量": "Mức dùng gốc chưa xác định chủ",
+  "待归属和待核实金额均不是应收或利润。已开票记录不重复计入待开票金额。": "Số tiền chưa xác định chủ hoặc chưa xác minh không phải khoản phải thu hay lợi nhuận. Các mục đã lập hóa đơn không được tính lại.",
+  "预览结算账单": "Xem trước hóa đơn quyết toán",
+  "账号归属需人工确认，系统不会自动分配。": "Chủ tài khoản phải được xác nhận thủ công; hệ thống không tự phân bổ.",
+  "先核对分平台明细；仅已归属、已核实且未开票的用量进入本次账单。": "Kiểm tra từng nền tảng trước. Chỉ gồm mức dùng đã xác định chủ, đã xác minh và chưa lập hóa đơn.",
+  "刷新预览": "Làm mới bản xem trước",
+  "本次可开票 {0} 条；待归属 {1} 条、已归属待核实 {2} 条、已开票 {3} 条均不重复计入。": "Có {0} mục có thể lập hóa đơn. Loại trừ: {1} chưa xác định chủ, {2} đã xác định chủ nhưng chưa xác minh, {3} đã lập hóa đơn.",
+  "可开票记录": "Mục có thể lập hóa đơn",
+  "生成账单不会增加钱包余额，真实回款确认后才记入本人利润。": "Lập hóa đơn không tăng số dư ví. Chỉ ghi lợi nhuận sau khi xác nhận thực nhận tiền.",
+  "可开票明细已变化，请刷新预览后重新确认": "Các mục có thể lập hóa đơn đã thay đổi. Hãy làm mới và kiểm tra lại.",
+  "部分用量未采集": "Một phần mức dùng chưa được thu thập",
+  "有 {0} 个账号的今日用量缺失或日期不符，已跳过金额入账；其余账号正常同步。": "Bỏ qua ghi mức dùng hôm nay cho {0} tài khoản thiếu số liệu hoặc khác ngày nguồn. Các tài khoản khác đồng bộ bình thường."
 }

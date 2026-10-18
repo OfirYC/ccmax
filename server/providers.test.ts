@@ -36,6 +36,14 @@ describe('upstream adapter data integrity',()=>{
   it('does not turn an absent upstream usage amount into a zero-dollar snapshot',()=>{
     const c=client(()=>({}));expect(()=>c.normalize({id:'one',email:'one@example.com',stats:{}})).toThrow('有效的当日用量');
   });
+  it('keeps a new Gatelink account with a null counter without blocking valid inventory or inventing usage',async()=>{
+    const rows=[{id:'new',submittedEmail:'new@example.com',upstreamDailyCost:null},{id:'valid',submittedEmail:'valid@example.com',upstreamDailyCost:'1.25'}];
+    const c=new ProviderClient('gatelink',{username:'fixture',password:'fixture'},async()=>Response.json({items:rows,total:2,totalPages:1}));
+    const accounts=await c.listAccounts();expect(accounts).toHaveLength(2);
+    expect(accounts[0].dailyUsd).toBeNull();expect(accounts[0].telemetry?.periods.today.billedUsd).toBeNull();expect(accounts[1].dailyUsd).toBe('1.25');
+    expect(()=>c.normalize({...rows[0],upstreamDailyCost:-1})).toThrow('有效的当日用量');
+    expect(()=>c.normalize({...rows[0],upstreamDailyCost:'private-invalid'})).toThrow('有效的当日用量');
+  });
   it('rejects overlapping, truncated, changing or unidentified pages for both shared master adapters',async()=>{
     for(const provider of ['ai008','gatelink'] as const) {
       const row=(n:string)=>provider==='ai008'?account(n):{id:n,submittedEmail:`${n}@example.com`,upstreamDailyCost:'1.25'};

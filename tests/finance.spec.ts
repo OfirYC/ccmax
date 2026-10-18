@@ -53,3 +53,28 @@ test('an owner reconciles every wallet and platform without changing invoices or
   const after=await(await page.request.get('/api/finance')).json();
   expect({balance:after.balance,invoices:after.invoices,withdrawals:after.withdrawals,ledger:after.ledger}).toEqual({balance:before.balance,invoices:before.invoices,withdrawals:before.withdrawals,ledger:before.ledger});
 });
+
+test('previews frozen platform amounts, changes the settlement member and blocks an empty period without creating invoices',async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
+  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');
+  await page.getByRole('button',{name:'进入工作空间'}).click();await page.getByRole('link',{name:'账单结算',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'我的结算进度',exact:true})).toBeVisible();
+  const before=await(await page.request.get('/api/finance')).json();
+  await page.getByRole('button',{name:'预览结算账单',exact:true}).click();const dialog=page.getByRole('dialog');
+  await expect(dialog.locator('.confirm-total .amount')).toHaveText('$110.00000000');
+  await expect(dialog.getByRole('row').filter({hasText:'AI008'})).toContainText('$60.00000000');
+  await expect(dialog.getByRole('button',{name:'生成账单',exact:true})).toBeEnabled();
+  const team=await(await page.request.get('/api/team')).json(),agent=team.users.find((u:any)=>u.email==='agent@example.com');
+  await dialog.getByLabel('结算成员',{exact:true}).selectOption(agent.id);
+  await expect(dialog.locator('.confirm-total .amount')).toHaveText('$60.00000000');
+  await expect(dialog.locator('.confirm-breakdown')).toContainText('$20.00000000');
+  await expect(dialog.locator('.confirm-breakdown')).toContainText('$40.00000000');
+  await page.setViewportSize({width:390,height:844});await dialog.locator('.confirm-amount').screenshot({path:'test-results/invoice-preview-mobile.png'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await dialog.getByLabel('开始日期',{exact:true}).fill('1970-01-01');await dialog.getByLabel('结束日期',{exact:true}).fill('1970-01-01');
+  await expect(dialog.getByText('所选期间没有可结算的已核实用量',{exact:true})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'生成账单',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'关闭弹窗'}).click();
+  const after=await(await page.request.get('/api/finance')).json();
+  expect({balance:after.balance,invoices:after.invoices,ledger:after.ledger}).toEqual({balance:before.balance,invoices:before.invoices,ledger:before.ledger});
+});

@@ -5,6 +5,7 @@ import { bootstrap, id, MAX_USD, secretBox, today } from './core.js';
 import { balance, confirmInvoice, createInvoice, ingestUsage, requestWithdrawal, reviewWithdrawal } from './billing.js';
 import { assertWalletAccounting } from './financial-integrity.js';
 import { auditFinance } from './finance-audit.js';
+import { previewInvoice } from './invoice-preview.js';
 import { createApp } from './app.js';
 import { openTestDB, seedSettlement } from './test-db.js';
 
@@ -55,6 +56,49 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     ({ app } = await createApp(db, { encryptionKey: 'ab'.repeat(32), appUrl: 'http://localhost:3000' }));
   });
   afterEach(async () => { await app?.close(); await db?.close(); });
+
+  it('previews only the selected layer and separates ready, unassigned, unverified and already invoiced days', async () => {
+    const ready = await binding(a), invoiced = await binding(c, 'gatelink'), unassigned = id(), unassignedAccount = id();
+    await db.query("INSERT INTO accounts(id,email) VALUES($1,'unassigned@finance.example')", [unassignedAccount]);
+    await db.query('INSERT INTO bindings(id,account_id,connection_id,external_id) VALUES($1,$2,$3,$1)', [unassigned, unassignedAccount, connections.ai008]);
+    await observe(ready, '100'); await observe(invoiced, '200', prior(2));
+    await createInvoice(db, owner, owner.id, prior(2), prior(2));
+    for (const [bindingId, rawUsd, day] of [[ready, '50', prior(2)], [unassigned, '30', prior(2)], [ready, '1000', today()]]) {
+      await db.transaction(tx => ingestUsage(tx, { bindingId, rawUsd, day, final: false, source: 'preview-fixture' }));
+    }
+    await db.query('UPDATE connections SET name=$1 WHERE id=$2', ['private-finance-master@example.com', connections.ai008]);
+    const preview = await db.transaction(tx => previewInvoice(tx, owner, owner.id, prior(2), prior()));
+    expect(preview.ready).toEqual({ count: 1, raw_usd: '100.00000000', gross_usd: '70.00000000', downstream_usd: '30.00000000', profit_usd: '40.00000000' });
+    expect(preview.unassigned).toEqual({ count: 1, raw_usd: '30.00000000' });
+    expect(preview.provisional).toEqual({ count: 1, raw_usd: '50.00000000' });
+    expect(preview.invoiced).toEqual({ count: 1, gross_usd: '120.00000000' });
+    expect(preview.platforms).toHaveLength(2);
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-ccmax-request': '1' }, payload: { email: a.email, password } });
+    const cookie = String(login.headers['set-cookie']).split(';')[0], url = `/api/invoices/preview?from=${prior(2)}&to=${prior()}`;
+    const response = await app.inject({ url, headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ userId: a.id, ready: { count: 2, raw_usd: '300.00000000', gross_usd: '90.00000000', downstream_usd: '40.00000000', profit_usd: '50.00000000' }, unassigned: { count: 0 }, invoiced: { count: 0 } });
+    expect(response.body).not.toContain('private-finance-master');
+    for (const userId of [owner.id, sibling.id, c.id]) expect((await app.inject({ url: `${url}&userId=${userId}`, headers: { cookie } })).statusCode).toBe(403);
+    expect((await app.inject({ url: `/api/invoices/preview?from=${today()}&to=${today()}`, headers: { cookie } })).statusCode).toBe(400);
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(1);
+  });
+
+  it('rejects a changed preview before inserting any invoice, and refreshes without changing wallet funds', async () => {
+    await observe(await binding(a), '100');
+    const preview = await db.transaction(tx => previewInvoice(tx, owner, owner.id, prior(), prior()));
+    await observe(await binding(sibling), '7');
+    await expect(createInvoice(db, owner, owner.id, prior(), prior(), preview.previewToken)).rejects.toThrow('明细已变化');
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
+    const fresh = await db.transaction(tx => previewInvoice(tx, owner, owner.id, prior(), prior()));
+    expect(fresh.ready.count).toBe(2);
+    const invoice = await createInvoice(db, owner, owner.id, prior(), prior(), fresh.previewToken);
+    expect(invoice.gross_usd).toBe('74.90000000');
+    const after = await db.transaction(tx => previewInvoice(tx, owner, owner.id, prior(), prior()));
+    expect(after.ready.count).toBe(0); expect(after.invoiced.count).toBe(2);
+    expect((await balance(db, owner.id)).available).toBe('0.00000000');
+  });
 
   it('conserves every 8-decimal dollar through branches, four levels, all three platforms, invoices and payouts', async () => {
     const expected = new Map([owner, a, b, c, sibling].map(user => [user.id, 0n]));

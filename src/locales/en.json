@@ -980,5 +980,21 @@
   "数据归属或收益链异常，请核对原始记录。": "Account ownership or earnings chain is inconsistent; review the source records.",
   "账号启停": "Enable / disable accounts",
   "需要上游管理员权限": "Requires upstream administrator access",
-  "Gatelink 启停账号需要上游管理员权限，当前主账号无此权限": "Enabling or disabling Gatelink accounts requires upstream administrator access; the current master account does not have it"
+  "Gatelink 启停账号需要上游管理员权限，当前主账号无此权限": "Enabling or disabling Gatelink accounts requires upstream administrator access; the current master account does not have it",
+  "我的结算进度": "My settlement progress",
+  "截至昨日的全部历史用量 · 北京时间": "All historical usage through yesterday · Beijing time",
+  "已封账待开票应收": "Finalized receivables awaiting invoicing",
+  "已归属待核实原始用量": "Assigned usage awaiting verification",
+  "待归属原始用量": "Unassigned original usage",
+  "待归属和待核实金额均不是应收或利润。已开票记录不重复计入待开票金额。": "Unassigned and unverified amounts are neither receivables nor profit. Already invoiced records are excluded from amounts awaiting invoicing.",
+  "预览结算账单": "Preview settlement invoice",
+  "账号归属需人工确认，系统不会自动分配。": "Account ownership requires manual confirmation; accounts are never assigned automatically.",
+  "先核对分平台明细；仅已归属、已核实且未开票的用量进入本次账单。": "Review each platform first. Only assigned, verified, uninvoiced usage is included.",
+  "刷新预览": "Refresh preview",
+  "本次可开票 {0} 条；待归属 {1} 条、已归属待核实 {2} 条、已开票 {3} 条均不重复计入。": "{0} records ready to invoice. Excluded: {1} unassigned, {2} assigned but unverified, and {3} already invoiced.",
+  "可开票记录": "Records ready to invoice",
+  "生成账单不会增加钱包余额，真实回款确认后才记入本人利润。": "Creating an invoice does not credit the wallet. Personal profit is credited only after actual receipt is confirmed.",
+  "可开票明细已变化，请刷新预览后重新确认": "Invoiceable records have changed. Refresh the preview and review again.",
+  "部分用量未采集": "Some usage unavailable",
+  "有 {0} 个账号的今日用量缺失或日期不符，已跳过金额入账；其余账号正常同步。": "Skipped today’s usage posting for {0} accounts with missing counters or a different source date. Other accounts synchronized normally."
 }

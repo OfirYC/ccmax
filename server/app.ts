@@ -13,6 +13,7 @@ import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } fr
 import { apiKeyService } from './api-keys.js';
 import { assertWalletAccounting } from './financial-integrity.js';
 import { auditFinance } from './finance-audit.js';
+import { previewInvoice } from './invoice-preview.js';
 import { registerTelemetry } from './telemetry-routes.js';
 import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
@@ -502,8 +503,16 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       return auditFinance(tx);
     });
   });
+  app.get('/api/invoices/preview',async req=>{
+    const d=z.object({userId:identifier.optional(),from:date,to:date}).parse(req.query);
+    return db.transaction(async tx=>{
+      await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+      const result=await previewInvoice(tx,req.user,d.userId??req.user.id,d.from,d.to);
+      return {...result,platforms:publicConnectionRows(req.user,result.platforms)};
+    });
+  });
   app.post('/api/invoices',async req=>{
-    const d=z.object({userId:identifier,from:date,to:date}).parse(req.body);return createInvoice(db,req.user,d.userId,d.from,d.to);
+    const d=z.object({userId:identifier,from:date,to:date,previewToken:z.string().regex(/^[a-f0-9]{64}$/).optional()}).parse(req.body);return createInvoice(db,req.user,d.userId,d.from,d.to,d.previewToken);
   });
   app.post('/api/invoices/:id/confirm',async req=>{
     const d=z.object({reference:z.string().trim().min(3).max(500)}).parse(req.body);return confirmInvoice(db,req.user,identifier.parse((req.params as Row).id),d.reference);

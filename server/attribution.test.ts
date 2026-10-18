@@ -7,7 +7,7 @@ import { createApp } from './app.js';
 import { normalizeTelemetry,saveTelemetry } from './telemetry.js';
 import { ingestUsage } from './billing.js';
 import { assertUsageAccounting } from './financial-integrity.js';
-import { createWorker,enqueue } from './worker.js';
+import { createWorker,enqueue,saveBinding } from './worker.js';
 import { auditAttribution } from './attribution-audit.js';
 
 const password='attribution-test-password',encryptionKey='46'.repeat(32);
@@ -124,5 +124,30 @@ describe('independent account, platform and recursive team reconciliation',()=>{
     const [job]=await db.query('SELECT state,result,error FROM jobs');expect(job.state,job.error).toBe('succeeded');expect(job.result.skippedDaily).toBe(1);expect(await db.query('SELECT * FROM usage_days')).toHaveLength(0);
     await login('root@example.com');const d=await get('/api/dashboard');expect(d.platforms.find((p:any)=>p.id===gate).daily_usd).toBeNull();
     expect((await get('/api/telemetry')).totals.requests.value).toBeNull();expect((await get('/api/accounts')).accounts[0].bindings[0].today_usd).toBeNull();
+  });
+
+  it('syncs Gatelink inventory with missing counters, preserves existing usage and resumes without duplicate charges',async()=>{
+    const box=secretBox(encryptionKey),[connection]=await db.query('SELECT * FROM connections WHERE id=$1',[gate]);
+    const remote=(id:string,dailyUsd:string|null)=>({id,email:`${id}@example.com`,name:id,status:'active',dailyUsd,cost7d:null,cost30d:null,utilization:null,
+      telemetry:normalizeTelemetry('gatelink',{upstreamDailyCost:dailyUsd,upstreamSyncedAt:new Date().toISOString()})});
+    const old=await saveBinding(db,connection,remote('existing','10'));
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:old.id,day:today(),rawUsd:'10',final:false,source:'live_snapshot'}));
+    let rows=[remote('existing',null),remote('new',null),remote('valid','1.25')];
+    const client={login:async()=>{},listAccounts:async()=>rows};
+    const worker=createWorker(db,box,()=>client as any);
+    await enqueue(db,box,root.id,gate,'sync',{},'missing-daily-1');await worker.runOne();
+    const [job]=await db.query('SELECT state,result,error FROM jobs');expect(job.state,job.error).toBe('succeeded');expect(job.result).toMatchObject({accounts:3,skippedDaily:2});
+    expect((await db.query('SELECT daily_usd FROM bindings WHERE daily_usd IS NULL'))).toHaveLength(2);
+    expect(await db.query('SELECT * FROM usage_days')).toHaveLength(2);
+    expect((await db.query('SELECT raw_usd FROM usage_days WHERE binding_id=$1',[old.id]))[0].raw_usd).toBe('10.00000000');
+    await login('root@example.com');let accounts=(await get('/api/accounts')).accounts;
+    expect(accounts.find((a:any)=>a.email==='new@example.com').bindings[0].today_usd).toBeNull();
+    expect(accounts.find((a:any)=>a.email==='existing@example.com').bindings[0].today_usd).toBeNull();
+    rows=[remote('existing','12'),remote('new',null),remote('valid','1.25')];
+    await enqueue(db,box,root.id,gate,'sync',{},'missing-daily-2');await worker.runOne();
+    expect(await db.query('SELECT * FROM usage_days')).toHaveLength(2);
+    expect((await db.query('SELECT raw_usd FROM usage_days WHERE binding_id=$1',[old.id]))[0].raw_usd).toBe('12.00000000');
+    accounts=(await get('/api/accounts')).accounts;expect(accounts.find((a:any)=>a.email==='existing@example.com').bindings[0].today_usd).toBe('12');
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
   });
 });

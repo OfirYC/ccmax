@@ -106,5 +106,11 @@ export async function migrate(db: DB) {
       await telemetryMigration(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (9)');
     }
+    if (!done.some(row=>Number(row.version)===10)) {
+      // Missing upstream counters are unknown, never a zero-dollar observation.
+      // This affects operational snapshots only; financial history is untouched.
+      await tx.query('ALTER TABLE bindings ALTER COLUMN daily_usd DROP NOT NULL');
+      await tx.query('INSERT INTO migrations(version) VALUES (10)');
+    }
   });
 }

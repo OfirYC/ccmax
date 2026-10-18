@@ -59,6 +59,10 @@ describe('agent API authentication and permissions', () => {
     const me = await call(issued.token, 'GET', '/api/auth/me');
     expect(me.json().user.id).toBe(a);
     expect(me.headers['set-cookie']).toBeUndefined();
+    const preview = await call(issued.token, 'GET', '/api/invoices/preview?from=2000-01-01&to=2000-01-01');
+    expect(preview.statusCode).toBe(200); expect(preview.json()).toMatchObject({ userId: a, ready: { count: 0 }, unassigned: { count: 0 } });
+    expect((await call(issued.token, 'GET', `/api/invoices/preview?userId=${b}&from=2000-01-01&to=2000-01-01`)).statusCode).toBe(403);
+    expect((await call(issued.token, 'POST', '/api/invoices', { userId: a, from: '2000-01-01', to: '2000-01-01', previewToken: preview.json().previewToken })).json().code).toBe('INSUFFICIENT_SCOPE');
   });
 
   it('enforces scopes, never falls back to cookies, and keeps key/password/admin endpoints session-only', async () => {
