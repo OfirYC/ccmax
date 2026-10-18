@@ -464,8 +464,9 @@ describe('CCMAX authorization and ledger safeguards', () => {
         return Response.json({url:`https://auth.example.com/${provider}`,state:`state-${provider}`});
       }
       if(path.endsWith('/exchange')) {
-        if(provider==='gatelink') {actualProxyUrls.push(body.proxy);return Response.json({item:{id:'acct-gate',upstreamEmail:acct.email,upstreamDailyCost:0}});}
+        if(provider==='gatelink') {actualProxyUrls.push(body.proxy);return Response.json({item:{id:'acct-gate',upstreamEmail:acct.email}});}
         expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
+        expect(body.code).toBe(`one-use#state-${provider}`);expect(body.pending_state).toBe(`state-${provider}`);
         return Response.json({id:`acct-${provider}`});
       }
       if(path.endsWith('/detail')||path.endsWith('/acct-ai008'))return Response.json({account:{email:acct.email,outbound_proxy_id:`remote-${provider}`}});
@@ -477,6 +478,14 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const exchanges:{attemptId:string;callback:string;key:string}[]=[];
     for(const attempt of attempts) {
       const secret=box.decrypt(attempt.secret);expect(secret.proxyId).toBe(proxyId);expect(secret.options.proxy).toBe('http://test-user:test-secret@proxy.example.com:8080');
+      if(secret.pendingState) {
+        for(const callback of ['one-use',`one-use#state-other-platform`]) {
+          const invalid=await api(cookie,'POST',`/api/oauth/${attempt.id}/exchange`,{callback,key:id()});
+          expect(invalid.statusCode).toBe(400);
+          expect((await db.query('SELECT state FROM oauth_attempts WHERE id=$1',[attempt.id]))[0].state).toBe('pending');
+          expect(await db.query("SELECT id FROM jobs WHERE kind='oauth_exchange' AND connection_id=$1",[attempt.connection_id])).toHaveLength(0);
+        }
+      }
       const callback=secret.pendingState?`one-use#${secret.pendingState}`:'gate-callback';
       const request={attemptId:attempt.id,callback,key:id()};exchanges.push(request);
       expect((await api(cookie,'POST',`/api/oauth/${attempt.id}/exchange`,{callback,key:request.key})).statusCode).toBe(200);
@@ -484,6 +493,9 @@ describe('CCMAX authorization and ledger safeguards', () => {
     for(let i=0;i<3;i++)await worker.runOne();
     const jobs=await db.query('SELECT kind,state,error FROM jobs');expect(jobs.every(j=>j.state==='succeeded')).toBe(true);
     expect(await db.query('SELECT * FROM bindings WHERE proxy_id=$1',[proxyId])).toHaveLength(3);
+    expect((await db.query("SELECT daily_usd FROM bindings WHERE external_id='acct-gate'"))[0].daily_usd).toBeNull();
+    expect(await db.query('SELECT * FROM usage_days')).toHaveLength(0);
+    expect(await db.query('SELECT * FROM earnings')).toHaveLength(0);
     expect(new Set(actualProxyUrls)).toEqual(new Set(['http://test-user:test-secret@proxy.example.com:8080']));
     expect(await db.query('SELECT * FROM proxy_bindings WHERE proxy_id=$1',[proxyId])).toHaveLength(2);
     await api(cookie,'PATCH',`/api/proxies/${proxyId}`,{enabled:false});

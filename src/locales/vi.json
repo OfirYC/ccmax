@@ -996,5 +996,10 @@
   "生成账单不会增加钱包余额，真实回款确认后才记入本人利润。": "Lập hóa đơn không tăng số dư ví. Chỉ ghi lợi nhuận sau khi xác nhận thực nhận tiền.",
   "可开票明细已变化，请刷新预览后重新确认": "Các mục có thể lập hóa đơn đã thay đổi. Hãy làm mới và kiểm tra lại.",
   "部分用量未采集": "Một phần mức dùng chưa được thu thập",
-  "有 {0} 个账号的今日用量缺失或日期不符，已跳过金额入账；其余账号正常同步。": "Bỏ qua ghi mức dùng hôm nay cho {0} tài khoản thiếu số liệu hoặc khác ngày nguồn. Các tài khoản khác đồng bộ bình thường."
+  "有 {0} 个账号的今日用量缺失或日期不符，已跳过金额入账；其余账号正常同步。": "Bỏ qua ghi mức dùng hôm nay cho {0} tài khoản thiếu số liệu hoặc khác ngày nguồn. Các tài khoản khác đồng bộ bình thường.",
+  "请粘贴此平台的完整回调地址或 code#state，保留 state，不要跨平台复用。": "Dán URL callback đầy đủ hoặc code#state của nền tảng này, giữ nguyên state. Mỗi nền tảng cần callback riêng.",
+  "授权时请确认 Claude 登录邮箱与上方账号一致；不一致时请切换账号后重新授权。": "Kiểm tra email đang đăng nhập Claude trùng với tài khoản ở trên. Nếu khác, hãy đổi tài khoản rồi cấp quyền lại.",
+  "此平台需要完整回调地址或 code#state，OAuth state 必须匹配": "Nền tảng này yêu cầu URL callback đầy đủ hoặc code#state với OAuth state khớp",
+  "OAuth state 不匹配": "OAuth state không khớp với lần cấp quyền này",
+  "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "Email hoặc chủ sở hữu tài khoản từ nền tảng khác với tài khoản đã gửi; cần quản trị viên kiểm tra"
 }

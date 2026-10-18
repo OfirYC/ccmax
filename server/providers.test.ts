@@ -72,6 +72,27 @@ describe('upstream adapter data integrity',()=>{
     let calls=0;const c=client(()=>{calls++;return {};});
     await expect(c.exchangeOAuth({options:{email:'a@example.com',...fixedProxy},pendingState:'expected'},'https://callback.example/?code=once&state=wrong')).rejects.toThrow('state');expect(calls).toBe(0);
   });
+  it.each(['once#expected','https://callback.example/?code=once&state=expected'])('preserves AI008 code#state for %s',async callback=>{
+    const requests:string[]=[];
+    const c=client((url,init)=>{
+      const path=new URL(url).pathname;requests.push(path);
+      if(path.endsWith('/auth-url'))return {url:'https://auth.example/?state=expected',state:'expected'};
+      if(path.endsWith('/exchange')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({code:'once#expected',pending_state:'expected',outbound_proxy_id:'fixed-proxy'});
+        return {id:'real'};
+      }
+      expect(path).toBe('/api/admin/oauth-accounts/real');
+      return {account:{canonical_identity:{email:'real@example.com'},outbound_proxy_id:'fixed-proxy'}};
+    });
+    const attempt=await c.startOAuth({email:'real@example.com',...fixedProxy});
+    expect((await c.exchangeOAuth(attempt.secret,callback)).email).toBe('real@example.com');
+    expect(requests).toHaveLength(3);
+  });
+  it.each(['once','once#','#expected','https://callback.example/?code=once','https://callback.example/?code=once&state=expected&state=other','https://[invalid/?code=once&state=expected'])('rejects incomplete or ambiguous AI008 callbacks before any network request: %s',async callback=>{
+    let calls=0;const c=client(()=>{calls++;return {};});
+    await expect(c.exchangeOAuth({options:{email:'real@example.com',...fixedProxy},pendingState:'expected'},callback)).rejects.toThrow('完整回调');
+    expect(calls).toBe(0);
+  });
   it('does not leak upstream response bodies through errors',async()=>{
     const c=new ProviderClient('ai008',{username:'test',password:'test'},async()=>new Response('token=private-secret',{status:403}));
     await expect(c.call('/api/admin/oauth-accounts')).rejects.toThrow('HTTP 403');

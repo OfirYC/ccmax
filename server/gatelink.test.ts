@@ -34,6 +34,18 @@ describe('Gatelink OAuth request contract',()=>{
     for(const accountType of ['max','pro'])await expect(c.startOAuth({email:'claude@example.com',accountType,proxy:'http://proxy.example.com:8080'})).rejects.toThrow('speed、stable 或 team');
     expect(calls).toBe(0);
   });
+
+  it.each([undefined,null])('accepts a verified OAuth identity before usage is available (%s)',async daily=>{
+    let exchanges=0;
+    const c=new ProviderClient('gatelink',credentials,async()=>{
+      exchanges++;
+      return Response.json({item:{id:'new-submission',upstreamEmail:'real@example.com',upstreamDailyCost:daily,status:'active'}});
+    });
+    const remote=await c.exchangeOAuth({options:{email:'real@example.com',proxy:'http://proxy.example.com:8080'}},'once#state');
+    expect(remote).toMatchObject({id:'new-submission',email:'real@example.com',dailyUsd:null});
+    expect(remote.telemetry?.periods.today.billedUsd).toBeNull();
+    expect(exchanges).toBe(1);
+  });
 });
 
 describe('Gatelink error diagnosis',()=>{

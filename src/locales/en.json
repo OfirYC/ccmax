@@ -996,5 +996,10 @@
   "生成账单不会增加钱包余额，真实回款确认后才记入本人利润。": "Creating an invoice does not credit the wallet. Personal profit is credited only after actual receipt is confirmed.",
   "可开票明细已变化，请刷新预览后重新确认": "Invoiceable records have changed. Refresh the preview and review again.",
   "部分用量未采集": "Some usage unavailable",
-  "有 {0} 个账号的今日用量缺失或日期不符，已跳过金额入账；其余账号正常同步。": "Skipped today’s usage posting for {0} accounts with missing counters or a different source date. Other accounts synchronized normally."
+  "有 {0} 个账号的今日用量缺失或日期不符，已跳过金额入账；其余账号正常同步。": "Skipped today’s usage posting for {0} accounts with missing counters or a different source date. Other accounts synchronized normally.",
+  "请粘贴此平台的完整回调地址或 code#state，保留 state，不要跨平台复用。": "Paste this platform’s full callback URL or code#state, keeping state. Use a separate callback for each platform.",
+  "授权时请确认 Claude 登录邮箱与上方账号一致；不一致时请切换账号后重新授权。": "Check that the email signed in to Claude matches the account above. If it differs, switch accounts and authorize again.",
+  "此平台需要完整回调地址或 code#state，OAuth state 必须匹配": "This platform requires the full callback URL or code#state with a matching OAuth state",
+  "OAuth state 不匹配": "OAuth state does not match this authorization",
+  "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "The upstream email or account owner differs from the submitted account; administrator review is required"
 }

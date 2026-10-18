@@ -2,6 +2,7 @@ import { AppError, assert,MAX_USD } from './core.js';
 import Decimal from 'decimal.js';
 import { parseProxy } from './proxies.js';
 import { gatelinkFailure } from './gatelink-errors.js';
+import { statefulOAuthCallback } from './oauth-callback.js';
 import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
 import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
 
@@ -336,15 +337,9 @@ export class ProviderClient {
       assert(data.item.upstreamEmail,'平台未返回可核实的真实邮箱，请由管理员同步核对归属',502);
       return this.normalize(data.item);
     }
-    let code=callback.trim();
-    let state:string|null=null;
-    if(/^https?:\/\//.test(code)) { const url=new URL(code);code=url.searchParams.get('code')||'';state=url.searchParams.get('state'); }
-    else if(code.includes('#')) { const parts=code.split('#');code=parts[0];state=parts.slice(1).join('#'); }
-    assert(state===null||state===secret.pendingState,'OAuth state 不匹配');
-    assert(code.length>0,'请输入有效的授权码');
+    const code=statefulOAuthCallback(callback,secret.pendingState);
     if(this.provider==='minicc') {
-      assert(state && state===secret.pendingState,'此平台需要完整回调地址或 code#state，OAuth state 必须匹配');
-      const data=await this.call('/api/accounts/exchange','POST',{...await this.miniConfig(secret.options),code:`${code}#${state}`,pending_state:secret.pendingState});
+      const data=await this.call('/api/accounts/exchange','POST',{...await this.miniConfig(secret.options),code,pending_state:secret.pendingState});
       assert(data.id,'平台未返回账号 ID',502);
       return this.submittedIdentity(data,secret.options.proxyExternalId);
     }
