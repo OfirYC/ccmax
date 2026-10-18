@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import { Languages } from 'lucide-react';
-import { getLocale, languages, setLocale, subscribeLocale, t, type Locale } from './i18n';
+import { defaultLocale, getLocale, languages, setLocale, subscribeLocale, t, type Locale } from './i18n';
 
 export function useLocale() {
-  return useSyncExternalStore(subscribeLocale, getLocale, () => 'zh-CN' as const);
+  return useSyncExternalStore(subscribeLocale, getLocale, () => defaultLocale);
 }
 
 export default function LanguageSwitcher() {

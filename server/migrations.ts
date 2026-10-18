@@ -1,6 +1,73 @@
 import type { DB } from './db.js';
 import { PROVIDER_KEYS } from './providers.js';
 
+export async function financialSources(tx: DB) {
+  // Apply to new writes only; legacy balances are reconciled before withdrawal.
+  // Do not rewrite or manufacture source documents for historical ledger rows.
+  await tx.query(`CREATE FUNCTION ccmax_guard_earning_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM id FROM usage_days WHERE id=NEW.usage_id FOR UPDATE;
+      IF EXISTS(SELECT 1 FROM usage_days WHERE id=NEW.usage_id AND state='final') THEN
+        RAISE EXCEPTION 'CCMAX: sealed earning is immutable' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query('CREATE TRIGGER earnings_insert_sealed BEFORE INSERT ON earnings FOR EACH ROW EXECUTE FUNCTION ccmax_guard_earning_insert()');
+  await tx.query(`CREATE FUNCTION ccmax_guard_invoice_item() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE bill invoices%ROWTYPE; item earnings%ROWTYPE; usage_day date; usage_state text;
+    BEGIN
+      SELECT * INTO bill FROM invoices WHERE id=NEW.invoice_id FOR UPDATE;
+      SELECT * INTO item FROM earnings WHERE id=NEW.earning_id;
+      SELECT day,state INTO usage_day,usage_state FROM usage_days WHERE id=item.usage_id;
+      IF bill.id IS NULL OR bill.state<>'pending' OR item.id IS NULL OR item.user_id<>bill.user_id
+        OR item.payer_id IS DISTINCT FROM bill.payer_id OR usage_state IS DISTINCT FROM 'final'
+        OR usage_day NOT BETWEEN bill.date_from AND bill.date_to THEN
+        RAISE EXCEPTION 'CCMAX: invoice item source mismatch or confirmed invoice' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query('CREATE TRIGGER invoice_item_source BEFORE INSERT ON invoice_items FOR EACH ROW EXECUTE FUNCTION ccmax_guard_invoice_item()');
+  await tx.query(`CREATE FUNCTION ccmax_guard_ledger_source() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.kind='settlement' THEN
+        IF NOT EXISTS(SELECT 1 FROM invoices i WHERE i.id=NEW.reference_id AND i.user_id=NEW.user_id
+          AND i.state='confirmed' AND i.profit_usd=NEW.amount_usd AND NEW.amount_usd>=0) THEN
+          RAISE EXCEPTION 'CCMAX: settlement ledger source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_hold' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id
+          AND w.state='pending' AND -w.amount_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal hold source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_release' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w JOIN ledger h ON h.reference_id=w.id AND h.kind='withdrawal_hold'
+          WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id AND w.state='rejected' AND w.amount_usd=NEW.amount_usd
+            AND h.user_id=w.user_id AND h.amount_usd=-w.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal release source mismatch' USING ERRCODE='23514';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query('CREATE TRIGGER ledger_source BEFORE INSERT ON ledger FOR EACH ROW EXECUTE FUNCTION ccmax_guard_ledger_source()');
+  await tx.query('CREATE INDEX invoice_items_invoice ON invoice_items(invoice_id)');
+}
+
+export async function integrationKeys(tx: DB) {
+  await tx.query(`CREATE TABLE api_keys (
+    id text PRIMARY KEY,
+    user_id text NOT NULL REFERENCES users(id),
+    name text NOT NULL,
+    prefix text NOT NULL,
+    token_hash text NOT NULL UNIQUE,
+    scopes text[] NOT NULL,
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    last_used_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await tx.query('CREATE INDEX api_keys_user ON api_keys(user_id,created_at DESC)');
+}
+
 export async function accountProxies(tx:DB) {
   await tx.query('ALTER TABLE jobs DROP CONSTRAINT jobs_kind_check');
   await tx.query("ALTER TABLE jobs ADD CONSTRAINT jobs_kind_check CHECK(kind IN ('sync','reconcile','oauth_start','oauth_exchange','import_rt','set_enabled','set_proxy'))");
@@ -136,4 +203,30 @@ export async function hardenSchema(tx: DB) {
   await tx.query(`CREATE INDEX bindings_account ON bindings(account_id)`);
   await tx.query(`CREATE INDEX invoices_payer ON invoices(payer_id)`);
   await tx.query(`CREATE INDEX withdrawals_payer ON withdrawals(payer_id,state)`);
+}
+
+// Preserve signed contractual losses while keeping invoice-source and hold/release guards.
+// Existing finalized amounts and append-only history are never rewritten.
+export async function signedSettlementSources(tx: DB) {
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_ledger_source() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.kind='settlement' THEN
+        IF NOT EXISTS(SELECT 1 FROM invoices i WHERE i.id=NEW.reference_id AND i.user_id=NEW.user_id
+          AND i.state='confirmed' AND i.profit_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: settlement ledger source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_hold' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id
+          AND w.state='pending' AND -w.amount_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal hold source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_release' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w JOIN ledger h ON h.reference_id=w.id AND h.kind='withdrawal_hold'
+          WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id AND w.state='rejected' AND w.amount_usd=NEW.amount_usd
+            AND h.user_id=w.user_id AND h.amount_usd=-w.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal release source mismatch' USING ERRCODE='23514';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END $$`);
 }

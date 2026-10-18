@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
-import { hardenSchema, extendProviders, accountProxies } from './migrations.js';
+import { hardenSchema, extendProviders, accountProxies, integrationKeys, financialSources, signedSettlementSources } from './migrations.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -12,7 +12,11 @@ export interface DB {
 
 export async function openDB(url?: string, localPath?: string): Promise<DB> {
   if (url) {
-    const pool = new pg.Pool({ connectionString: url, max: 10 });
+    // DATE is a Beijing billing calendar day, never a local-midnight instant.
+    // pg's default Date conversion shifts it a day when ISO-formatted in UTC.
+    const pool = new pg.Pool({ connectionString: url, max: 10, types: {
+      getTypeParser: (oid,format) => oid===1082 ? (value:string)=>value : pg.types.getTypeParser(oid,format),
+    } });
     const wrap = (client: pg.Pool | pg.PoolClient): DB => ({
       async query(sql, params = []) { return (await client.query(sql, params)).rows; },
       async transaction(fn) {
@@ -27,7 +31,7 @@ export async function openDB(url?: string, localPath?: string): Promise<DB> {
     return wrap(pool);
   }
   if (localPath) await mkdir(localPath, { recursive: true });
-  const db = new PGlite(localPath);
+  const db = new PGlite({ dataDir: localPath, parsers: { 1082: value=>value } });
   const wrap = (client: any): DB => ({
     async query(sql, params = []) { return (await client.query(sql, params)).rows; },
     async transaction(fn) { return client.transaction((tx: any) => fn(wrap(tx))); },
@@ -84,6 +88,18 @@ export async function migrate(db: DB) {
     if (!done.some(row=>Number(row.version)===5)) {
       await accountProxies(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (5)');
+    }
+    if (!done.some(row=>Number(row.version)===6)) {
+      await integrationKeys(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (6)');
+    }
+    if (!done.some(row=>Number(row.version)===7)) {
+      await financialSources(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (7)');
+    }
+    if (!done.some(row=>Number(row.version)===8)) {
+      await signedSettlementSources(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (8)');
     }
   });
 }

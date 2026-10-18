@@ -9,6 +9,7 @@ export const languages = [
   { code: 'hi', name: 'हिन्दी' },
 ] as const;
 export type Locale = typeof languages[number]['code'];
+export const defaultLocale: Locale = 'en';
 export const localeStorageKey = 'ccmax.locale';
 const dictionaries: Record<Exclude<Locale, 'zh-CN'>, Record<string, string>> = { en, vi, hi };
 const listeners = new Set<() => void>();
@@ -19,7 +20,7 @@ function readLocale(): Locale {
     const saved = localStorage.getItem(localeStorageKey);
     if (isLocale(saved)) return saved;
   } catch { /* Language switching also works when browser storage is unavailable. */ }
-  return 'zh-CN';
+  return defaultLocale;
 }
 
 let locale = readLocale();
@@ -60,7 +61,7 @@ if (typeof window !== 'undefined') {
 }
 
 const messageSources = new Map<string, string>();
-const messagePatterns: { source: string; pattern: RegExp; indexes: number[] }[] = [];
+const messagePatterns: { source: string; pattern: RegExp; indexes: number[]; specificity: number }[] = [];
 for (const source of Object.keys(en)) {
   for (const message of new Set([source, en[source as keyof typeof en], vi[source as keyof typeof vi], hi[source as keyof typeof hi]])) {
     messageSources.set(message, source);
@@ -71,9 +72,12 @@ for (const source of Object.keys(en)) {
       if (parameter) { indexes.push(Number(parameter[1])); return '([\\s\\S]*?)'; }
       return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }).join('');
-    messagePatterns.push({ source, pattern: new RegExp(`^${pattern}$`), indexes });
+    messagePatterns.push({ source, pattern: new RegExp(`^${pattern}$`), indexes, specificity: message.replace(/\{\d+\}/g, '').length });
   }
 }
+// Specific messages must win over generic suffixes such as "{0} effective at midnight".
+// Otherwise switching an existing bulk-update toast translates only the suffix.
+messagePatterns.sort((a,b)=>b.specificity-a.specificity||a.indexes.length-b.indexes.length);
 
 // Translate known system messages only; account names and other user data stay intact.
 // Match previous translations too, so visible errors and toasts update when switching.

@@ -8,7 +8,7 @@ import hi from './locales/hi.json';
 import { getLocale, localeStorageKey, setLocale, subscribeLocale, t, translateMessage } from './i18n';
 import { dateTime, localToday, money, number } from './api';
 
-afterEach(() => { setLocale('zh-CN'); vi.unstubAllGlobals(); });
+afterEach(() => { setLocale('en'); vi.unstubAllGlobals(); });
 
 describe('language catalogs', () => {
   it('covers the same messages in all languages and preserves interpolation parameters', () => {
@@ -40,9 +40,9 @@ describe('language catalogs', () => {
 });
 
 describe('language switching', () => {
-  it('keeps Chinese as the default and interpolates user data literally', () => {
-    expect(getLocale()).toBe('zh-CN');
-    expect(t('你好，{0}', ['$& {1}'])).toBe('你好，$& {1}');
+  it('uses English as the default and interpolates user data literally', () => {
+    expect(getLocale()).toBe('en');
+    expect(t('你好，{0}', ['$& {1}'])).toBe('Hello, $& {1}');
     expect(t('unknown upstream message')).toBe('unknown upstream message');
   });
 
@@ -84,6 +84,16 @@ describe('language switching', () => {
     expect(translateMessage(message)).toBe('User $& chưa có tỷ lệ quyết toán Mini CC vào 2026-10-17; không thể ghi sổ');
   });
 
+  it('translates the complete bulk-update toast before matching a generic effective-date suffix',()=>{
+    const source='已调整 {0} 位直属下级，{1} 00:00 北京时间生效',values=[12,'2026-10-19'];
+    const original=t(source,values);
+    for(const locale of ['en','vi','hi'] as const){
+      setLocale(locale);
+      expect(translateMessage(original)).toBe(t(source,values));
+      expect(translateMessage(original)).not.toMatch(/[\u3400-\u9fff]/u);
+    }
+  });
+
   it('formats USD, numbers, and Beijing times for the selected language', () => {
     expect(money(200)).toBe('$200.00');
     const billingDay = localToday();
@@ -94,5 +104,16 @@ describe('language switching', () => {
       expect(dateTime('2026-10-17T16:30:00Z')).toBe(new Date('2026-10-17T16:30:00Z').toLocaleString(locale, { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
       expect(localToday()).toBe(billingDay);
     }
+  });
+
+  it('formats large decimal USD strings without losing digits through a Number conversion', () => {
+    expect(money('9007199254740993.12345678', 8)).toBe('$9,007,199,254,740,993.12345678');
+    expect(money('9999999999999999.99999999', 8)).toBe('$9,999,999,999,999,999.99999999');
+    expect(money('1.005')).toBe('$1.01');
+    expect(money('-1.005')).toBe('-$1.01');
+    setLocale('vi');
+    expect(money('9007199254740993.12345678', 8)).toContain('9.007.199.254.740.993,12345678');
+    setLocale('hi');
+    expect(money('9007199254740993.12345678', 8)).toContain('9,00,71,99,25,47,40,993.12345678');
   });
 });

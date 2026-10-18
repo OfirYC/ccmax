@@ -1,0 +1,228 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { migrate, type DB, type Row } from './db.js';
+import { bootstrap, id, MAX_USD, secretBox, today } from './core.js';
+import { balance, confirmInvoice, createInvoice, ingestUsage, requestWithdrawal, reviewWithdrawal } from './billing.js';
+import { assertWalletAccounting } from './financial-integrity.js';
+import { createApp } from './app.js';
+import { openTestDB, seedSettlement } from './test-db.js';
+
+const scale = 100000000n;
+const atoms = (value: string) => { const [integer, fraction = ''] = value.split('.'); return BigInt(integer) * scale + BigInt(fraction.padEnd(8, '0')); };
+const dollars = (value: bigint) => `${value / scale}.${(value % scale).toString().padStart(8, '0')}`;
+// Independent integer arithmetic, rather than the production Decimal helpers.
+const receivable = (raw: string, basisPoints: number) => (atoms(raw) * BigInt(basisPoints) + 5000n) / 10000n;
+const prior = (n = 1) => new Date(Date.parse(today() + 'T00:00:00Z') - n * 86400000).toISOString().slice(0, 10);
+
+describe('financial source reconciliation and complete agent cash flow', () => {
+  let db: DB, app: FastifyInstance, owner: Row, a: Row, b: Row, c: Row, sibling: Row;
+  let connections: Record<string, string>;
+  const box = secretBox('ab'.repeat(32)), password = 'finance-test-password';
+  async function user(parent: Row, name: string, rate: number) {
+    const [user] = await db.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING *', [id(), parent.id, `${name}@finance.example`, name, parent.password_hash]);
+    for (const provider of ['ai008', 'gatelink', 'minicc']) await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,'1970-01-01',$5)", [id(), user.id, provider, rate, parent.id]);
+    return user;
+  }
+  async function binding(user = c, provider = 'ai008') {
+    const accountId = id(), bindingId = id();
+    await db.query('INSERT INTO accounts(id,owner_id,email,ownership_verified) VALUES($1,$2,$3,true)', [accountId, user.id, `${accountId}@finance.example`]);
+    await db.query('INSERT INTO bindings(id,account_id,connection_id,external_id) VALUES($1,$2,$3,$1)', [bindingId, accountId, connections[provider]]);
+    return bindingId;
+  }
+  const observe = (bindingId: string, rawUsd = '100', day = prior()) => db.transaction(tx => ingestUsage(tx, { bindingId, day, rawUsd, final: true, source: 'verified-finance-fixture' }));
+  const withdraw = (user: Row, amount: string, key = id()) => requestWithdrawal(db, user, amount, 'Binance ID', 'test destination', key, box);
+  async function legacyLedger(userId: string, amount: string) {
+    // Simulate a pre-v7 record in an isolated disposable test schema.
+    await db.transaction(async tx => {
+      await tx.query('ALTER TABLE ledger DISABLE TRIGGER ledger_source');
+      await tx.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',$3,$4)", [id(), userId, amount, id()]);
+      await tx.query('ALTER TABLE ledger ENABLE TRIGGER ledger_source');
+    });
+  }
+  beforeEach(async () => {
+    db = await openTestDB(); await migrate(db);
+    await bootstrap(db, { ADMIN_EMAIL: 'owner@finance.example', ADMIN_PASSWORD: password });
+    [owner] = await db.query("SELECT * FROM users WHERE role='owner'");
+    a = await user(owner, 'a', 0.3); b = await user(a, 'b', 0.2); c = await user(b, 'c', 0.1); sibling = await user(owner, 'sibling', 0.15);
+    connections = {};
+    for (const [provider, rate] of [['ai008', 0.7], ['gatelink', 0.6], ['minicc', 0.8]] as const) {
+      const connectionId = id(); connections[provider] = connectionId;
+      await db.query('INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,$2,$2,$3,$4)', [connectionId, provider, box.encrypt({ username: 'fixture', password: 'fixture' }), rate]);
+      await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,$3,'1970-01-01')", [id(), connectionId, rate]);
+    }
+    ({ app } = await createApp(db, { encryptionKey: 'ab'.repeat(32), appUrl: 'http://localhost:3000' }));
+  });
+  afterEach(async () => { await app?.close(); await db?.close(); });
+
+  it('conserves every 8-decimal dollar through branches, four levels, all three platforms, invoices and payouts', async () => {
+    const expected = new Map([owner, a, b, c, sibling].map(user => [user.id, 0n]));
+    const samples = ['0.00000001', '0.00000007', '0.12345678', '100.12345678', '9876543210.12345678'];
+    let upstream = 0n;
+    for (const [provider, rootRate] of [['ai008', 7000], ['gatelink', 6000], ['minicc', 8000]] as const) {
+      for (const [target, members, rates] of [[c, [owner, a, b, c], [rootRate, 3000, 2000, 1000]], [sibling, [owner, sibling], [rootRate, 1500]]] as [Row, Row[], number[]][]) {
+        const bindingId = await binding(target, provider);
+        for (let index = 0; index < samples.length; index++) {
+          const raw = samples[index], usageId = await observe(bindingId, raw, prior(index + 1));
+          const earned = await db.query('SELECT * FROM earnings WHERE usage_id=$1', [usageId]);
+          upstream += receivable(raw, rootRate);
+          for (let level = 0; level < members.length; level++) {
+            const gross = receivable(raw, rates[level]), payable = receivable(raw, rates[level + 1] || 0), profit = gross - payable;
+            const item = earned.find(item => item.user_id === members[level].id)!;
+            expect([item.gross_usd, item.downstream_usd, item.profit_usd]).toEqual([dollars(gross), dollars(payable), dollars(profit)]);
+            expected.set(item.user_id, expected.get(item.user_id)! + profit);
+          }
+        }
+      }
+    }
+    const members = [owner, a, b, c, sibling], payers = [owner, owner, a, b, owner];
+    for (let index = 0; index < members.length; index++) {
+      const member = members[index], invoice = await createInvoice(db, member, member.id, prior(5), prior());
+      await confirmInvoice(db, payers[index], invoice.id, 'verified upstream receipt');
+      expect((await balance(db, member.id)).available).toBe(dollars(expected.get(member.id)!));
+      await assertWalletAccounting(db, member.id);
+    }
+    expect([...expected.values()].reduce((total, profit) => total + profit, 0n)).toBe(upstream);
+    for (let index = 0; index < members.length; index++) {
+      const member = members[index], amount = expected.get(member.id)!, half = amount / 2n;
+      const paid = await withdraw(member, dollars(half));
+      await reviewWithdrawal(db, payers[index], paid.id, 'paid', 'external payment reference');
+      await reviewWithdrawal(db, payers[index], paid.id, 'paid', 'external payment reference');
+      const rejected = await withdraw(member, dollars(amount - half));
+      await reviewWithdrawal(db, payers[index], rejected.id, 'rejected', 'destination review');
+      await reviewWithdrawal(db, payers[index], rejected.id, 'rejected', 'destination review');
+      expect(await balance(db, member.id)).toEqual({ available: dollars(amount - half), pending: '0.00000000' });
+      await assertWalletAccounting(db, member.id);
+      await expect(withdraw(member, dollars(amount - half + 1n))).rejects.toThrow('余额不足');
+    }
+  });
+
+  it('requires confirmed parent coverage for every day, even when invoices cover different periods', async () => {
+    const bindingId = await binding(a);
+    await observe(bindingId, '100', prior(2)); await observe(bindingId, '100', prior());
+    const first = await createInvoice(db, owner, owner.id, prior(2), prior(2));
+    await confirmInvoice(db, owner, first.id, 'first day received');
+    const child = await createInvoice(db, a, a.id, prior(2), prior());
+    await expect(confirmInvoice(db, owner, child.id, 'too early')).rejects.toThrow('尚未确认');
+    expect((await balance(db, a.id)).available).toBe('0.00000000');
+    const second = await createInvoice(db, owner, owner.id, prior(), prior());
+    await confirmInvoice(db, owner, second.id, 'second day received');
+    await confirmInvoice(db, owner, child.id, 'complete period');
+    expect((await balance(db, a.id)).available).toBe('60.00000000');
+  });
+
+  it('serializes competing invoices and duplicate confirmations without duplicate credit', async () => {
+    await observe(await binding(owner));
+    const created = await Promise.allSettled([createInvoice(db, owner, owner.id, prior(), prior()), createInvoice(db, owner, owner.id, prior(), prior())]);
+    expect(created.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const [invoice] = await db.query('SELECT * FROM invoices');
+    await Promise.all([confirmInvoice(db, owner, invoice.id, 'same receipt'), confirmInvoice(db, owner, invoice.id, 'same receipt')]);
+    expect(await db.query("SELECT * FROM ledger WHERE kind='settlement'")).toHaveLength(1);
+    expect(await balance(db, owner.id)).toEqual({ available: '70.00000000', pending: '0.00000000' });
+  });
+
+  it('serializes simultaneous withdrawal decisions and restores a rejected hold only once', async () => {
+    await seedSettlement(db, a.id, '100');
+    const requested = await Promise.allSettled([withdraw(a, '80'), withdraw(a, '80')]);
+    expect(requested.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const [withdrawal] = await db.query('SELECT * FROM withdrawals');
+    const decisions = await Promise.allSettled([reviewWithdrawal(db, owner, withdrawal.id, 'paid', 'external payment'), reviewWithdrawal(db, owner, withdrawal.id, 'rejected', 'review failed')]);
+    expect(decisions.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const [processed] = await db.query('SELECT * FROM withdrawals');
+    expect(await balance(db, a.id)).toEqual({ available: processed.state === 'paid' ? '20.00000000' : '100.00000000', pending: '0.00000000' });
+    expect(await db.query("SELECT * FROM ledger WHERE kind='withdrawal_release'")).toHaveLength(processed.state === 'paid' ? 0 : 1);
+    await assertWalletAccounting(db, a.id);
+  });
+
+  it('rejects empty or mismatched invoice totals before any profit credit', async () => {
+    const invoiceId = id();
+    const [invoice] = await db.query("INSERT INTO invoices(id,number,user_id,date_from,date_to,gross_usd,downstream_usd,profit_usd,created_by) VALUES($1,$1,$2,$3,$3,999,0,999,$2) RETURNING *", [invoiceId, owner.id, prior()]);
+    await expect(confirmInvoice(db, owner, invoice.id, 'empty legacy invoice')).rejects.toMatchObject({ code: 'INVOICE_INTEGRITY_CONFLICT' });
+    const usageId = await observe(await binding(owner));
+    const [earning] = await db.query('SELECT id FROM earnings WHERE usage_id=$1', [usageId]);
+    await db.query('INSERT INTO invoice_items(earning_id,invoice_id) VALUES($1,$2)', [earning.id, invoice.id]);
+    await expect(confirmInvoice(db, owner, invoice.id, 'mismatched totals')).rejects.toMatchObject({ code: 'INVOICE_INTEGRITY_CONFLICT' });
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    expect((await db.query('SELECT state FROM invoices'))[0].state).toBe('pending');
+  });
+
+  it.each(['missing-level', 'wrong-formula', 'wrong-payer'])('blocks legacy %s earnings without rewriting sealed history', async problem => {
+    const bindingId = await binding(), savedId = id();
+    await db.query("INSERT INTO usage_days(id,binding_id,day,raw_usd,state,source,root_rate) VALUES($1,$2,$3,100,'provisional','legacy',0.7)", [savedId, bindingId, prior()]);
+    const members = [owner, a, b, c], rates = [0.7, 0.3, 0.2, 0.1];
+    for (let index = 0; index < members.length; index++) {
+      if (problem === 'missing-level' && index === 1) continue;
+      const gross = problem === 'wrong-formula' && index === 3 ? 15 : rates[index] * 100, downstream = (rates[index + 1] || 0) * 100;
+      await db.query('INSERT INTO earnings(id,usage_id,user_id,payer_id,next_user_id,rate,downstream_rate,gross_usd,downstream_usd,profit_usd) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        [id(), savedId, members[index].id, problem === 'wrong-payer' && index === 3 ? owner.id : members[index].parent_id, members[index + 1]?.id ?? null, rates[index], rates[index + 1] || 0, gross, downstream, gross - downstream]);
+    }
+    await db.query("UPDATE usage_days SET state='final' WHERE id=$1", [savedId]);
+    const before = await db.query('SELECT * FROM earnings ORDER BY id');
+    await expect(createInvoice(db, owner, owner.id, prior(), prior())).rejects.toMatchObject({ code: 'USAGE_ACCOUNTING_CONFLICT' });
+    expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(before);
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+  });
+
+  it('blocks phantom legacy credits and isolates reconciliation to the calling wallet', async () => {
+    await seedSettlement(db, a.id, '100'); await legacyLedger(b.id, '10');
+    await assertWalletAccounting(db, a.id);
+    await expect(withdraw(b, '1')).rejects.toMatchObject({ code: 'WALLET_INTEGRITY_CONFLICT' });
+    expect(await db.query('SELECT * FROM withdrawals')).toHaveLength(0);
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-ccmax-request': '1' }, payload: { email: a.email, password } });
+    const cookie = String(login.headers['set-cookie']).split(';')[0];
+    const check = await app.inject({ url: `/api/finance/check?userId=${b.id}`, headers: { cookie } });
+    expect(check.statusCode).toBe(200); expect(check.json()).toMatchObject({ ok: true, balance: { available: '100.00000000' } });
+    expect(check.body).not.toContain(b.id);
+  });
+
+  it('does not mint a release or approve payment for a legacy withdrawal missing its original hold', async () => {
+    const withdrawalId = id();
+    await db.query("INSERT INTO withdrawals(id,user_id,payer_id,amount_usd,method,destination) VALUES($1,$2,$3,10,'test','legacy destination')", [withdrawalId, a.id, owner.id]);
+    for (const action of ['rejected', 'paid'] as const) await expect(reviewWithdrawal(db, owner, withdrawalId, action, 'manual review')).rejects.toMatchObject({ code: 'WALLET_INTEGRITY_CONFLICT' });
+    expect(await balance(db, a.id)).toEqual({ available: '0.00000000', pending: '10.00000000' });
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+  });
+
+  it('blocks a legacy confirmed child credit when the same usage has no confirmed upstream funding', async () => {
+    await observe(await binding(a));
+    const invoice = await createInvoice(db, a, a.id, prior(), prior());
+    // An older/manual status transition may have skipped the parent check.
+    await db.query("UPDATE invoices SET state='confirmed' WHERE id=$1", [invoice.id]);
+    await db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',$3,$4)", [id(), a.id, invoice.profit_usd, invoice.id]);
+    await expect(withdraw(a, '1')).rejects.toMatchObject({ code: 'UPSTREAM_SETTLEMENT_REQUIRED' });
+    expect(await db.query('SELECT * FROM withdrawals')).toHaveLength(0);
+    const parent = await createInvoice(db, owner, owner.id, prior(), prior());
+    await confirmInvoice(db, owner, parent.id, 'verified root funding');
+    expect((await withdraw(a, '1')).amount_usd).toBe('1.00000000');
+  });
+
+  it('enforces ledger and invoice sources in the database and prevents appending to sealed earnings', async () => {
+    await expect(db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',10,$3)", [id(), a.id, id()])).rejects.toThrow('source mismatch');
+    await expect(db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'withdrawal_release',10,$3)", [id(), a.id, id()])).rejects.toThrow('source mismatch');
+    const usageId = await observe(await binding(a)), invoice = await createInvoice(db, a, a.id, prior(), prior());
+    const [rootEarning] = await db.query('SELECT * FROM earnings WHERE usage_id=$1 AND user_id=$2', [usageId, owner.id]);
+    await expect(db.query('INSERT INTO invoice_items(earning_id,invoice_id) VALUES($1,$2)', [rootEarning.id, invoice.id])).rejects.toThrow('source mismatch');
+    await expect(db.query('INSERT INTO earnings(id,usage_id,user_id,rate,downstream_rate,gross_usd,downstream_usd,profit_usd) VALUES($1,$2,$3,0,0,0,0,0)', [id(), usageId, sibling.id])).rejects.toThrow('immutable');
+  });
+
+  it('preserves the full supported 24-digit amount through usage, invoice, wallet, hold and release', async () => {
+    await db.query('UPDATE connection_rates SET rate=1 WHERE connection_id=$1', [connections.ai008]);
+    await observe(await binding(owner), MAX_USD);
+    const invoice = await createInvoice(db, owner, owner.id, prior(), prior());
+    expect(invoice.gross_usd).toBe(MAX_USD);
+    await confirmInvoice(db, owner, invoice.id, 'verified maximum fixture');
+    const withdrawal = await withdraw(owner, MAX_USD);
+    expect(await balance(db, owner.id)).toEqual({ available: '0.00000000', pending: MAX_USD });
+    await reviewWithdrawal(db, owner, withdrawal.id, 'rejected', 'maximum fixture release');
+    expect(await balance(db, owner.id)).toEqual({ available: MAX_USD, pending: '0.00000000' });
+  });
+
+  it('rejects oversized invoice aggregates with a clear error and no partial invoice', async () => {
+    await db.query('UPDATE connection_rates SET rate=1 WHERE connection_id=$1', [connections.ai008]);
+    const bindingId = await binding(owner);
+    await observe(bindingId, MAX_USD, prior(2)); await observe(bindingId, MAX_USD);
+    await expect(createInvoice(db, owner, owner.id, prior(2), prior())).rejects.toMatchObject({ code: 'AMOUNT_OUT_OF_RANGE' });
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
+    expect(await db.query('SELECT * FROM invoice_items')).toHaveLength(0);
+    expect((await createInvoice(db, owner, owner.id, prior(), prior())).gross_usd).toBe(MAX_USD);
+  });
+});

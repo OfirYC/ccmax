@@ -1,4 +1,7 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
+import { test, expect } from './fixtures';
+
+test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN')); });
 import en from '../src/locales/en.json' with { type: 'json' };
 import vi from '../src/locales/vi.json' with { type: 'json' };
 import hi from '../src/locales/hi.json' with { type: 'json' };

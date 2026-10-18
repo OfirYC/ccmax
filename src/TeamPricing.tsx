@@ -14,15 +14,18 @@ export function PricingNotice({report}:{report:any}) {
   return <Link to="/team" className={`notice ${inverted.length?'pricing-warning':'amber'}`}><AlertTriangle size={18}/><span><strong>{inverted.length?t('结算价格倒挂提醒'):t('结算价格尚不完整')}</strong><br/>{t('原价继续生效，请检查当前及待生效报价，并按需批量调整直属下级。')}</span><ArrowRight size={17}/></Link>;
 }
 
+const platformNames:Record<string,string>={gatelink:'Gatelink',ai008:'AI008',minicc:'Mini CC Gateway'};
+
 function RiskRows({risks,today}:{risks:any[];today?:string}) {
-  return <Table headers={[t('生效日期'),t('承担风险的上级'),t('下级成员'),t('上级应收折扣'),t('下级折扣'),t('每 $100 账单的损失')]}>{risks.map((r:any,i:number)=><tr key={`${r.payerId}-${r.userId}-${r.provider}-${r.date}-${i}`}><td>{r.date}{r.date===today&&<small>{t('当前生效')}</small>}</td><td>{r.payerName}</td><td><strong>{r.userName}</strong><small>{r.provider}</small></td><td><RateBadge value={r.ownRate}/></td><td><RateBadge value={r.childRate}/></td><td>{r.kind==='inverted'?<Amount value={'-'+r.lossPer100Usd} tone="profit"/>:<span className="error-text">{t('缺少报价，无法评估')}</span>}</td></tr>)}</Table>;
+  const maxLoss=risks.filter(r=>r.kind==='inverted').reduce<string|null>((max,r)=>max===null||Number(r.lossPer100Usd)>Number(max)?r.lossPer100Usd:max,null);
+  return <>{maxLoss!==null&&<div className="risk-loss-summary"><span>{t('每 $100 账单 · 最大单层亏损')}</span><Amount value={'-'+maxLoss} tone="profit"/></div>}<Table headers={[t('生效日期'),t('承担风险的上级'),t('下级成员'),t('上级应收折扣'),t('下级折扣'),t('每 $100 账单的损失')]}>{risks.map((r:any,i:number)=><tr key={`${r.payerId}-${r.userId}-${r.provider}-${r.date}-${i}`}><td>{r.date}{r.date===today&&<small>{t('当前生效')}</small>}</td><td>{r.payerName}</td><td><strong>{r.userName}</strong><small>{platformNames[r.provider]||r.provider}</small></td><td><RateBadge value={r.ownRate}/></td><td><RateBadge value={r.childRate}/></td><td>{r.kind==='inverted'?<Amount value={'-'+r.lossPer100Usd} tone="profit"/>:<span className="error-text">{t('缺少报价，无法评估')}</span>}</td></tr>)}</Table></>;
 }
 
 export function TeamPriceOverview({report,error,onRefresh}:{report:any;error:string;onRefresh:()=>void}) {
   useLocale();
   const {user}=useSession();
   return <section className="panel team-pricing-panel"><div className="panel-head"><div><h2>{t('价格与差价风险')}</h2><p>{t('保留原价并提醒；每位上级自行管理直属下级报价。')}</p></div><button className="button" onClick={onRefresh}><RefreshCw size={14}/>{t('刷新价格')}</button></div><ErrorBox error={error}/>{report&&<>
-    <div className="own-price-grid">{report.prices.map((p:any)=><div key={p.provider}><strong>{p.provider}</strong><span>{t('我的当前应收折扣')}</span><RateBadge value={p.currentRate}/><span>{t('次日应收折扣')} · {report.effectiveDate}</span><RateBadge value={p.nextRate}/>{user.role==='owner'&&p.connectionCount>1&&<small>{t('多个主账号按最低应收折扣评估')}</small>}</div>)}</div>
+    <div className="own-price-grid">{report.prices.map((p:any)=><div key={p.provider}><strong>{platformNames[p.provider]||p.provider}</strong><span>{t('我的当前应收折扣')}</span><RateBadge value={p.currentRate}/><span>{t('次日应收折扣')} · {report.effectiveDate}</span><RateBadge value={p.nextRate}/>{user.role==='owner'&&p.connectionCount>1&&<small>{t('多个主账号按最低应收折扣评估')}</small>}</div>)}</div>
     {report.risks.length?<details className="price-risk-details" open><summary><AlertTriangle size={17}/>{t('发现 {0} 项当前或待生效价格风险',[report.risks.length])}</summary><p>{t('原价继续生效；倒挂产生的负利润仍按真实差价记账。')}</p><RiskRows risks={report.risks} today={report.today}/></details>:<p className="pricing-ok">{t('当前及待生效报价未发现直属下级倒挂。')}</p>}
   </>}</section>;
 }
