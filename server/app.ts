@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { z, ZodError } from 'zod';
 import type { DB, Row } from './db.js';
 import { AppError, assert, audit, dayString, hashPassword, id, nextDay, requireDirect, requireOwner, secretBox, subtree, today, verifyPassword } from './core.js';
-import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal } from './billing.js';
+import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, withdrawalDestination } from './billing.js';
 import { enqueue } from './worker.js';
 import { PROVIDERS, ProviderClient } from './providers.js';
 
@@ -24,7 +24,7 @@ const optionSchema=z.object({proxy:z.string().max(2000).optional(),accountType:z
 
 export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string;production?:boolean;logger?:boolean}) {
   const box=secretBox(config.encryptionKey);
-  const app=Fastify({logger:config.logger??false,trustProxy:true,bodyLimit:1024*1024});
+  const app=Fastify({logger:config.logger??false,trustProxy:(_address,hop)=>hop===0,bodyLimit:1024*1024});
   await app.register(cookie);
   await app.register(rateLimit,{max:240,timeWindow:'1 minute'});
   app.decorateRequest('user');
@@ -35,7 +35,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     if(status===429) return reply.code(429).send({error:'请求过于频繁，请稍后再试'});
     if(status===400||status===413) return reply.code(status).send({error:'请求格式错误或内容过大'});
     const code=(error as any).code;
-    if(['23505','23503'].includes(code)) return reply.code(409).send({error:'记录已存在、归属冲突或依赖状态发生变化，请刷新后重试'});
+    if(['23505','23503','23514'].includes(code)) return reply.code(409).send({error:'记录已存在、归属冲突或依赖状态发生变化，请刷新后重试'});
     request.log.error({err:error},'Request failed');
     reply.code(500).send({error:'服务器处理失败，请联系管理员核对记录',requestId:request.id});
   });
@@ -82,19 +82,32 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
 
   app.get('/api/team',async req=>{
+    const current=today(),q=z.object({from:date.default(current.slice(0,8)+'01'),to:date.default(current)}).parse(req.query);
+    assert(q.from<=q.to,'开始日期不能晚于结束日期');
     const ids=await subtree(db,req.user.id);
-    const users=await db.query(`SELECT u.id,u.parent_id,u.name,u.email,u.role,u.active,u.created_at,p.name AS parent_name,
-      (SELECT count(*) FROM accounts a WHERE a.owner_id=u.id) AS account_count FROM users u LEFT JOIN users p ON p.id=u.parent_id WHERE u.id=ANY($1::text[]) ORDER BY u.created_at`,[ids]);
-    const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,today()]);
-    const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,today()]);
-    return {users,rates,upcoming};
+    const users=await db.query(`WITH RECURSIVE branches AS (
+      SELECT id AS root,id FROM users WHERE id=ANY($1::text[])
+      UNION ALL SELECT b.root,u.id FROM branches b JOIN users u ON u.parent_id=b.id)
+      SELECT u.id,u.parent_id,u.name,u.email,u.role,u.active,u.created_at,p.name AS parent_name,
+      (SELECT count(*) FROM accounts a WHERE a.owner_id=u.id AND a.ownership_verified) AS account_count,
+      (SELECT count(*) FROM accounts a JOIN branches b ON b.id=a.owner_id WHERE b.root=u.id AND a.ownership_verified) AS team_account_count,
+      COALESCE(m.raw_usd,0) AS raw_usd,COALESCE(m.gross_usd,0) AS gross_usd,
+      COALESCE(m.downstream_usd,0) AS downstream_usd,COALESCE(m.profit_usd,0) AS profit_usd,COALESCE(m.final_profit,0) AS final_profit
+      FROM users u LEFT JOIN users p ON p.id=u.parent_id LEFT JOIN (
+        SELECT e.user_id,sum(d.raw_usd) AS raw_usd,sum(e.gross_usd) AS gross_usd,sum(e.downstream_usd) AS downstream_usd,
+          sum(e.profit_usd) AS profit_usd,sum(CASE WHEN d.state='final' THEN e.profit_usd ELSE 0 END) AS final_profit
+        FROM earnings e JOIN usage_days d ON d.id=e.usage_id WHERE d.day BETWEEN $2 AND $3 GROUP BY e.user_id
+      ) m ON m.user_id=u.id WHERE u.id=ANY($1::text[]) ORDER BY u.created_at`,[ids,q.from,q.to]);
+    const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,current]);
+    const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
+    return {users,rates,upcoming,period:q};
   });
   app.post('/api/team',async req=>{
-    const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.object({gatelink:rate,ai008:rate})}).parse(req.body);
-    const hash=await hashPassword(d.password),userId=id();
+    const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.object({gatelink:rate,ai008:rate}),effectiveFrom:date.optional()}).parse(req.body);
+    const hash=await hashPassword(d.password),userId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     return db.transaction(async tx=>{
       const [u]=await tx.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING *',[userId,req.user.id,d.email,d.name,hash]);
-      for(const p of ['gatelink','ai008'] as const) await tx.query('INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[id(),userId,p,d.rates[p],today(),req.user.id]);
+      for(const p of ['gatelink','ai008'] as const) await tx.query('INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[id(),userId,p,d.rates[p],effective,req.user.id]);
       await audit(tx,req.user.id,'team.create',userId,{name:d.name});return {user:publicUser(u)};
     });
   });
@@ -111,12 +124,12 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.put('/api/team/:id/rates',async req=>{
     const target=identifier.parse((req.params as Row).id);
-    const d=z.object({provider,rate}).parse(req.body);
+    const d=z.object({provider,rate}).parse(req.body),effective=nextDay();
     return db.transaction(async tx=>{
       await requireDirect(tx,req.user,target);
       await tx.query(`INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)
-        ON CONFLICT(user_id,provider,effective_date) DO UPDATE SET rate=EXCLUDED.rate,created_by=EXCLUDED.created_by,created_at=now()`,[id(),target,d.provider,d.rate,nextDay(),req.user.id]);
-      await audit(tx,req.user.id,'rate.update',target,{...d,effectiveDate:nextDay()});return {effectiveDate:nextDay()};
+        ON CONFLICT(user_id,provider,effective_date) DO UPDATE SET rate=EXCLUDED.rate,created_by=EXCLUDED.created_by,created_at=now()`,[id(),target,d.provider,d.rate,effective,req.user.id]);
+      await audit(tx,req.user.id,'rate.update',target,{...d,effectiveDate:effective});return {effectiveDate:effective};
     });
   });
 
@@ -131,18 +144,18 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.post('/api/connections',async req=>{
     await requireOwner(req.user);
-    const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate}).parse(req.body);
-    const connectionId=id();
+    const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional()}).parse(req.body);
+    const connectionId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     await db.transaction(async tx=>{
       await tx.query('INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,$2,$3,$4,$5)',[connectionId,d.provider,d.name,box.encrypt({username:d.username,password:d.password}),d.payoutRate]);
-      await tx.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)',[id(),connectionId,d.payoutRate,today(),req.user.id]);
+      await tx.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)',[id(),connectionId,d.payoutRate,effective,req.user.id]);
       await audit(tx,req.user.id,'connection.create',connectionId,{provider:d.provider});
     });
     const job=await enqueue(db,box,req.user.id,connectionId,'sync',{},id());
     return {id:connectionId,job};
   });
   app.patch('/api/connections/:id',async req=>{
-    await requireOwner(req.user);const target=identifier.parse((req.params as Row).id);
+    await requireOwner(req.user);const target=identifier.parse((req.params as Row).id),effective=nextDay();
     const d=z.object({enabled:z.boolean().optional(),payoutRate:rate.optional(),username:z.string().max(200).optional(),password:z.string().min(1).max(500).optional(),name:z.string().trim().min(1).max(80).optional()}).parse(req.body);
     await db.transaction(async tx=>{
       const [c]=await tx.query('SELECT * FROM connections WHERE id=$1 FOR UPDATE',[target]);assert(c,'平台连接不存在',404);
@@ -150,7 +163,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       await tx.query('UPDATE connections SET enabled=$2,credentials=$3,name=$4 WHERE id=$1',[target,d.enabled??c.enabled,box.encrypt({username:d.username??credentials.username,password:d.password??credentials.password}),d.name??c.name]);
       if(d.payoutRate!==undefined) {
         await tx.query(`INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)
-          ON CONFLICT(connection_id,effective_date) DO UPDATE SET rate=EXCLUDED.rate,created_by=EXCLUDED.created_by,created_at=now()`,[id(),target,d.payoutRate,nextDay(),req.user.id]);
+          ON CONFLICT(connection_id,effective_date) DO UPDATE SET rate=EXCLUDED.rate,created_by=EXCLUDED.created_by,created_at=now()`,[id(),target,d.payoutRate,effective,req.user.id]);
       }
       await audit(tx,req.user.id,'connection.update',target,{enabled:d.enabled,payoutRate:d.payoutRate});
     });return {ok:true};
@@ -174,9 +187,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.get('/api/accounts',async req=>{
     const ids=await subtree(db,req.user.id),root=req.user.role==='owner';
     const accounts=await db.query(`SELECT a.*,u.name AS owner_name FROM accounts a LEFT JOIN users u ON u.id=a.owner_id
-      WHERE a.owner_id=ANY($1::text[]) OR ($2::boolean AND a.owner_id IS NULL) ORDER BY a.created_at DESC`,[ids,root]);
+      WHERE a.owner_id=ANY($1::text[]) OR $2::boolean ORDER BY a.created_at DESC`,[ids,root]);
     const bindings=await db.query(`SELECT b.*,c.provider,c.name AS connection_name FROM bindings b JOIN connections c ON c.id=b.connection_id JOIN accounts a ON a.id=b.account_id
-      WHERE a.owner_id=ANY($1::text[]) OR ($2::boolean AND a.owner_id IS NULL)`,[ids,root]);
+      WHERE (a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR $2::boolean`,[ids,root]);
     return {accounts:accounts.map(a=>({...a,bindings:bindings.filter(b=>b.account_id===a.id)}))};
   });
   app.post('/api/accounts',async req=>{
@@ -189,21 +202,26 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.post('/api/accounts/:id/assign',async req=>{
     await requireOwner(req.user);const target=identifier.parse((req.params as Row).id),d=z.object({userId:identifier}).parse(req.body);
     await db.transaction(async tx=>{
-      const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[target]);assert(a && !a.owner_id,'只有待归属账号可分配；已归属账号不可随意改挂团队',409);
+      const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[target]);assert(a && !a.ownership_verified,'只有未核实归属账号可分配；已确认账号不可改挂团队',409);
       const [u]=await tx.query('SELECT id FROM users WHERE id=$1 AND active=true',[d.userId]);assert(u,'用户不存在或已停用');
-      await tx.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[target,d.userId]);await audit(tx,req.user.id,'account.assign',target,{userId:d.userId});
+      await tx.query('UPDATE accounts SET owner_id=$2,ownership_verified=true WHERE id=$1',[target,d.userId]);await audit(tx,req.user.id,'account.assign',target,{userId:d.userId});
     });return {ok:true};
   });
   app.post('/api/accounts/:id/authorize',async req=>{
     const accountId=identifier.parse((req.params as Row).id);
     const d=z.object({targets:z.array(z.object({connectionId:identifier,options:optionSchema})).min(1).max(10),key}).parse(req.body);
-    const [a]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,req.user.id]);assert(a,'只能为自己名下的账号上号',403);
-    const jobs=[];
-    for(const t of d.targets) {
-      const [c]=await db.query('SELECT id FROM connections WHERE id=$1 AND enabled=true',[t.connectionId]);assert(c,'连接不存在或已停用');
-      const [b]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!b,'此账号已在所选平台上号，不能重复提交',409);
-      jobs.push(await enqueue(db,box,req.user.id,c.id,'oauth_start',{accountId,options:t.options},d.key));
-    }return {jobs};
+    return db.transaction(async tx=>{
+      const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2 FOR UPDATE',[accountId,req.user.id]);assert(a,'只能为自己名下的账号上号',403);
+      assert(new Set(d.targets.map(t=>t.connectionId)).size===d.targets.length,'不能重复选择同一平台连接');
+      const jobs=[];
+      for(const t of d.targets) {
+        const [c]=await tx.query('SELECT id FROM connections WHERE id=$1 AND enabled=true',[t.connectionId]);assert(c,'连接不存在或已停用');
+        const [b]=await tx.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!b,'此账号已在所选平台上号，请联系管理员核实归属',409);
+        const [pending]=await tx.query(`SELECT id FROM oauth_attempts WHERE account_id=$1 AND connection_id=$2 AND state IN ('pending','exchanging') AND expires_at>now()`,[accountId,c.id]);
+        assert(!pending,'已有有效授权流程，请完成回调或等待过期',409);
+        jobs.push(await enqueue(tx,box,req.user.id,c.id,'oauth_start',{accountId,options:t.options},d.key));
+      }return {jobs};
+    });
   });
   app.get('/api/accounts/:id/attempts',async req=>{
     const accountId=identifier.parse((req.params as Row).id);
@@ -215,23 +233,27 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const attemptId=identifier.parse((req.params as Row).id),d=z.object({callback:z.string().trim().min(1).max(8000),key}).parse(req.body);
     return db.transaction(async tx=>{
       const [a]=await tx.query('SELECT * FROM oauth_attempts WHERE id=$1 AND user_id=$2 FOR UPDATE',[attemptId,req.user.id]);assert(a,'授权流程不存在',404);
-      const [previous]=await tx.query(`SELECT id,state FROM jobs WHERE requested_by=$1 AND kind='oauth_exchange' AND connection_id=$2 AND idempotency_key=$3`,[req.user.id,a.connection_id,d.key]);if(previous)return previous;
+      const [previous]=await tx.query(`SELECT id FROM jobs WHERE requested_by=$1 AND kind='oauth_exchange' AND connection_id=$2 AND idempotency_key=$3`,[req.user.id,a.connection_id,d.key]);
+      if(previous)return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,attemptId,callback:d.callback},d.key);
       assert(a.state==='pending' && new Date(a.expires_at)>new Date(),'授权已过期或已经提交，请核对任务状态',409);
       await tx.query(`UPDATE oauth_attempts SET state='exchanging' WHERE id=$1`,[a.id]);
-      return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{attemptId,callback:d.callback},d.key);
+      return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,attemptId,callback:d.callback},d.key);
     });
   });
   app.post('/api/accounts/:id/import-token',async req=>{
     const accountId=identifier.parse((req.params as Row).id),d=z.object({connectionId:identifier,refreshToken:z.string().trim().min(10).max(10000),options:optionSchema,key}).parse(req.body);
-    const [a]=await db.query('SELECT id FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,req.user.id]);assert(a,'只能为自己名下账号上号',403);
-    const [c]=await db.query(`SELECT * FROM connections WHERE id=$1 AND enabled=true AND provider='ai008'`,[d.connectionId]);assert(c,'此平台不支持 RT 导入');
-    const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!bound,'账号已绑定到此平台',409);
-    return enqueue(db,box,req.user.id,c.id,'import_rt',{accountId,options:d.options,refreshToken:d.refreshToken},d.key);
+    return db.transaction(async tx=>{
+      const [a]=await tx.query('SELECT id FROM accounts WHERE id=$1 AND owner_id=$2 FOR UPDATE',[accountId,req.user.id]);assert(a,'只能为自己名下账号上号',403);
+      const [c]=await tx.query(`SELECT * FROM connections WHERE id=$1 AND enabled=true AND provider='ai008'`,[d.connectionId]);assert(c,'此平台不支持 RT 导入');
+      const [bound]=await tx.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!bound,'账号已在此平台，请联系管理员核实归属',409);
+      const [pending]=await tx.query(`SELECT id FROM oauth_attempts WHERE account_id=$1 AND connection_id=$2 AND state IN ('pending','exchanging') AND expires_at>now()`,[accountId,c.id]);assert(!pending,'此账号已有有效 OAuth 流程，请先完成或等待过期',409);
+      return enqueue(tx,box,req.user.id,c.id,'import_rt',{accountId,options:d.options,refreshToken:d.refreshToken},d.key);
+    });
   });
   app.post('/api/bindings/:id/status',async req=>{
     const bindingId=identifier.parse((req.params as Row).id),d=z.object({enabled:z.boolean(),key}).parse(req.body);
-    const [b]=await db.query('SELECT b.*,a.owner_id FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1',[bindingId]);
-    assert(b && (b.owner_id===req.user.id||req.user.role==='owner'),'不能操作该账号',403);
+    const [b]=await db.query('SELECT b.*,a.owner_id,a.ownership_verified FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1',[bindingId]);
+    assert(b && ((b.ownership_verified&&b.owner_id===req.user.id)||req.user.role==='owner'),'不能操作该账号',403);
     return enqueue(db,box,req.user.id,b.connection_id,'set_enabled',{bindingId,enabled:d.enabled},d.key);
   });
 
@@ -242,19 +264,26 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     // OAuth URLs belong only to the submitting user, including in admin views.
     return {jobs:jobs.map(j=>j.kind==='oauth_start' && j.requested_by!==req.user.id?{...j,result:null}:j)};
   });
-  async function usageRows(user:Row,query:any) {
-    const q=z.object({from:date.optional(),to:date.optional(),provider:provider.optional()}).parse(query);
+  async function usageRows(user:Row,query:any,exporting=false) {
+    const q=z.object({from:date.optional(),to:date.optional(),provider:provider.optional(),search:z.string().max(200).default(''),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(query);
+    assert(!q.from||!q.to||q.from<=q.to,'开始日期不能晚于结束日期');
     const ids=await subtree(db,user.id);
-    return db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.evidence,u.updated_at,b.id AS binding_id,c.provider,c.name AS connection_name,
-      a.email,a.owner_id,o.name AS owner_name,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd
-      FROM usage_days u JOIN bindings b ON b.id=u.binding_id JOIN connections c ON c.id=b.connection_id
+    const params=[user.id,ids,user.role==='owner',q.from??null,q.to??null,q.provider??null,q.search];
+    const source=`FROM usage_days u JOIN bindings b ON b.id=u.binding_id JOIN connections c ON c.id=b.connection_id
       JOIN accounts a ON a.id=b.account_id LEFT JOIN users o ON o.id=a.owner_id
       LEFT JOIN earnings e ON e.usage_id=u.id AND e.user_id=$1
-      WHERE (a.owner_id=ANY($2::text[]) OR ($3::boolean AND a.owner_id IS NULL)) AND ($4::date IS NULL OR u.day>=$4) AND ($5::date IS NULL OR u.day<=$5)
-      AND ($6::text IS NULL OR c.provider=$6) ORDER BY u.day DESC,a.email LIMIT 10000`,[user.id,ids,user.role==='owner',q.from??null,q.to??null,q.provider??null]);
+      WHERE ((a.owner_id=ANY($2::text[]) AND a.ownership_verified) OR $3::boolean) AND ($4::date IS NULL OR u.day>=$4) AND ($5::date IS NULL OR u.day<=$5)
+      AND ($6::text IS NULL OR c.provider=$6) AND ($7::text='' OR strpos(lower(a.email||' '||COALESCE(o.name,'')),lower($7))>0)`;
+    const [totals]=await db.query(`SELECT count(*) AS count,COALESCE(sum(u.raw_usd),0) AS raw_usd,COALESCE(sum(e.gross_usd),0) AS gross_usd,
+      COALESCE(sum(e.downstream_usd),0) AS downstream_usd,COALESCE(sum(e.profit_usd),0) AS profit_usd ${source}`,params);
+    if(exporting)assert(Number(totals.count)<=100000,'导出超过 100,000 条，请缩小日期或平台范围；未导出截断账单',400);
+    const rows=await db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.evidence,u.updated_at,b.id AS binding_id,c.provider,c.name AS connection_name,
+      a.email,a.owner_id,a.ownership_verified,o.name AS owner_name,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd ${source}
+      ORDER BY u.day DESC,a.email,u.id LIMIT $8 OFFSET $9`,[...params,exporting?100000:12,exporting?0:(q.page-1)*12]);
+    return {rows,totals,total:Number(totals.count),page:q.page};
   }
-  app.get('/api/usage',async req=>({rows:await usageRows(req.user,req.query)}));
-  app.get('/api/usage/export',async(req,reply)=>{const rows=await usageRows(req.user,req.query);return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-usage.csv"').send(csv(rows,[['day','日期（北京时间）'],['email','账号'],['connection_name','平台'],['raw_usd','平台账单 USD'],['rate','结算折扣'],['gross_usd','我的应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','我的利润 USD'],['state','核实状态']]));});
+  app.get('/api/usage',async req=>usageRows(req.user,req.query));
+  app.get('/api/usage/export',async(req,reply)=>{const {rows}=await usageRows(req.user,req.query,true);return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-usage.csv"').send(csv(rows,[['day','日期（北京时间）'],['email','账号'],['connection_name','平台'],['raw_usd','平台账单 USD'],['rate','结算折扣'],['gross_usd','我的应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','我的利润 USD'],['state','核实状态']]));});
   app.post('/api/usage/import',async req=>{
     await requireOwner(req.user);
     const d=z.object({evidence:z.string().trim().min(5).max(2000),rows:z.array(z.object({bindingId:identifier,day:date,rawUsd:money})).min(1).max(1000)}).parse(req.body);
@@ -265,7 +294,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.get('/api/dashboard',async req=>{
     const ids=await subtree(db,req.user.id);
-    const [accounts]=await db.query('SELECT count(*) AS total FROM accounts WHERE owner_id=ANY($1::text[])',[ids]);
+    const [accounts]=await db.query('SELECT count(*) AS total FROM accounts WHERE owner_id=ANY($1::text[]) AND ownership_verified',[ids]);
     const [team]=await db.query('SELECT count(*) AS total FROM users WHERE id=ANY($1::text[]) AND id<>$2',[ids,req.user.id]);
     const [totals]=await db.query(`SELECT COALESCE(sum(u.raw_usd),0) AS raw_usd,COALESCE(sum(e.gross_usd),0) AS gross_usd,COALESCE(sum(e.downstream_usd),0) AS downstream_usd,COALESCE(sum(e.profit_usd),0) AS profit_usd,
       COALESCE(sum(CASE WHEN u.state='final' THEN e.profit_usd ELSE 0 END),0) AS final_profit FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1`,[req.user.id]);
@@ -273,18 +302,30 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1 GROUP BY u.day ORDER BY u.day DESC LIMIT 14`,[req.user.id]);
     const platforms=await db.query(`SELECT c.provider,c.name,c.status,c.last_sync_at,count(b.id) AS account_count,COALESCE(sum(b.daily_usd),0) AS daily_usd
       FROM connections c LEFT JOIN bindings b ON b.connection_id=c.id LEFT JOIN accounts a ON a.id=b.account_id
-      WHERE c.enabled=true AND (a.owner_id=ANY($1::text[]) OR b.id IS NULL OR $2::boolean) GROUP BY c.id ORDER BY c.created_at`,[ids,req.user.role==='owner']);
+      WHERE c.enabled=true AND ((a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR b.id IS NULL OR $2::boolean) GROUP BY c.id ORDER BY c.created_at`,[ids,req.user.role==='owner']);
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
-    const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE owner_id IS NULL'):[{total:0}];
+    const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];
     return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
   });
   app.get('/api/finance',async req=>{
+    const q=z.object({tab:z.enum(['all','mine','children']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);
+    const filter=(alias:string)=>`(${alias}.user_id=$1 OR ${alias}.payer_id=$1) AND ($2::text='all' OR ($2='mine' AND ${alias}.user_id=$1) OR ($2='children' AND ${alias}.payer_id=$1))`;
+    const params=[req.user.id,q.tab],offset=(q.page-1)*12;
+    const [ic]=await db.query(`SELECT count(*) AS count FROM invoices i WHERE ${filter('i')}`,params);
+    const [wc]=await db.query(`SELECT count(*) AS count FROM withdrawals w WHERE ${filter('w')}`,params);
+    const [pending]=await db.query(`SELECT COALESCE(sum(profit_usd),0) AS amount FROM invoices WHERE user_id=$1 AND state='pending'`,[req.user.id]);
     const invoices=await db.query(`SELECT i.*,u.name AS user_name,p.name AS payer_name FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users p ON p.id=i.payer_id
-      WHERE i.user_id=$1 OR i.payer_id=$1 ORDER BY i.created_at DESC LIMIT 500`,[req.user.id]);
+      WHERE ${filter('i')} ORDER BY i.created_at DESC,i.id LIMIT 12 OFFSET $3`,[...params,offset]);
     const withdrawals=await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
-      WHERE w.user_id=$1 OR w.payer_id=$1 ORDER BY w.created_at DESC LIMIT 500`,[req.user.id]);
-    const ledger=await db.query('SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at DESC LIMIT 500',[req.user.id]);
-    return {balance:await balance(db,req.user.id),invoices,withdrawals,ledger};
+      WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]);
+    const ledger=await db.query('SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20',[req.user.id]);
+    return {balance:await balance(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger};
+  });
+  app.get('/api/ledger/export',async(req,reply)=>{
+    const [total]=await db.query('SELECT count(*) AS count FROM ledger WHERE user_id=$1',[req.user.id]);
+    assert(Number(total.count)<=100000,'流水超过 100,000 条，请联系管理员按数据库备份导出');
+    const rows=await db.query('SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at,id',[req.user.id]);
+    return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-ledger.csv"').send(csv(rows,[['created_at','时间'],['kind','类型'],['amount_usd','金额 USD'],['reference_id','关联账单或提现编号']]));
   });
   app.post('/api/invoices',async req=>{
     const d=z.object({userId:identifier,from:date,to:date}).parse(req.body);return createInvoice(db,req.user,d.userId,d.from,d.to);
@@ -299,10 +340,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition',`attachment; filename="${inv.number}.csv"`).send(csv(items,[['day','日期'],['email','账号'],['platform','平台'],['raw_usd','账单 USD'],['rate','折扣'],['gross_usd','应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','利润 USD']]));
   });
   app.post('/api/withdrawals',async req=>{
-    const d=z.object({amount:money,method:z.string().trim().min(1).max(80),destination:z.string().trim().min(3).max(500)}).parse(req.body);return requestWithdrawal(db,req.user,d.amount,d.method,d.destination);
+    const d=z.object({amount:money,method:z.string().trim().min(1).max(80),destination:z.string().trim().min(3).max(500),key}).parse(req.body);const w=await requestWithdrawal(db,req.user,d.amount,d.method,d.destination,d.key,box);return {...w,destination:withdrawalDestination(box,w.destination)};
   });
   app.post('/api/withdrawals/:id/review',async req=>{
-    const d=z.object({action:z.enum(['paid','rejected']),reference:z.string().trim().min(3).max(500)}).parse(req.body);return reviewWithdrawal(db,req.user,identifier.parse((req.params as Row).id),d.action,d.reference);
+    const d=z.object({action:z.enum(['paid','rejected']),reference:z.string().trim().min(3).max(500)}).parse(req.body);const w=await reviewWithdrawal(db,req.user,identifier.parse((req.params as Row).id),d.action,d.reference);return {...w,destination:withdrawalDestination(box,w.destination)};
   });
   app.get('/api/audits',async req=>({rows:await db.query(`SELECT a.*,u.name AS actor_name FROM audits a LEFT JOIN users u ON u.id=a.actor_id WHERE a.actor_id=$1 OR $2::boolean ORDER BY a.created_at DESC LIMIT 300`,[req.user.id,req.user.role==='owner'])}));
   return {app,box};

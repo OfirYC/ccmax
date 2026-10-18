@@ -8,11 +8,13 @@ import { createApp } from './app.js';
 import { createWorker, enqueue } from './worker.js';
 
 const prod=process.env.NODE_ENV==='production';
+const appUrl=process.env.APP_URL||(process.env.RAILWAY_PUBLIC_DOMAIN?`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`:undefined);
+assert(!prod||(appUrl && new URL(appUrl).protocol==='https:'),'生产环境必须配置 HTTPS 的 APP_URL 或 Railway 公网域名',500);
 assert(process.env.DATABASE_URL||(!prod&&process.env.ALLOW_LOCAL_DB==='true'),'生产环境必须设置 DATABASE_URL；本地开发需明确开启 ALLOW_LOCAL_DB',500);
 const db=await openDB(process.env.DATABASE_URL,process.env.LOCAL_DB_PATH||'.local/database');
 await migrate(db);await bootstrap(db,process.env);
 assert(process.env.ENCRYPTION_KEY,'生产或本地启动都必须设置 ENCRYPTION_KEY',500);
-const {app,box}=await createApp(db,{encryptionKey:process.env.ENCRYPTION_KEY,appUrl:process.env.APP_URL||'http://localhost:3000',production:prod,logger:true});
+const {app,box}=await createApp(db,{encryptionKey:process.env.ENCRYPTION_KEY,appUrl:appUrl||'http://localhost:3000',production:prod,logger:true});
 const worker=createWorker(db,box);
 await worker.recover();
 let vite:any;

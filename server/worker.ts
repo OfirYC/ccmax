@@ -1,23 +1,35 @@
 import type { DB, Row } from './db.js';
+import { createHash } from 'node:crypto';
 import { assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
 import { ProviderClient, type ProviderKey, type UpstreamAccount } from './providers.js';
 
 export async function enqueue(db:DB,box:SecretBox,actor:string,connectionId:string,kind:string,payload:object,key:string) {
-  const [existing]=await db.query('SELECT id,state FROM jobs WHERE requested_by=$1 AND connection_id=$2 AND kind=$3 AND idempotency_key=$4',[actor,connectionId,kind,key]);
-  if(existing) return existing;
-  const [job]=await db.query(`INSERT INTO jobs(id,connection_id,requested_by,kind,payload,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)
-    ON CONFLICT DO NOTHING RETURNING id,state`,[id(),connectionId,actor,kind,box.encrypt(payload),key]);
+  const subject=(payload as any).accountId??(payload as any).bindingId??(payload as any).day??null;
+  const hash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const duplicate=async()=>{
+    const [row]=await db.query('SELECT id,state,subject_id,request_hash FROM jobs WHERE requested_by=$1 AND connection_id=$2 AND kind=$3 AND idempotency_key=$4',[actor,connectionId,kind,key]);
+    if(row) assert(row.subject_id===subject && (!row.request_hash||row.request_hash===hash),'请求编号已用于不同任务',409);
+    return row?{id:row.id,state:row.state}:undefined;
+  };
+  const existing=await duplicate();if(existing)return existing;
+  const [job]=await db.query(`INSERT INTO jobs(id,connection_id,requested_by,kind,payload,idempotency_key,subject_id,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT DO NOTHING RETURNING id,state`,[id(),connectionId,actor,kind,box.encrypt(payload),key,subject,hash]);
   if(job) return job;
-  const [running]=await db.query(`SELECT id,state FROM jobs WHERE connection_id=$1 AND kind=$2 AND state IN ('queued','running') ORDER BY created_at DESC LIMIT 1`,[connectionId,kind]);
-  if(running) return running;
-  const [duplicate]=await db.query('SELECT id,state FROM jobs WHERE requested_by=$1 AND connection_id=$2 AND kind=$3 AND idempotency_key=$4',[actor,connectionId,kind,key]);
-  assert(duplicate,'任务提交冲突，请刷新后重试',409);return duplicate;
+  if(kind==='sync') {
+    const [running]=await db.query(`SELECT id,state FROM jobs WHERE connection_id=$1 AND kind='sync' AND state IN ('queued','running') LIMIT 1`,[connectionId]);
+    if(running)return running;
+  }
+  const retry=await duplicate();assert(retry,'此账号已有正在执行的上号任务，请等待完成',409);return retry;
 }
 
 export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,expectedAccount?:Row) {
   let account=expectedAccount;
-  if(account) assert(remote.email===account.email,'平台返回的邮箱与提交账号不符，需要管理员核对',409);
+  if(account) {
+    [account]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[account.id]);
+    assert(account && account.owner_id===expectedAccount!.owner_id && remote.email===account.email,'平台返回的邮箱或账号归属与提交账号不符，需要管理员核对',409);
+    if(!account.ownership_verified) await tx.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[account.id]);
+  }
   else {
     [account]=await tx.query(`INSERT INTO accounts(id,email,label) VALUES($1,$2,$3) ON CONFLICT(email) DO UPDATE SET email=EXCLUDED.email RETURNING *`,[id(),remote.email,remote.name]);
   }
@@ -64,12 +76,15 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
             const bound=await saveBinding(tx,connection,remote);
             await ingestUsage(tx,{bindingId:bound.id,day,rawUsd:remote.dailyUsd,final:false,source:'live_snapshot'});
           }
+          await tx.query(`UPDATE bindings SET status='missing' WHERE connection_id=$1 AND NOT(external_id=ANY($2::text[]))`,[connection.id,accounts.map(a=>a.id)]);
           await tx.query(`UPDATE connections SET status='connected',last_error=NULL,last_sync_at=now() WHERE id=$1`,[connection.id]);
         });
         result={accounts:accounts.length};
       } else if(job.kind==='oauth_start') {
         const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[payload.accountId,actor.id]);
         assert(account,'账号归属不匹配');
+        const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
+        assert(!bound,'平台已存在该账号，请由管理员核对归属后使用');
         const oauth=await client.startOAuth({...payload.options,email:account.email});
         const oauthId=id();
         await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
@@ -79,6 +94,8 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       } else if(job.kind==='oauth_exchange'||job.kind==='import_rt') {
         const accountId=attempt?.account_id??payload.accountId;
         const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[accountId,actor.id]);assert(account,'账号归属不匹配');
+        const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
+        assert(!bound,'平台已存在该账号，未重复写入，请由管理员核对归属');
         const remote=job.kind==='oauth_exchange'?await client.exchangeOAuth(box.decrypt(attempt!.secret),payload.callback):await client.importRefreshToken({...payload.options,email:account.email},payload.refreshToken);
         await db.transaction(async tx=>{
           await saveBinding(tx,connection,remote,account);
@@ -87,8 +104,8 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         });
         result={accountId:account.id,externalId:remote.id};
       } else if(job.kind==='set_enabled') {
-        const [binding]=await db.query(`SELECT b.*,a.owner_id FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1 AND b.connection_id=$2`,[payload.bindingId,connection.id]);
-        assert(binding && (binding.owner_id===actor.id||actor.role==='owner'),'不能操作该账号');
+        const [binding]=await db.query(`SELECT b.*,a.owner_id,a.ownership_verified FROM bindings b JOIN accounts a ON a.id=b.account_id WHERE b.id=$1 AND b.connection_id=$2`,[payload.bindingId,connection.id]);
+        assert(binding && ((binding.ownership_verified&&binding.owner_id===actor.id)||actor.role==='owner'),'不能操作该账号');
         await client.setEnabled(binding.external_id,payload.enabled);
         await db.query('UPDATE bindings SET status=$2 WHERE id=$1',[binding.id,payload.enabled?'active':'disabled']);
         result={enabled:payload.enabled};

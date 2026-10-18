@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
+import { hardenSchema } from './migrations.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -41,14 +42,14 @@ export async function migrate(db: DB) {
     .catch(() => readFile('server/schema.sql', 'utf8'));
   await db.transaction(async tx => {
     // Transaction-scoped lock also serializes startup across Railway replicas.
-    if (process.env.DATABASE_URL) await tx.query('SELECT pg_advisory_xact_lock(7164021)');
+    await tx.query('SELECT pg_advisory_xact_lock(7164021)');
     await tx.query('CREATE TABLE IF NOT EXISTS migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
     const done = await tx.query('SELECT version FROM migrations ORDER BY version');
     if (!done.some(row=>Number(row.version)===1)) {
       // PostgreSQL accepts a migration batch, while PGlite intentionally rejects
       // multiple commands in one prepared statement. Execute each DDL statement
       // separately for the local development database.
-      const statements = process.env.DATABASE_URL ? [schema] : schema.split(/;\s*\n/).map(s=>s.trim()).filter(Boolean).map(s=>s+';');
+      const statements = schema.split(/;\s*\n/).map(s=>s.trim()).filter(Boolean).map(s=>s+';');
       for (const statement of statements) await tx.query(statement);
       await tx.query('INSERT INTO migrations(version) VALUES (1)');
     }
@@ -71,6 +72,10 @@ export async function migrate(db: DB) {
         FROM connections c LEFT JOIN users u ON u.role='owner'
         ON CONFLICT(connection_id,effective_date) DO NOTHING`);
       await tx.query('INSERT INTO migrations(version) VALUES (2)');
+    }
+    if (!done.some(row=>Number(row.version)===3)) {
+      await hardenSchema(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (3)');
     }
   });
 }

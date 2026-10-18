@@ -1,4 +1,5 @@
 import { AppError, assert } from './core.js';
+import Decimal from 'decimal.js';
 
 export const PROVIDERS = {
   gatelink: { name:'Gatelink', url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:false },
@@ -64,9 +65,9 @@ export class ProviderClient {
         result.push(this.normalize(a));
       }
       const totalPages=this.provider==='gatelink'?data.totalPages:(data.pagination?.total_pages??data.pagination?.totalPages);
-      const total=this.provider==='gatelink'?data.total:(data.pagination?.total??data.pagination?.total_count);
-      if(totalPages!==undefined && page>=Number(totalPages)) return result;
-      if(total!==undefined && page*100>=Number(total)) return result;
+      const total=this.provider==='gatelink'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
+      if(totalPages!==undefined) { if(page>=Number(totalPages))return result;assert(items.length>0,'平台分页提前结束',502);continue; }
+      if(total!==undefined) { if(result.length>=Number(total))return result;assert(items.length>0,'平台分页提前结束',502);continue; }
       if(items.length<100) return result;
     }
     throw new UpstreamError(0,'平台账号超过分页上限，本次同步未提交');
@@ -76,8 +77,10 @@ export class ProviderClient {
     const snapshot=gate?a.upstreamSnapshot:a;
     const email=(gate?(a.upstreamEmail||a.submittedEmail||a.email):(a.email||a.canonical_identity?.email))?.toLowerCase();
     assert(a.id && email,'平台未返回账号 ID / 邮箱',502);
+    const daily=gate?a.upstreamDailyCost:a.stats?.daily_cost;
+    assert(daily!==null && daily!==undefined && new Decimal(String(daily)).isFinite() && new Decimal(String(daily)).gte(0),'平台未返回有效的当日用量，保留上次成功数据',502);
     return {id:String(a.id),email,name:a.name||email,status:gate?(a.upstreamStatus||a.status||'unknown'):(a.status||'unknown'),
-      dailyUsd:String((gate?a.upstreamDailyCost:a.stats?.daily_cost)??0),
+      dailyUsd:String(daily),
       cost7d:(gate?a.upstreamCost7d:a.usage_windows?.cost_7d)??snapshot?.usage_windows?.cost_7d??null,
       cost30d:snapshot?.usage_windows?.cost_30d??null,
       utilization:(gate?a.upstreamUtilization5h:a.stats?.claude_utilization?.five_hour?.utilization)??null};
@@ -120,6 +123,7 @@ export class ProviderClient {
     if(this.provider==='gatelink') {
       const data=await this.call('/api/oauth-submissions/exchange','POST',{callback,loginMethod:secret.options.email,accountType:secret.options.accountType||'speed',oauthFlow:'login',proxy:secret.options.proxy});
       assert(data.item,'平台未返回已提交账号',502);
+      assert(data.item.upstreamEmail,'平台未返回可核实的真实邮箱，请由管理员同步核对归属',502);
       return this.normalize(data.item);
     }
     let code=callback.trim();
@@ -128,13 +132,23 @@ export class ProviderClient {
     assert(code.length>0,'请输入有效的授权码');
     const data=await this.call('/api/admin/oauth-accounts/exchange','POST',{...this.aiConfig(secret.options),code,pending_state:secret.pendingState});
     assert(data.id,'平台未返回账号 ID',502);
-    return {id:String(data.id),email:(data.email||secret.options.email).toLowerCase(),name:secret.options.email,status:'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null};
+    return this.submittedIdentity(data);
   }
   async importRefreshToken(options:OAuthOptions,refreshToken:string) {
     assert(this.provider==='ai008','Gatelink 当前接口不支持 refresh token 导入，需单独完成 OAuth 授权');
     const data=await this.call('/api/admin/oauth-accounts/import-rt','POST',{...this.aiConfig(options),refresh_token:refreshToken});
     assert(data.id,'平台未返回账号 ID',502);
-    return {id:String(data.id),email:(data.email||options.email).toLowerCase(),name:options.email,status:'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null};
+    return this.submittedIdentity(data);
+  }
+  private async submittedIdentity(data:any):Promise<UpstreamAccount> {
+    // The label supplied by the user is never proof of ownership. If the write
+    // response omits the canonical email, verify it against the upstream list.
+    const email=data.canonical_identity?.email||data.email;
+    if(!email) {
+      const remote=(await this.listAccounts()).find(a=>a.id===String(data.id));
+      assert(remote,'平台未返回可验证的真实邮箱，请同步后由管理员核对归属',502);return remote;
+    }
+    return {id:String(data.id),email:String(email).toLowerCase(),name:String(email),status:'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null};
   }
   async setEnabled(externalId:string,enabled:boolean) {
     if(this.provider==='gatelink') return this.call(`/api/admin/accounts/${encodeURIComponent(externalId)}/enabled`,'POST',{enabled});

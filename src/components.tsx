@@ -9,7 +9,7 @@ export const ToastContext=createContext<Toast>(()=>{});
 export const useToast=()=>useContext(ToastContext);
 export function Toasts({children}:{children:ReactNode}) {
   const [items,setItems]=useState<{id:number;message:string;tone:string}[]>([]);
-  const notify:Toast=(message,tone='success')=>{const id=Date.now()+Math.random();setItems(v=>[...v,{id,message,tone}]);setTimeout(()=>setItems(v=>v.filter(t=>t.id!==id)),6000);};
+  const notify:Toast=(message,tone='success')=>{const id=Date.now()+Math.random();setItems(v=>[...v.slice(-2),{id,message,tone}]);setTimeout(()=>setItems(v=>v.filter(t=>t.id!==id)),6000);};
   return <ToastContext.Provider value={notify}>{children}<div className="toast-stack" role="status" aria-live="polite">{items.map(t=><div className={`toast ${t.tone}`} key={t.id}>{t.tone==='error'?<AlertCircle size={17}/>:<Check size={17}/>}<span>{t.message}</span><button className="icon-button" aria-label="关闭通知" onClick={()=>setItems(v=>v.filter(i=>i.id!==t.id))}><X size={14}/></button></div>)}</div></ToastContext.Provider>;
 }
 export function Modal({title,subtitle,children,onClose,wide=false}:{title:string;subtitle?:string;children:ReactNode;onClose:()=>void;wide?:boolean}) {
@@ -22,7 +22,7 @@ export function Submit({children,busy=false}:{children:ReactNode;busy?:boolean})
 export function Empty({title='暂无数据',detail,action}:{title?:string;detail?:string;action?:ReactNode}) {return <div className="empty"><div className="empty-icon"><Inbox size={25}/></div><h3>{title}</h3>{detail&&<p>{detail}</p>}{action}</div>;}
 export function ErrorBox({error}:{error?:string}) {return error?<div className="error-box" role="alert"><AlertCircle size={17}/><span>{error}</span></div>:null;}
 export function Loading(){return <div className="loading"><Loader2 size={22} className="spin"/>正在读取工作台…</div>;}
-const states:Record<string,[string,string]>={active:['正常','green'],healthy:['健康','green'],connected:['已连接','green'],pending:['待处理','amber'],provisional:['实时预估','amber'],final:['已核实','green'],confirmed:['已确认','green'],succeeded:['已完成','green'],failed:['失败','red'],needs_attention:['需要核对','amber'],error:['连接异常','red'],disabled:['已停用','gray'],queued:['排队中','gray'],running:['执行中','blue'],paid:['已打款','green'],rejected:['已驳回','red'],unknown:['待核对','gray'],'已入库':['已入库','green']};
+const states:Record<string,[string,string]>={active:['正常','green'],healthy:['健康','green'],connected:['已连接','green'],pending:['待处理','amber'],provisional:['实时预估','amber'],final:['已核实','green'],confirmed:['已确认','green'],succeeded:['已完成','green'],failed:['失败','red'],needs_attention:['需要核对','amber'],error:['连接异常','red'],disabled:['已停用','gray'],queued:['排队中','gray'],running:['执行中','blue'],paid:['已打款','green'],rejected:['已驳回','red'],missing:['上游未检出','amber'],unknown:['待核对','gray'],'已入库':['已入库','green']};
 export function Badge({state,label}:{state:string;label?:string}) {const [text,color]=states[state]||[state,'gray'];return <span className={`badge ${color}`}><i/>{label||text}</span>;}
 export function PlatformMark({provider,size='normal'}:{provider:string;size?:string}) {return <span className={`platform-mark ${provider} ${size}`}>{provider==='ai008'?'a':'G'}<span>{provider==='ai008'?'✳':'↗'}</span></span>;}
 export function PageHead({eyebrow,title,description,actions}:{eyebrow:string;title:string;description:string;actions?:ReactNode}) {return <div className="page-head"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div><div className="actions">{actions}</div></div>;}
