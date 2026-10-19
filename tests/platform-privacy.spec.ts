@@ -27,7 +27,7 @@ test('all platform surfaces ignore private account labels and display personal o
     await identity(page.locator('.platform-identity').filter({hasText:'AI008'}).first(),'0.6000');await expect(page.locator('body')).not.toContainText('private-upstream-');
     if(path==='/accounts'){
       await page.screenshot({path:'test-results/platform-names-accounts-desktop.png',fullPage:true});
-      await page.getByRole('row').filter({hasText:account.email}).getByRole('button',{name:'平台管理',exact:true}).click();
+      await page.getByRole('article').filter({hasText:account.email}).getByRole('button',{name:'平台管理',exact:true}).click();
       await expect(page.getByRole('dialog',{name:'平台账号管理'})).not.toContainText('private-upstream-');await page.getByRole('button',{name:'关闭弹窗'}).click();
     }
     if(path==='/jobs'){
@@ -41,9 +41,9 @@ test('all platform surfaces ignore private account labels and display personal o
   await expect(page.getByRole('button',{name:'读取历史账单',exact:true})).toHaveCount(0);
   await page.goto('/finance');await expect(page.getByText('每天北京时间 02:00 后自动更新昨日账单。',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'生成结算账单',exact:true})).toHaveCount(0);await expect(page.locator('body')).not.toContainText('private-upstream-');
   await page.locator('.user-card').click();await page.getByLabel('登录邮箱').fill('leaf@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-agent-password');await page.getByRole('button',{name:'进入工作空间'}).click();await expect(page.locator('.user-card strong')).toHaveText('测试下级');
-  await page.goto('/accounts');await identity(page.getByRole('row').filter({hasText:account.email}).locator('.platform-identity').filter({hasText:'AI008'}).first(),'0.1000');
+  await page.goto('/accounts');await identity(page.getByRole('article').filter({hasText:account.email}).locator('.platform-identity').filter({hasText:'AI008'}).first(),'0.1000');
   await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.screenshot({path:'test-results/platform-names-accounts-mobile.png',fullPage:true});
-  const mobilePlatform=page.getByRole('row').filter({hasText:account.email}).locator('.platform-identity').filter({hasText:'AI008'}).first();
+  const mobilePlatform=page.getByRole('article').filter({hasText:account.email}).locator('.platform-identity').filter({hasText:'AI008'}).first();
   await mobilePlatform.scrollIntoViewIfNeeded();await identity(mobilePlatform,'0.1000');await expect(mobilePlatform).toBeInViewport();
   await page.screenshot({path:'test-results/platform-names-accounts-mobile-platform.png',fullPage:true});
 });

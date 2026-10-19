@@ -46,7 +46,7 @@ test('dashboard and account amounts match attributed activity, and prior-day det
 test('a delayed older refresh cannot overwrite the newer account snapshot',async({page})=>{
   await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
   await page.goto('/');await page.getByLabel('登录邮箱').fill('agent@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-agent-password');await page.getByRole('button',{name:'进入工作空间'}).click();
-  await page.locator('.nav-item[href="/accounts"]').click();await expect(page.locator('tbody tr').filter({hasText:'claude-fixture@example.com'})).toHaveCount(1);
+  await page.locator('.nav-item[href="/accounts"]').click();await expect(page.getByRole('article',{name:'claude-fixture@example.com',exact:true})).toHaveCount(1);
   let release:()=>void=()=>{},started:()=>void=()=>{},n=0;const held=new Promise<void>(r=>release=r),requested=new Promise<void>(r=>started=r);
   await page.route('**/api/accounts',async route=>{
     const sequence=++n,response=await route.fetch(),data=await response.json();
@@ -55,10 +55,10 @@ test('a delayed older refresh cannot overwrite the newer account snapshot',async
     await route.fulfill({response,json:data});
   });
   await page.getByRole('button',{name:'刷新账号',exact:true}).click();await requested;
-  await page.getByRole('button',{name:'刷新账号',exact:true}).click();await expect(page.locator('tbody')).toContainText('newer-response');
+  await page.getByRole('button',{name:'刷新账号',exact:true}).click();await expect(page.locator('.pool-card-grid')).toContainText('newer-response');
   const late=page.waitForResponse(r=>r.url().endsWith('/api/accounts'));release();await (await late).finished();
   await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
-  await expect(page.locator('tbody')).toContainText('newer-response');await expect(page.locator('tbody')).not.toContainText('older-response');
+  await expect(page.locator('.pool-card-grid')).toContainText('newer-response');await expect(page.locator('.pool-card-grid')).not.toContainText('older-response');
 });
 
 test('model activity switches languages and refreshes snapshots without exposing upstream accounts',async({page})=>{

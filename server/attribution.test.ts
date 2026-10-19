@@ -62,6 +62,8 @@ describe('independent account, platform and recursive team reconciliation',()=>{
     expect(dashboard.platforms.find((p:any)=>p.id===gate)).toMatchObject({account_count:2,daily_usd:'7.125',daily_covered:1});
     expect(dashboard.platforms).toHaveLength(4);
     const accounts=await get('/api/accounts');expect(accounts.accounts).toHaveLength(7);const bound=accounts.accounts.flatMap((v:any)=>v.bindings);expect(bound).toHaveLength(8);
+    expect(accounts.day).toBe(today());
+    for(const b of bound){const row=all.rows.find((r:any)=>r.id===b.id);expect(b.telemetry).toEqual(row.telemetry);expect(b.data_fresh).toBe(row.fresh);expect(typeof b.connection_enabled).toBe('boolean');expect(b).not.toHaveProperty('data');}
     expect(bound.find((v:any)=>v.account_id===shared.aid&&v.connection_id===ai).today_usd).toBe('3.125');expect(bound.filter((v:any)=>v.today_usd===null)).toHaveLength(3);
     // Trend includes genuine historical observations from bindings now missing
     // or disabled; the current aggregate deliberately excludes these snapshots.

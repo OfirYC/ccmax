@@ -303,7 +303,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       WHERE (a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR $2::boolean`,[ids,root]);
     const visibleBindings=publicConnectionRows(req.user,bindings.map(({data,enabled,...b})=>{
       const {telemetry,fresh}=snapshotView({...b,data,enabled});
-      return {...b,data_fresh:fresh,snapshot_at:telemetry?.sourceAt??telemetry?.collectedAt??null,
+      return {...b,connection_enabled:enabled,telemetry,data_fresh:fresh,snapshot_at:telemetry?.sourceAt??telemetry?.collectedAt??null,
         today_usd:fresh&&telemetry?.day===today()?telemetry.periods.today.billedUsd:null};
     }));
     const proxyJobs=await db.query(`SELECT DISTINCT ON(subject_id,connection_id) subject_id,connection_id,state,error FROM jobs
@@ -316,7 +316,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       return {...a,proxy_bound:!!a.proxy_id,proxy_id:own?a.proxy_id:null,proxy_name:own?a.proxy_name:null,proxy_endpoint:own?a.proxy_endpoint:null,
         proxy_sync_state:!a.proxy_id?null:active?.state??(failed?'needs_attention':pending.length?'pending':'succeeded'),proxy_sync_error:failed?.error??null,
         bindings:visibleBindings.filter(b=>b.account_id===a.id).map(b=>({...b,proxy_verified:!!a.proxy_id&&b.proxy_id===a.proxy_id,proxy_id:own?b.proxy_id:null}))};
-    }),providers:PROVIDERS};
+    }),providers:PROVIDERS,day:today()};
   });
   app.post('/api/accounts/:id/proxy',async req=>{
     const accountId=identifier.parse((req.params as Row).id),d=z.object({proxyId:identifier}).parse(req.body);

@@ -90,7 +90,7 @@ test('Mini CC is selectable for onboarding and token import with automatic billi
  await dialog.getByRole('button',{name:'Refresh token 导入',exact:true}).click();
  await dialog.getByLabel('目标平台',{exact:true}).selectOption({label:'Mini CC Gateway · 我的结算折扣 × 0.7000'});await expect(dialog.getByLabel('账号策略')).toHaveValue('default-policy');
  await dialog.getByRole('button',{name:'关闭弹窗'}).click();
- const pendingAccount=page.getByRole('row').filter({hasText:'mini-e2e@example.com'});
+ const pendingAccount=page.getByRole('article').filter({hasText:'mini-e2e@example.com'});
  await expect(pendingAccount).toContainText('平台管理员');await expect(pendingAccount).toContainText('待授权核实');await expect(pendingAccount).not.toContainText('待分配归属');await expect(pendingAccount.getByRole('button',{name:'分配归属',exact:true})).toHaveCount(0);
  await page.getByRole('link',{name:'用量明细',exact:true}).click();await expect(page.getByText('每天北京时间 02:00 后自动更新昨日账单。',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'读取历史账单'})).toHaveCount(0);
  await page.getByRole('link',{name:'出口代理',exact:true}).click();await expect(page.locator('tbody')).toContainText('mini-e2e@example.com');await expect(page.locator('tbody')).toContainText('http://proxy.example.com:8080');await expect(page.locator('tbody')).not.toContainText('ui-private-password');
