@@ -33,7 +33,7 @@ export function t(source: string, values: readonly (string | number)[] = [], lan
 function updateDocument() {
   if (typeof document === 'undefined') return;
   document.documentElement.lang = locale;
-  document.title = t('CCMAX · 账号与代理工作空间');
+  document.title = t('CCMAX · Max 账号收益工作空间');
 }
 
 export function setLocale(next: Locale) {

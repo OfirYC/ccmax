@@ -5,6 +5,7 @@ import { hardenSchema, extendProviders, accountProxies, integrationKeys, financi
 import { telemetryMigration } from './telemetry.js';
 import { dailyBillingMigration } from './daily-billing-migration.js';
 import { snapshotRecoveryMigration } from './snapshot-recovery-migration.js';
+import { invitationMigration } from './invitations.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -133,6 +134,10 @@ export async function migrate(db: DB) {
     if (!done.some(row=>Number(row.version)===13)) {
       await snapshotRecoveryMigration(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (13)');
+    }
+    if (!done.some(row=>Number(row.version)===14)) {
+      await invitationMigration(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (14)');
     }
   });
 }

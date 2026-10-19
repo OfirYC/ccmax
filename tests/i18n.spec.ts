@@ -49,7 +49,7 @@ test('languages persist across login, navigation, refresh, and mobile use', asyn
     await page.reload();
     await expect(page.locator('h1')).toHaveText(catalog['设置与审计']);
     await expect(switcher).toHaveValue(locale);
-    await expect(page).toHaveTitle(catalog['CCMAX · 账号与代理工作空间']);
+    await expect(page).toHaveTitle(catalog['CCMAX · Max 账号收益工作空间']);
 
     // Account dialogs must be usable in each language.
     await page.locator('.nav-item[href="/accounts"]').click();

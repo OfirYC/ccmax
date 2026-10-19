@@ -20,6 +20,8 @@ import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from
 import { aggregateTelemetry } from './telemetry.js';
 import { authorizationState } from '../shared/oauth.js';
 import { validateOAuthCallback } from './oauth-callback.js';
+import { isPublicInvitation, registerInvitations } from './invitations.js';
+import { registerMonetization } from './monetization.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -72,6 +74,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       if(request.headers.origin) assert(request.headers.origin===new URL(config.appUrl).origin,'请求来源不允许',403);
     }
     if(!authorization&&path==='/api/auth/login') return;
+    if(!authorization&&isPublicInvitation(request.method,request.routeOptions.url)) return;
     let session:Row;
     if(authorization!==undefined) {
       const authenticated=await keys.authenticate(authorization);
@@ -101,6 +104,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     }
   });
   keys.register(app);
+  registerInvitations(app,db,box,config.appUrl);
+  registerMonetization(app,db);
   registerTelemetry(app,db,connectionName);
   registerBilling(app,db,box);
   app.get('/health',async()=>{await db.query('SELECT 1');return {status:'ok',service:'ccmax'};});
