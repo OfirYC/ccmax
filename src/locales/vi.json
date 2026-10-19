@@ -1356,7 +1356,6 @@
   "接入后可在首页查看每个账号近 7 天、近 30 天的已核实应收；账单记录不足时会显示覆盖情况，不把预估当作到账。": "Sau khi kết nối, trang tổng quan hiển thị khoản phải thu đã xác minh trong 7 và 30 ngày của từng tài khoản cùng mức độ đầy đủ của hóa đơn. Ước tính không được coi là tiền đã nhận.",
   "注册后，怎样开始？": "Bắt đầu thế nào sau khi đăng ký?",
   "使用 CCMAX 登录邮箱进入工作空间，添加 Claude 账号，为账号绑定专属固定出口代理并完成授权。产生有效用量后，系统按日核实账单。": "Đăng nhập bằng email CCMAX, thêm tài khoản Claude, gắn proxy đầu ra cố định riêng và hoàn tất ủy quyền. Mức sử dụng hợp lệ được xác minh theo hóa đơn ngày.",
-  "有闲置的 Claude Max 20x 额度？来 CCMAX 查看你的专属结算报价，注册后即可添加自己的账号。\n每个账号近 7 天、近 30 天已核实应收可查，确认结算后按余额申请提现。\n实际收入取决于有效用量和约定报价，订阅及代理等成本另计。\n查看报价并注册：{0}": "Có hạn mức Claude Max 20x chưa dùng? Xem báo giá quyết toán riêng trên CCMAX, đăng ký rồi thêm tài khoản của bạn.\nTheo dõi khoản phải thu đã xác minh trong 7 và 30 ngày của từng tài khoản, yêu cầu rút tiền sau khi xác nhận quyết toán.\nThu nhập thực tế phụ thuộc mức sử dụng hợp lệ và báo giá thỏa thuận. Chi phí thuê bao và proxy tính riêng.\nXem báo giá và đăng ký: {0}",
   "一条链接，一份报价。分享邀请与推广文案，对方自行注册，自动归属团队，无需逐个开户。": "Mỗi liên kết một báo giá. Chia sẻ lời mời và nội dung giới thiệu; người nhận tự đăng ký vào đúng đội, không cần tạo hộ từng tài khoản.",
   "复制推广文案": "Sao chép lời giới thiệu",
   "CCMAX · Max 账号收益工作空间": "CCMAX · Thu nhập tài khoản Max",
@@ -1371,7 +1370,8 @@
   "历史单账号收益纪录": "Kỷ lục thu nhập của một tài khoản",
   "历史单账号最高 7 天已核实应收": "Khoản phải thu 7 ngày đã xác minh cao nhất của một tài khoản",
   "基于完整 7 天已核实日账单和历史约定报价，未扣订阅及代理成本。实际收入因用量和报价而异。": "Dựa trên 7 ngày hóa đơn đã xác minh đầy đủ và báo giá lịch sử, chưa trừ chi phí thuê bao và proxy. Thu nhập thực tế thay đổi theo mức sử dụng và báo giá.",
-  "历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。": "Khoản phải thu 7 ngày đã xác minh cao nhất của một tài khoản: {0} ({1} đến {2}, giờ Bắc Kinh). Tính theo báo giá lịch sử, chưa trừ chi phí thuê bao và proxy.",
   "北京时间": "Giờ Bắc Kinh",
-  "让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。": "Tạo thu nhập từ hạn mức Claude Max chưa dùng. Xem báo giá quyết toán riêng, kết nối tài khoản và theo dõi khoản phải thu dựa trên hóa đơn đã xác minh với CCMAX."
+  "让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。": "Tạo thu nhập từ hạn mức Claude Max chưa dùng. Xem báo giá quyết toán riêng, kết nối tài khoản và theo dõi khoản phải thu dựa trên hóa đơn đã xác minh với CCMAX.",
+  "单账号历史 7 天收益最高 {0}！": "Thu nhập 7 ngày cao nhất từng ghi nhận của một tài khoản: {0}!",
+  "闲置 Claude Max，立即加入 CCMAX 变现：": "Biến hạn mức Claude Max chưa dùng thành thu nhập. Tham gia CCMAX:"
 }

@@ -19,8 +19,8 @@ export default function TeamInvitations({ providers, pricing }: { providers: [st
   }
   function copyPromotion(url: string) {
     const record = weeklyRecord.error ? null : weeklyRecord.data?.record;
-    const historical = record ? t('历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。', [money(record.receivableUsd), record.from, record.to]) + '\n' : '';
-    return copy(historical + t('有闲置的 Claude Max 20x 额度？来 CCMAX 查看你的专属结算报价，注册后即可添加自己的账号。\n每个账号近 7 天、近 30 天已核实应收可查，确认结算后按余额申请提现。\n实际收入取决于有效用量和约定报价，订阅及代理等成本另计。\n查看报价并注册：{0}', [url]));
+    const headline = record ? t('单账号历史 7 天收益最高 {0}！', [money(record.receivableUsd)]) : '';
+    return copy([headline, t('闲置 Claude Max，立即加入 CCMAX 变现：'), url].filter(Boolean).join('\n'));
   }
   return <section className="panel team-invitations">
     <div className="panel-head"><div><h2><Link2 size={17}/>{t('邀请链接')}</h2><p>{t('一条链接，一份报价。分享邀请与推广文案，对方自行注册，自动归属团队，无需逐个开户。')}</p></div><button className="button primary" disabled={!providers.length} onClick={() => { setSelected(providers.map(([p]) => p)); setCreating(true); }}><Plus size={15}/>{t('创建邀请链接')}</button></div>

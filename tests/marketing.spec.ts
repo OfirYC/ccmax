@@ -13,7 +13,7 @@ const languages = [
 ] as const;
 const translated = (catalog: Record<string, string> | null, source: string) => catalog?.[source] ?? source;
 const description = '让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。';
-const historicalMessage = '历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。';
+const historicalMessage = '单账号历史 7 天收益最高 {0}！';
 
 test('historical record displays the supplied verified week, dates and basis across landing, invitation, promotion and languages', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN'));
@@ -46,9 +46,8 @@ test('historical record displays the supplied verified week, dates and basis acr
     await page.locator('.language-switcher select').selectOption(locale);
     await campaign.getByRole('button', { name: translated(catalog, '复制推广文案') }).click();
     const promotion = await page.evaluate(() => navigator.clipboard.readText());
-    const expectedRecord = translated(catalog, historicalMessage).replace('{0}', amount).replace('{1}', report.record.from).replace('{2}', report.record.to);
-    expect(promotion).toContain(expectedRecord);
-    expect(promotion).toContain(invitation.url);
+    const expectedRecord = translated(catalog, historicalMessage).replace('{0}', amount);
+    expect(promotion).toBe(`${expectedRecord}\n${translated(catalog, '闲置 Claude Max，立即加入 CCMAX 变现：')}\n${invitation.url}`);
     if (locale !== 'zh-CN') expect(promotion).not.toMatch(/[\u3400-\u9fff]/u);
   }
   await page.locator('.language-switcher select').selectOption('zh-CN');

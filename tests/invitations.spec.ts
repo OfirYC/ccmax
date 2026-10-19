@@ -38,9 +38,7 @@ test('agents create different priced links and invitees register themselves into
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(standard.url);
   await standard.row.getByRole('button', { name: '复制推广文案' }).click();
   const promotion = await page.evaluate(() => navigator.clipboard.readText());
-  expect(promotion).toContain(standard.url);
-  expect(promotion).toContain('近 7 天、近 30 天已核实应收');
-  expect(promotion).toContain('实际收入取决于有效用量和约定报价');
+  expect(promotion).toBe(`闲置 Claude Max，立即加入 CCMAX 变现：\n${standard.url}`);
   await page.screenshot({ path: 'test-results/invitations-team-desktop.png', fullPage: true });
   const recipientContext = await browser.newContext();
   try {
