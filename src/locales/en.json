@@ -1164,5 +1164,18 @@
   "账号池概览": "Account pool overview",
   "近 30 天平台账单": "Platform bills · 30d",
   "近 7 天平台账单": "Platform bills · 7d",
-  "邮箱名称": "Email address"
+  "邮箱名称": "Email address",
+  "上游采样数据": "Upstream samples",
+  "今日 Token": "Tokens today",
+  "已启用平台 / 全部连接": "Enabled platforms / all connections",
+  "平台当前数据": "Current platform data",
+  "当前用量与状态": "Current usage and status",
+  "当前统计范围内暂无平台账号": "No platform accounts in this scope",
+  "最近数据时间": "Latest sample",
+  "统计每条平台连接": "Each platform connection counted separately",
+  "部分数据已过期或尚未采集": "Some samples are expired or unavailable",
+  "平台数据按账号归属统计；过期或缺失指标不计入汇总。平台账单为折扣前金额，不等于结算收益。": "Platform data follows account ownership. Expired or missing metrics are excluded. Bills are before the settlement discount and are not earnings.",
+  "平台能力与同步信息": "Capabilities and sync details",
+  "查看各平台用量、运行状态与结算价格，直接管理平台连接和上号。": "View platform usage, status and settlement prices. Manage connections and onboard accounts from each card.",
+  "每 30 秒自动刷新展示": "Display refreshes every 30 seconds"
 }

@@ -1164,5 +1164,18 @@
   "账号池概览": "Tổng quan kho tài khoản",
   "近 30 天平台账单": "Hóa đơn nền tảng · 30 ngày",
   "近 7 天平台账单": "Hóa đơn nền tảng · 7 ngày",
-  "邮箱名称": "Địa chỉ email"
+  "邮箱名称": "Địa chỉ email",
+  "上游采样数据": "Dữ liệu mẫu từ nền tảng",
+  "今日 Token": "Token hôm nay",
+  "已启用平台 / 全部连接": "Nền tảng đã bật / tất cả kết nối",
+  "平台当前数据": "Dữ liệu nền tảng hiện tại",
+  "当前用量与状态": "Mức dùng và trạng thái hiện tại",
+  "当前统计范围内暂无平台账号": "Chưa có tài khoản nền tảng trong phạm vi này",
+  "最近数据时间": "Mẫu mới nhất",
+  "统计每条平台连接": "Thống kê riêng từng kết nối nền tảng",
+  "部分数据已过期或尚未采集": "Một số mẫu đã hết hạn hoặc chưa được thu thập",
+  "平台数据按账号归属统计；过期或缺失指标不计入汇总。平台账单为折扣前金额，不等于结算收益。": "Dữ liệu nền tảng được thống kê theo chủ tài khoản. Chỉ số hết hạn hoặc thiếu không được tính. Hóa đơn chưa áp dụng tỷ lệ quyết toán và không phải thu nhập.",
+  "平台能力与同步信息": "Tính năng và thông tin đồng bộ",
+  "查看各平台用量、运行状态与结算价格，直接管理平台连接和上号。": "Xem mức dùng, trạng thái và giá quyết toán từng nền tảng. Quản lý kết nối và cấp quyền tài khoản ngay trên thẻ.",
+  "每 30 秒自动刷新展示": "Tự động làm mới hiển thị mỗi 30 giây"
 }

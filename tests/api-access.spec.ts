@@ -34,6 +34,9 @@ test('an agent creates scoped API keys, integrates independently, and revokes ac
   const accounts = await request.get('/api/accounts', { headers: { authorization: `Bearer ${token}` } });
   expect(accounts.status()).toBe(200);
   expect((await accounts.json()).accounts.map((account: any) => account.email)).toContain('claude-fixture@example.com');
+  const platformActivity=await request.get('/api/telemetry/platforms',{headers:{authorization:`Bearer ${token}`}});
+  expect(platformActivity.status()).toBe(200);expect((await platformActivity.json()).totals.periods.today.bindings).toBe(2);
+  expect(await platformActivity.text()).not.toContain('claude-fixture@example.com');
   const forbidden = await request.post('/api/accounts', { headers: { authorization: `Bearer ${token}` }, data: { email: 'no-scope@example.com' } });
   expect(forbidden.status()).toBe(403); expect((await forbidden.json()).code).toBe('INSUFFICIENT_SCOPE');
   await page.reload();

@@ -1,10 +1,24 @@
 import type { FastifyInstance } from 'fastify';
-import type { DB } from './db.js';
+import type { DB, Row } from './db.js';
 import { today } from './core.js';
 import { aggregateTelemetry,staleSeconds } from './telemetry.js';
 import { attributionTotals,telemetryFilters as filters,visibleTelemetry,type ConnectionName } from './telemetry-data.js';
+import { telemetryPeriods } from '../shared/telemetry-periods.js';
+
+function platformActivity(rows:Row[]) {
+  const dates=rows.flatMap(r=>r.telemetry?.sourceAt?[r.telemetry.sourceAt as string]:[]).sort();
+  return {attribution:attributionTotals(rows),oldestSourceAt:dates[0]??null,newestSourceAt:dates.at(-1)??null,
+    periods:Object.fromEntries(telemetryPeriods.map(period=>[period,aggregateTelemetry(rows,period)]))};
+}
 
 export function registerTelemetry(app:FastifyInstance,db:DB,name:ConnectionName) {
+  app.get('/api/telemetry/platforms',async req=>{
+    const q=filters.omit({period:true,page:true}).parse(req.query),rows=await visibleTelemetry(db,req.user,{...q,period:'today',page:1},name);
+    const groups=new Map<string,Row[]>();
+    for(const row of rows){const group=groups.get(row.connection_id)??[];group.push(row);groups.set(row.connection_id,group);}
+    return {scope:q.scope,day:today(),generatedAt:new Date().toISOString(),staleSeconds:staleSeconds(),totals:platformActivity(rows),
+      platforms:[...groups].map(([connectionId,group])=>({id:connectionId,provider:group[0].provider,...platformActivity(group)}))};
+  });
   app.get('/api/telemetry',async req=>{
     const q=filters.parse(req.query),rows=await visibleTelemetry(db,req.user,q,name);
     const platforms=[...new Set(rows.map(r=>r.connection_id))].map(connectionId=>{

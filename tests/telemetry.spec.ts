@@ -105,4 +105,5 @@ test('owner sees unassigned AI008 usage and a dated model cache without assignin
   await page.locator('.telemetry-models').screenshot({path:'test-results/owner-ai008-model-cache-mobile.png'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.getByRole('button',{name:'仅本人',exact:true}).click();await expect(page.locator('.telemetry-attribution')).toHaveCount(0);
+  await expect(page.getByText('当前范围没有平台账号',{exact:true})).toBeVisible();
 });

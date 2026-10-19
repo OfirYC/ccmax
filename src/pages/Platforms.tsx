@@ -1,3 +1,4 @@
+import PlatformActivity, { PlatformActivityOverview } from '../PlatformActivity';
 import { usePlatformCatalog } from '../PlatformIdentity';
 import { t } from '../i18n';
 import { platformName } from '../../shared/platforms';
@@ -13,26 +14,33 @@ import { Badge, Empty, ErrorBox, Field, Form, Loading, Modal, PageHead, Platform
 export default function Platforms(){useLocale();
   const pricing=useData('/api/team/pricing',30000);
   const {user}=useSession(),toast=useToast(),{data,error,loading,refresh}=usePlatformCatalog(),[edit,setEdit]=useState<any>(null),[busy,setBusy]=useState(false);
-  const root=user.role==='owner';
+  const root=user.role==='owner',[scope,setScope]=useState('team'),activity=useData(`/api/telemetry/platforms?scope=${scope}`,30000);
+  const stats=activity.data?.scope===scope?activity.data:null;
+  async function refreshAll(){await Promise.all([refresh(),activity.refresh(),pricing.refresh()]);}
   async function sync(ids:string[]){if(!ids.length)return;setBusy(true);try{await post('/api/connections/sync',{connectionIds:ids,key:key()});toast(t("已加入同步队列，请在同步任务中查看结果"));}catch(e){toast((e as Error).message,'error');}finally{setBusy(false);}}
   return <>
-    <PageHead eyebrow={t("平台连接管理")} title={t("平台管理")} description={t("选择上号平台，查看你的结算折扣和生效日期。")} actions={<><button className="button" onClick={refresh}><RefreshCw size={15}/>{t("刷新价格")}</button>{root&&<>
+    <PageHead eyebrow={t("平台连接管理")} title={t("平台管理")} description={t("查看各平台用量、运行状态与结算价格，直接管理平台连接和上号。")} actions={<><button className="button" onClick={refreshAll}><RefreshCw size={15}/>{t("刷新展示")}</button>{root&&<>
       <button className="button" disabled={busy} onClick={()=>sync((data?.connections||[]).filter((c:any)=>c.enabled).map((c:any)=>c.id))}><RefreshCw size={15} className={busy?'spin':''}/>{t("同步全部")}</button>
       <button className="button primary" onClick={()=>setEdit({provider:'gatelink'})}><Plus size={16}/>{t("添加连接")}</button>
     </>}</>}/>
-    <ErrorBox error={error}/><PricingNotice report={pricing.data}/>
+    <ErrorBox error={error}/><ErrorBox error={activity.error}/><PricingNotice report={pricing.data}/>
+    <PlatformActivityOverview connections={data?.connections||[]} activity={stats} loading={!stats}/>
+    <div className="platform-scope-bar"><div className="tabs" aria-label={t("数据归属")}>{([["team",root?t("全平台账号"):t("本人及下级团队")],["self",t("仅本人")],["descendants",t("仅下级团队")]]).map(([value,label])=><button key={value} className={scope===value?"active":""} onClick={()=>setScope(value)}>{label}</button>)}</div><span>{t("每 30 秒自动刷新展示")}</span></div>
+    <p className="page-note platform-scope-note">{t("平台数据按账号归属统计；过期或缺失指标不计入汇总。平台账单为折扣前金额，不等于结算收益。")}</p>
     <div className="notice"><ShieldCheck size={18}/><span>{root?t("平台主账号凭据加密保存，仅管理员可配置。所有页面只显示平台名称和当前用户的结算价格。"):t("账号归属与结算由 CCMAX 统一管理。以下为直属上级给你的结算价格。")}</span></div>
-    {loading?<Loading/>:<div className="connections-grid">{data?.connections.map((c:any)=><section className="panel connection-card" key={c.id}>
+    {loading?<Loading/>:<div className="connections-grid platform-data-grid">{data?.connections.map((c:any)=><section className="panel connection-card" key={c.id} aria-label={platformName(c.provider)}>
       <div className="platform-card-head"><PlatformMark provider={c.provider}/><div><h2>{platformName(c.provider)}</h2><small className="platform-connection-id">{c.id.slice(0,8)}</small><small>{c.capabilities.url.replace(/^https?:\/\//,'')}</small></div><Badge state={c.enabled?c.status:'disabled'}/></div>
+      <PlatformActivity connectionId={c.id} activity={stats?.platforms?.find((p:any)=>p.id===c.id)} loading={!stats} scope={scope}/>
       <SettlementPrice connection={c} root={root}/>
-      <div className="connection-facts">
+      <details className="platform-capabilities"><summary>{t("平台能力与同步信息")}</summary><div className="connection-facts">
         <div><span>{t("OAuth 上号")}</span><span className="teal-text"><Check size={14}/>{t("已支持")}</span></div>
         <div><span>{t("Refresh token 导入")}</span><span>{c.capabilities.refreshTokenImport?t("已支持"):t("需使用 OAuth")}</span></div>
         <div><span>{t("账单更新")}</span><span>{t("每天 02:00 后（北京时间）")}</span></div>
         <div><span>{t('账号启停')}</span><span>{c.capabilities.statusRequiresAdmin?t('需要上游管理员权限'):t('已支持')}</span></div>
         <div><span>{t("最近成功同步")}</span><span>{dateTime(c.last_sync_at)}</span></div>
       </div>
-      {c.last_error&&<ErrorBox error={c.last_error}/>}
+      </details>
+      {c.last_error&&<div className="platform-connection-error"><ErrorBox error={c.last_error}/></div>}
       <div className="connection-actions">
         {c.enabled?<Link className="button primary" to={`/accounts?create=1&connection=${encodeURIComponent(c.id)}`}><Zap size={14}/>{t("上号到此平台")}</Link>:<button className="button primary" disabled><Zap size={14}/>{t("平台已停用")}</button>}
         {root&&<>
@@ -46,7 +54,7 @@ export default function Platforms(){useLocale();
     {edit&&<Modal title={edit.id?t("配置平台连接"):t("添加平台连接")} subtitle={t("填写你拥有或有权管理的平台主账号")} onClose={()=>setEdit(null)}><Form onSubmit={async f=>{
       const payload:any={payoutRate:Number(f.get('payoutRate')),snapshotBilling:edit.snapshot_billing??edit.provider==='gatelink'};
       if(edit.id){payload.enabled=f.get('enabled')==='on';if(f.get('username'))payload.username=f.get('username');if(f.get('password'))payload.password=f.get('password');await mutate(`/api/connections/${edit.id}`,'PATCH',payload);}else{Object.assign(payload,{provider:f.get('provider'),name:platformName(String(f.get('provider'))),username:f.get('username'),password:f.get('password'),effectiveFrom:f.get('effectiveFrom')});await post('/api/connections',payload);}
-      toast(edit.id?t("连接配置已更新；新的上游折扣从次日北京时间生效"):t("平台已添加，正在核验并同步账号"));setEdit(null);await Promise.all([refresh(),pricing.refresh()]);
+      toast(edit.id?t("连接配置已更新；新的上游折扣从次日北京时间生效"):t("平台已添加，正在核验并同步账号"));setEdit(null);await refreshAll();
     }}>
       <Field label={t("平台")}><select aria-label={t("平台")} name="provider" defaultValue={edit.provider} onChange={e=>setEdit({...edit,provider:e.target.value})} disabled={!!edit.id}>{Object.entries(data?.providers||{}).map(([p,v]:[string,any])=><option key={p} value={p}>{v.name} · {v.url.replace(/^https?:\/\//,'')}</option>)}</select></Field>
       <Field label={edit.id?t("新的登录账号（留空保留）"):t("登录账号")}><input name="username" autoComplete="off" required={!edit.id} placeholder={t("平台登录邮箱或用户名")}/></Field>

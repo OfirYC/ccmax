@@ -1,0 +1,74 @@
+.platform-activity-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:linear-gradient(120deg,#e9f3ed,#f7faf7);border:1px solid #cedfd7;border-radius:9px;padding:21px 0;margin-bottom:18px}
+.platform-activity-overview>div{padding:0 22px;border-right:1px solid #dbe6df;min-width:0}
+.platform-activity-overview>div:last-child{border:0}
+.platform-activity-overview>div>span{font-size:11px;color:#6f8779;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.platform-activity-overview strong{font:600 29px 'Space Grotesk Variable';display:block;margin:11px 0 7px;color:var(--teal-dark);letter-spacing:-.04em;overflow-wrap:anywhere}
+.platform-activity-overview strong .amount{font-size:27px;color:var(--teal-dark);white-space:normal;overflow-wrap:anywhere}
+.platform-activity-overview strong>small{display:inline;font:400 14px 'DM Mono';color:#97a99c;letter-spacing:-.03em}
+.platform-activity-overview>div>small{font-size:9px;color:#93a196;line-height:1.6}
+.platform-scope-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.platform-scope-bar .tabs{flex-wrap:wrap}
+.platform-scope-bar>span{font-size:10px;color:#90a195}
+.platform-scope-note{margin-bottom:17px;font-size:10px;line-height:1.7}
+.platform-data-grid{gap:18px;align-items:start}
+.platform-data-grid .connection-card{padding:0;overflow:hidden}
+.platform-data-grid .platform-card-head{padding:20px 21px 17px;border-bottom:1px solid #eef2ee;background:#fbfdfa}
+.platform-data-grid .platform-card-head h2{font-size:17px}
+.platform-data-grid .platform-card-head .platform-mark{height:38px;width:38px;font-size:22px;border-radius:10px}
+.platform-data-grid .platform-card-head .platform-connection-id{display:inline-block;margin-right:9px;font-size:9px;color:#9ba99f}
+.platform-data-grid .platform-card-head small:last-child{display:inline;font-size:9px;color:#8b9d90}
+.platform-current-data{padding:17px 21px 0}
+.platform-data-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:13px}
+.platform-data-heading>span{display:flex;align-items:center;gap:6px;color:#7b9281;font-size:10px}
+.platform-data-heading .text-button{font-size:10px;display:inline-flex;align-items:center;gap:4px}
+.platform-bill-now{padding:16px;background:#eef6f0;border:1px solid #e0ebe2;border-radius:7px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.platform-bill-now>div{min-width:0}
+.platform-bill-now>div>span{display:block;font-size:10px;color:#7b9583}
+.platform-bill-now strong{display:block;margin-top:8px}
+.platform-bill-now .amount{font-size:32px;color:#2f7158;font-weight:500;letter-spacing:-.055em;white-space:normal;overflow-wrap:anywhere}
+.platform-bill-now>small{font-size:9px;color:#90a493;line-height:1.6;text-align:right;max-width:125px}
+.platform-bill-periods{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:17px 0 16px;gap:12px}
+.platform-bill-periods>div{min-width:0;border-right:1px solid #ecf0ec}
+.platform-bill-periods>div:last-child{border:0}
+.platform-bill-periods>div>span:first-child{font-size:9px;color:#91a092;display:block;margin-bottom:6px}
+.platform-bill-periods .amount{font-size:16px;color:#52745e;white-space:normal;overflow-wrap:anywhere}
+.platform-bill-periods small{font-size:8px;line-height:1.6;color:#a0ada1;margin-top:5px}
+.platform-data-rates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:14px 0;border-top:1px solid #eaf0ea;border-bottom:1px solid #eaf0ea}
+.platform-data-rates>div,.platform-data-requests>div{min-width:0}
+.platform-data-rates>div>span,.platform-data-requests>div>span{font-size:9px;color:#91a093;display:block}
+.platform-data-rates strong,.platform-data-requests strong{font:500 17px 'DM Mono';display:block;margin:7px 0 5px;color:#55775f;overflow-wrap:anywhere}
+.platform-data-rates small,.platform-data-requests small{font-size:8px;color:#a1ada3;line-height:1.6}
+.platform-data-requests{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:15px 0;border-bottom:1px solid #eaf0ea}
+.platform-data-requests strong{font-size:14px}
+.platform-data-models{display:grid;grid-template-columns:1fr 1fr;align-items:start;gap:10px 15px;margin:14px 0}
+.platform-data-models>span{grid-column:1/-1;font-size:9px;color:#8ea091}
+.platform-data-models>div{min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:4px 7px}
+.platform-data-models>div>span:first-child{font-size:10px;color:#7d9380}
+.platform-data-models .amount{font-size:13px;color:#57745e;white-space:normal;overflow-wrap:anywhere}
+.platform-data-models small{flex-basis:100%;font-size:8px;color:#a1ada3;margin-top:0;line-height:1.6}
+.platform-data-source,.platform-data-empty{margin:0;padding:11px 0 15px;font-size:9px;line-height:1.7;color:#95a799;border-top:1px dashed #e2ebe2;overflow-wrap:anywhere}
+.platform-data-source.stale{color:#af8b52}
+.platform-data-empty{color:#91a095}
+.platform-data-pending{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;background:#fff8eb;border:1px solid #eee0c4;border-radius:5px;padding:8px 10px;font-size:10px;color:#a48046;margin-bottom:12px}
+.platform-data-pending .text-button{font-size:10px}
+.platform-data-grid .settlement-price{margin:0 21px 15px;padding:15px;background:#f7faf7;border-color:#e0e9e0}
+.platform-data-grid .settlement-price>strong{font-size:28px;margin-top:1px}
+.platform-data-grid .price-heading{font-size:11px}
+.platform-data-grid .price-status{font-size:9px}
+.platform-data-grid .settlement-example{padding:10px 12px;margin-top:3px;gap:8px;background:#fff}
+.platform-data-grid .settlement-example .amount{font-size:21px}
+.platform-data-grid .settlement-example>span,.platform-data-grid .settlement-example small{font-size:9px}
+.platform-data-grid .scheduled-price{margin-top:4px}
+.platform-capabilities{margin:0 21px 15px;border-top:1px solid #edf1ed;border-bottom:1px solid #edf1ed}
+.platform-capabilities>summary{font-size:10px;color:#8da18f;cursor:pointer;padding:11px 0}
+.platform-capabilities .connection-facts{margin:0 0 8px;border:0}
+.platform-capabilities .connection-facts>div{font-size:10px;gap:10px;align-items:flex-start}
+.platform-capabilities .connection-facts>div>span{min-width:0;overflow-wrap:anywhere}
+.platform-capabilities .connection-facts>div>span:last-child{font-size:10px;text-align:right;justify-content:flex-end}
+.platform-data-grid .connection-actions{padding:14px 21px;border-top:1px solid #e7eee6;background:#fbfdfa;gap:8px}
+.platform-data-grid .connection-actions .button{font-size:10px;min-height:31px}
+.platform-connection-error{margin:0 21px 15px}
+.platform-connection-error .error-box{margin:0}
+@media(min-width:1800px){.platform-data-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1150px){.platform-activity-overview{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 0}.platform-activity-overview>div:nth-child(2){border-right:0}.platform-data-rates{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.platform-scope-bar{align-items:flex-start;flex-wrap:wrap}}
+@media(max-width:520px){.platform-activity-overview{padding:17px 0;gap:17px 0}.platform-activity-overview>div{padding:0 14px}.platform-activity-overview>div>span{font-size:10px}.platform-activity-overview strong,.platform-activity-overview strong .amount{font-size:23px}.platform-activity-overview>div>small{font-size:8px}.platform-scope-bar{gap:7px}.platform-scope-bar .tabs button{font-size:10px;padding:8px}.platform-scope-bar>span{font-size:9px}.platform-data-grid .platform-card-head{padding:17px 16px}.platform-current-data{padding:15px 16px 0}.platform-bill-now{padding:14px}.platform-bill-now .amount{font-size:29px}.platform-bill-now>small{font-size:8px;max-width:100px}.platform-bill-periods{gap:9px}.platform-bill-periods .amount{font-size:14px}.platform-data-grid .settlement-price{margin-left:16px;margin-right:16px;padding:13px}.platform-data-grid .settlement-example{grid-template-columns:minmax(0,1fr) auto}.platform-capabilities{margin-left:16px;margin-right:16px}.platform-data-grid .connection-actions{padding:13px 16px}.platform-connection-error{margin-left:16px;margin-right:16px}}

@@ -35,6 +35,8 @@ export const apiEndpoints: ApiEndpoint[] = [
   { method: 'POST', path: '/api/proxies', scope: 'accounts:write', summary: 'Add a fixed egress proxy', body: object({ name: { ...text, maxLength: 80 }, url: { ...text, maxLength: 2000, example: 'http://user:password@proxy.example.com:8080' } }) },
   { method: 'PATCH', path: '/api/proxies/:id', scope: 'accounts:write', summary: 'Rename or enable/disable an owned proxy', body: object({ name: { ...text, maxLength: 80 }, enabled: boolean }, []) },
   { method: 'GET', path: '/api/accounts', scope: 'read', summary: 'Own team accounts and verified platform bindings' },
+  { method: 'GET', path: '/api/telemetry/platforms', scope: 'read', summary: 'Platform activity cards: account-attributed totals across all usage windows, with freshness coverage',
+    query:{scope:{type:'string',enum:['self','descendants','team'],default:'team'},provider,accountId:uuid,connectionId:uuid,ownerId:uuid,search:{...text,maxLength:200}} },
   ...['/api/telemetry','/api/telemetry/trend'].map(path=>({method:'GET' as const,path,scope:'read' as const,summary:'Account-attributed upstream model telemetry and sampled rates; null means unavailable, coverage excludes stale accounts',
     query:{scope:{type:'string',enum:['self','descendants','team'],default:'team'},provider,accountId:uuid,connectionId:uuid,ownerId:uuid,search:{...text,maxLength:200},period:{type:'string',enum:['today','5h','7d','30d'],default:'today'},...(path.endsWith('/trend')?{}:{page:{type:'integer',minimum:1,default:1}})}})),
   { method: 'POST', path: '/api/accounts', scope: 'accounts:write', summary: 'Create an owned account; same owned email returns the existing account', body: object({ email, label: { ...text, maxLength: 100 } }, ['email']) },

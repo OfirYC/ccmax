@@ -83,6 +83,28 @@ describe('independent account, platform and recursive team reconciliation',()=>{
     expect(d.platforms.find((p:any)=>p.id===ai)).toMatchObject({account_count:0,daily_usd:null,daily_covered:0});
   });
 
+  it('platform cards share analytics totals, all periods and ownership boundaries without returning account identities',async()=>{
+    await account(a,ai,3);await account(g,ai,13);await account(b,ai,17);await account(null,ai,19,{verified:false});
+    await account(a,gate,29,{stale:true});await account(g,disabled,37);
+    const activity=await get('/api/telemetry/platforms');
+    for(const period of ['today','5h','7d','30d']){
+      const analytics=await get(`/api/telemetry?period=${period}`);
+      expect(activity.totals.periods[period]).toEqual(analytics.totals);
+      for(const p of activity.platforms){const other=analytics.platforms.find((v:any)=>v.id===p.id);expect(p.periods[period].billedUsd).toEqual(other.billedUsd);expect(p.attribution).toEqual(other.attribution);}
+    }
+    expect(activity.totals.periods.today.billedUsd).toEqual({value:'16.25',covered:2,total:4});
+    expect(activity.platforms.find((p:any)=>p.id===gate).periods.today.billedUsd.value).toBeNull();
+    expect(activity.platforms.find((p:any)=>p.id===disabled).periods.today.fresh).toBe(0);
+    expect(activity.totals.periods['30d'].billedUsd.value).toBeNull();
+    expect(JSON.stringify(activity)).not.toMatch(/private-master|@example\.com|credentials|owner_id|account_id/);
+    expect((await get('/api/telemetry/platforms?scope=self')).totals.periods.today.rpm.value).toBe('3');
+    expect((await get('/api/telemetry/platforms?scope=descendants')).totals.periods.today.rpm.value).toBe('13');
+    expect((await get('/api/telemetry/platforms?provider=gatelink')).platforms).toHaveLength(1);
+    expect((await app.inject({url:`/api/telemetry/platforms?ownerId=${b}`,headers:{cookie}})).statusCode).toBe(403);
+    await login('root@example.com');expect((await get('/api/telemetry/platforms')).totals.attribution.unassigned).toBe(1);
+    await login('b@example.com');expect((await get('/api/telemetry/platforms')).totals.periods.today.rpm.value).toBe('17');
+  });
+
   it('allocates historical open observations when ownership is verified, preserving frozen prices and each financial layer',async()=>{
     const {aid,bid}=await account(null,ai,3,{verified:false});
     for(const day of [previousDay(),today()])await db.transaction(tx=>ingestUsage(tx,{bindingId:bid,day,rawUsd:'101.125',final:false,source:'live_snapshot'}));
