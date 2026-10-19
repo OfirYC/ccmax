@@ -1367,5 +1367,10 @@
   "查看各结算渠道的账号状态、有效用量与更新时间。": "Xem trạng thái tài khoản, mức sử dụng hợp lệ và thời gian cập nhật theo kênh quyết toán.",
   "配置结算渠道，管理账号接入与用量同步": "Cấu hình kênh quyết toán, kết nối tài khoản và đồng bộ mức sử dụng",
   "已核实 {0}/{1} 份日账单": "Đã xác minh {0}/{1} hóa đơn ngày",
-  "按账单当日约定报价统计，记录不足时仅显示已有应收。应收未扣订阅及代理成本，已确认利润不等于已打款。": "Tính theo báo giá thỏa thuận của ngày hóa đơn. Nếu chưa đủ dữ liệu, chỉ hiển thị khoản phải thu đã ghi nhận, chưa trừ chi phí thuê bao và proxy. Lợi nhuận đã xác nhận không có nghĩa là tiền đã được thanh toán."
+  "按账单当日约定报价统计，记录不足时仅显示已有应收。应收未扣订阅及代理成本，已确认利润不等于已打款。": "Tính theo báo giá thỏa thuận của ngày hóa đơn. Nếu chưa đủ dữ liệu, chỉ hiển thị khoản phải thu đã ghi nhận, chưa trừ chi phí thuê bao và proxy. Lợi nhuận đã xác nhận không có nghĩa là tiền đã được thanh toán.",
+  "历史单账号收益纪录": "Kỷ lục thu nhập của một tài khoản",
+  "历史单账号最高 7 天已核实应收": "Khoản phải thu 7 ngày đã xác minh cao nhất của một tài khoản",
+  "基于完整 7 天已核实日账单和历史约定报价，未扣订阅及代理成本。实际收入因用量和报价而异。": "Dựa trên 7 ngày hóa đơn đã xác minh đầy đủ và báo giá lịch sử, chưa trừ chi phí thuê bao và proxy. Thu nhập thực tế thay đổi theo mức sử dụng và báo giá.",
+  "历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。": "Khoản phải thu 7 ngày đã xác minh cao nhất của một tài khoản: {0} ({1} đến {2}, giờ Bắc Kinh). Tính theo báo giá lịch sử, chưa trừ chi phí thuê bao và proxy.",
+  "北京时间": "Giờ Bắc Kinh"
 }

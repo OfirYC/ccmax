@@ -7,6 +7,7 @@ import { migrate, type DB } from './db.js';
 import { openTestDB } from './test-db.js';
 import { confirmInvoice, createInvoice, ingestUsage } from './billing.js';
 import { createApp } from './app.js';
+import { historicalWeeklyRecord, weeklyRecordReader } from './weekly-record.js';
 
 const input = { weeklyBillableUsd: '1000', monthlyBillableUsd: '1234.56', rate: '0.1234', subscriptionUsd: '200', monthlyProxyUsd: '15' };
 describe('quote conversion without assumed quotas', () => {
@@ -85,5 +86,51 @@ describe('actual personal account earnings', () => {
     expect(response.statusCode).toBe(200); expect(response.json().accounts.map((a: any) => a.id)).toEqual([account]);
     expect(response.body).not.toMatch(/private-master|private|99999/);
     expect((await accountEarnings(db, owner.id)).accounts).toEqual([]);
+  });
+  it('finds the historical best consecutive week for one account at its recorded prices, without adding accounts or projecting partial weeks', async () => {
+    const other = await addAccount(sibling), child = await addAccount(leaf);
+    for (let n = 10; n <= 16; n++) {
+      await bill(binding, n, '10'); await bill(other.bid, n, '20'); await bill(child.bid, n, '15');
+    }
+    for (let n = 1; n <= 6; n++) await bill(binding, n, '10000');
+    await bill(binding, 0, '99999', 'live_snapshot', false);
+    await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'ai008',0.01,$3,$4)", [id(), sibling, today(), owner.id]);
+    expect(await historicalWeeklyRecord(db)).toEqual({ asOf: today(), days: 7, record: { from: day(16), to: day(10), receivableUsd: '28.00000000' } });
+  });
+  it('excludes estimated, provisional and unverified account records from a complete historical week', async () => {
+    const provisional = await addAccount(sibling), unverified = await addAccount(leaf, false);
+    for (let n = 1; n <= 7; n++) {
+      await bill(binding, n, '1000', n === 4 ? 'daily_snapshot' : 'verified-test');
+      await bill(provisional.bid, n, '2000', 'verified-test', n !== 3);
+      await bill(unverified.bid, n, '9999', 'live_snapshot', false);
+    }
+    expect((await historicalWeeklyRecord(db)).record).toBeNull();
+  });
+  it('retains a real zero week and requires verified daily bills for every channel of the account', async () => {
+    for (let n = 1; n <= 7; n++) await bill(binding, n, '0');
+    expect((await historicalWeeklyRecord(db)).record).toEqual({ from: day(7), to: day(1), receivableUsd: '0.00000000' });
+    const extra = id(); await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'ai008','second','private',0.5)", [extra]);
+    const secondBinding = id();
+    await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,0.5,'1970-01-01')", [id(), extra]);
+    await db.query('INSERT INTO bindings(id,account_id,connection_id,external_id) VALUES($1,$2,$3,$1)', [secondBinding, account, extra]);
+    expect((await historicalWeeklyRecord(db)).record).toBeNull();
+    for (let n = 1; n <= 7; n++) await bill(secondBinding, n, '10');
+    expect((await historicalWeeklyRecord(db)).record?.receivableUsd).toBe('14.00000000');
+  });
+  it('publishes only an anonymous aggregate on the exact read-only marketing route and shares its cached query', async () => {
+    for (let n = 1; n <= 7; n++) await bill(binding, n, '10');
+    const response = await app.inject({ url: '/api/marketing/weekly-record' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ asOf: today(), days: 7, record: { from: day(7), to: day(1), receivableUsd: '14.00000000' } });
+    expect(response.body).not.toMatch(/email|account_id|owner_id|user_id|private|rate/);
+    expect((await app.inject({ method: 'HEAD', url: '/api/marketing/weekly-record' })).statusCode).toBe(200);
+    for (const url of ['/api/marketing/weekly-record/other', '/api/marketing', '/api/monetization']) {
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    }
+    expect((await app.inject({ method: 'POST', url: '/api/marketing/weekly-record', headers, payload: {} })).statusCode).toBe(401);
+    let queries = 0;
+    const read = weeklyRecordReader({ ...db, async query(sql, params) { queries++; return db.query(sql, params); } });
+    await Promise.all([read(), read(), read()]); await read();
+    expect(queries).toBe(1);
   });
 });

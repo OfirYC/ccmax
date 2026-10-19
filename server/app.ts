@@ -22,6 +22,7 @@ import { authorizationState } from '../shared/oauth.js';
 import { validateOAuthCallback } from './oauth-callback.js';
 import { isPublicInvitation, registerInvitations } from './invitations.js';
 import { registerMonetization } from './monetization.js';
+import { isPublicWeeklyRecord } from './weekly-record.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -75,6 +76,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     }
     if(!authorization&&path==='/api/auth/login') return;
     if(!authorization&&isPublicInvitation(request.method,request.routeOptions.url)) return;
+    if(!authorization&&isPublicWeeklyRecord(request.method,request.routeOptions.url)) return;
     let session:Row;
     if(authorization!==undefined) {
       const authenticated=await keys.authenticate(authorization);

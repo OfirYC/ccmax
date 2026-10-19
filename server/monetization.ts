@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { DB } from './db.js';
 import { today, usd } from './core.js';
+import { weeklyRecordReader } from './weekly-record.js';
 
 // Calendar windows end yesterday in Beijing. Read the recorded prices rather
 // than repricing old usage at today's quote or extrapolating a quota percentage.
@@ -39,5 +40,7 @@ export async function accountEarnings(db: DB, userId: string, endExclusive = tod
 }
 
 export function registerMonetization(app: FastifyInstance, db: DB) {
+  const readRecord = weeklyRecordReader(db);
+  app.get('/api/marketing/weekly-record', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, readRecord);
   app.get('/api/monetization', async req => accountEarnings(db, req.user.id));
 }

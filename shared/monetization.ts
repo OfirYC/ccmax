@@ -1,5 +1,8 @@
 import Decimal from 'decimal.js';
 
+export type WeeklyRecord = { from: string; to: string; receivableUsd: string };
+export type WeeklyRecordReport = { asOf: string; days: 7; record: WeeklyRecord | null };
+
 export const monetizationReference = {
   plan: 'Claude Max 20x',
   checkedAt: '2026-10-19',

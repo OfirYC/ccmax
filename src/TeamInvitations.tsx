@@ -1,6 +1,7 @@
+import type { WeeklyRecordReport } from '../shared/monetization';
 import { useState } from 'react';
 import { Copy, Link2, Plus } from 'lucide-react';
-import { api, post, useData } from './api';
+import { api, money, post, useData } from './api';
 import { Badge, Empty, ErrorBox, Field, Form, Loading, Modal, Paginator, Submit, Table, useToast } from './components';
 import { RateBadge, RateField } from './PriceDisplay';
 import { getLocale, t } from './i18n';
@@ -11,12 +12,15 @@ export default function TeamInvitations({ providers, pricing }: { providers: [st
   const { data, error, loading, refresh } = useData('/api/team/invitations', 30000), toast = useToast();
   const [creating, setCreating] = useState(false), [selected, setSelected] = useState<string[]>([]), [revoking, setRevoking] = useState<any>(null), [page, setPage] = useState(1);
   const invitations = data?.invitations || [];
+  const weeklyRecord = useData<WeeklyRecordReport>('/api/marketing/weekly-record', 60000);
   async function copy(url: string) {
     try { await navigator.clipboard.writeText(url); toast(t('已复制')); }
     catch { toast(t('无法自动复制，请手动选择并复制'), 'error'); }
   }
   function copyPromotion(url: string) {
-    return copy(t('有闲置的 Claude Max 20x 额度？来 CCMAX 查看你的专属结算报价，注册后即可添加自己的账号。\n每个账号近 7 天、近 30 天已核实应收可查，确认结算后按余额申请提现。\n实际收入取决于有效用量和约定报价，订阅及代理等成本另计。\n查看报价并注册：{0}', [url]));
+    const record = weeklyRecord.error ? null : weeklyRecord.data?.record;
+    const historical = record ? t('历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。', [money(record.receivableUsd), record.from, record.to]) + '\n' : '';
+    return copy(historical + t('有闲置的 Claude Max 20x 额度？来 CCMAX 查看你的专属结算报价，注册后即可添加自己的账号。\n每个账号近 7 天、近 30 天已核实应收可查，确认结算后按余额申请提现。\n实际收入取决于有效用量和约定报价，订阅及代理等成本另计。\n查看报价并注册：{0}', [url]));
   }
   return <section className="panel team-invitations">
     <div className="panel-head"><div><h2><Link2 size={17}/>{t('邀请链接')}</h2><p>{t('一条链接，一份报价。分享邀请与推广文案，对方自行注册，自动归属团队，无需逐个开户。')}</p></div><button className="button primary" disabled={!providers.length} onClick={() => { setSelected(providers.map(([p]) => p)); setCreating(true); }}><Plus size={15}/>{t('创建邀请链接')}</button></div>

@@ -5,7 +5,7 @@ import LanguageSwitcher, { useLocale } from './LanguageSwitcher';
 import { post, useData } from './api';
 import { ErrorBox, Field, Form, Loading, Submit } from './components';
 import { RateBadge } from './PriceDisplay';
-import { EarningsCalculator, MonetizationFaq, MonetizationOverview, MonetizationPitch } from './Monetization';
+import { EarningsCalculator, HistoricalWeeklyPeak, MonetizationFaq, MonetizationOverview, MonetizationPitch } from './Monetization';
 import { t } from './i18n';
 
 export default function InviteRegistration({ token, signedIn }: { token: string; signedIn: boolean }) {
@@ -13,7 +13,7 @@ export default function InviteRegistration({ token, signedIn }: { token: string;
   const { data, error, loading } = useData(`/api/invitations/${encodeURIComponent(token)}`), [done, setDone] = useState(false);
   return <div className="monetization-shell"><header className="monetization-header"><Link className="brand" to="/"><span className="brand-symbol"><Zap size={22} fill="currentColor"/></span><span>CCMAX<span className="brand-dot">.</span></span></Link><LanguageSwitcher/></header>
     {loading ? <Loading/> : done ? <main className="invite-card invite-success"><CheckCircle2 size={38}/><h1>{t('账号已创建')}</h1><p>{t('下一步：添加你的第一个 Claude Max 账号。')}</p><p>{t('登录后完成账号授权；产生实际用量并确认结算后，即可按余额申请提现。')}</p><Link className="button primary" to="/accounts?create=1">{t('登录并添加第一个账号')}<ArrowRight size={16}/></Link></main> : !data ? <main className="invite-card"><h1>{t('邀请暂不可用')}</h1><ErrorBox error={error}/><p>{t('这条邀请可能已到期、停用或满员。请联系邀请人获取新链接，已注册的账号仍可登录。')}</p><Link className="button" to="/">{t('前往登录')}</Link></main> : <main className="invite-conversion-layout">
-      <section className="invite-story"><MonetizationPitch compact headline/><EarningsCalculator rates={data.rates}/>{!signedIn && <a className="button primary mobile-signup-cta" href="#signup">{t('立即注册，添加账号')}<ArrowRight size={16}/></a>}</section>
+      <section className="invite-story"><MonetizationPitch compact headline/><HistoricalWeeklyPeak/><EarningsCalculator rates={data.rates}/>{!signedIn && <a className="button primary mobile-signup-cta" href="#signup">{t('立即注册，添加账号')}<ArrowRight size={16}/></a>}</section>
       <aside className="invite-card" id="signup"><span className="marketing-kicker">{t('你的账号收益，从这里开始')}</span><h2>{t('创建你的收益工作空间')}</h2><p>{t('专属报价已展示。完成注册，即可添加自己的 Max 账号，开始记录每一笔有效收益。')}</p><p className="invite-by">{t('{0} 邀请你加入直属团队。', [data.inviterName])}</p><ErrorBox error={error}/>
         {signedIn ? <div className="notice"><ShieldCheck size={18}/><span>{t('你当前已登录。请先退出账号，再使用邀请链接注册新成员。')} <Link to="/">{t('返回工作空间')}</Link></span></div> : <Form onSubmit={async form => {
           if (form.get('password') !== form.get('confirmPassword')) throw new Error(t('两次输入的密码不一致'));

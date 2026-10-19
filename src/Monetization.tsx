@@ -1,12 +1,25 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, BadgeDollarSign, CheckCircle2, CircleDollarSign, Wallet, Zap } from 'lucide-react';
-import { bestQuote, calculateQuotedEarnings, monetizationReference } from '../shared/monetization';
+import { ArrowRight, BadgeDollarSign, CheckCircle2, CircleDollarSign, Trophy, Wallet, Zap } from 'lucide-react';
+import { bestQuote, calculateQuotedEarnings, monetizationReference, type WeeklyRecordReport } from '../shared/monetization';
 import { platformName } from '../shared/platforms';
 import { money, useData } from './api';
 import { Empty, ErrorBox, Field, Loading } from './components';
 import { t } from './i18n';
 import { useLocale } from './LanguageSwitcher';
+
+export function HistoricalWeeklyPeak({ dark = false, fallback = null }: { dark?: boolean; fallback?: ReactNode }) {
+  useLocale();
+  const { data, error } = useData<WeeklyRecordReport>('/api/marketing/weekly-record', 60000);
+  const record = data?.record;
+  if (error || !record) return fallback;
+  return <section className={`historical-weekly-peak${dark ? ' dark' : ''}`} aria-label={t('历史单账号收益纪录')}>
+    <span className="marketing-kicker"><Trophy size={16}/>{t('历史单账号最高 7 天已核实应收')}</span>
+    <strong data-testid="historical-weekly-peak">{money(record.receivableUsd)}<small>/ {t('{0} 天', [7])}</small></strong>
+    <p>{record.from} — {record.to} · {t('北京时间')}</p>
+    <small>{t('基于完整 7 天已核实日账单和历史约定报价，未扣订阅及代理成本。实际收入因用量和报价而异。')}</small>
+  </section>;
+}
 
 export function MonetizationSteps() {
   useLocale();
