@@ -50,7 +50,7 @@ export function EarningsCalculator({ rates, quoteSource = 'invitation' }: { rate
   return <section className="earnings-calculator" aria-label={t('Max 20x 收益核算')}>
     <div className="calculator-heading"><span className="marketing-kicker"><BadgeDollarSign size={15}/>{t('你的专属结算价格')}</span><h3>{t('每一份有效用量，都有明确报价。')}</h3></div>
     {!preferred ? <p className="calculator-missing">{t('还没有可用报价，请先向邀请人确认结算价格。')}</p> : <>
-      <div className="quote-conversion"><span>{t('每 $1 已核实账单，可结算')}</span><strong data-testid="unit-earnings">${Number(rate).toFixed(4)}</strong><small>{quoteSource === 'invitation' ? t('按本邀请的专属报价计算') : t('按你的当前报价计算')} · {provider && platformName(provider)}</small></div>
+      <div className="quote-conversion"><span>{t('每 $1 已核实账单，可结算')}</span><strong data-testid="unit-earnings">{money(rate, 4)}</strong><small>{quoteSource === 'invitation' ? t('按本邀请的专属报价计算') : t('按你的当前报价计算')} · {provider && platformName(provider)}</small></div>
       <p className="calculator-footnote">{t('已核实账单金额 × 约定报价 = 应收。实际收入随有效用量变化，订阅和代理等成本需另计。')}</p>
       <details className="calculator-details"><summary>{t('用已有账单核算收入')}</summary><p className="calculator-intro">{t('填入两个期间各自的实际账单金额；不将周金额放大为月收入。历史实际结算请登录查看。')}</p><div className="calculator-inputs">
         <Field label={t('用于核算的结算报价')}><select aria-label={t('用于核算的结算报价')} value={provider} onChange={e => setSelection(e.target.value)}>{Object.entries(rates).filter(([, value]) => bestQuote({ value }) !== null).map(([key, value]) => <option key={key} value={key}>{platformName(key)} · × {Number(value).toFixed(4)}</option>)}</select></Field>

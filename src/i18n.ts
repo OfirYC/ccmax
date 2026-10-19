@@ -34,6 +34,7 @@ function updateDocument() {
   if (typeof document === 'undefined') return;
   document.documentElement.lang = locale;
   document.title = t('CCMAX · Max 账号收益工作空间');
+  document.querySelector('meta[name="description"]')?.setAttribute('content', t('让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。'));
 }
 
 export function setLocale(next: Locale) {

@@ -1372,5 +1372,6 @@
   "历史单账号最高 7 天已核实应收": "Khoản phải thu 7 ngày đã xác minh cao nhất của một tài khoản",
   "基于完整 7 天已核实日账单和历史约定报价，未扣订阅及代理成本。实际收入因用量和报价而异。": "Dựa trên 7 ngày hóa đơn đã xác minh đầy đủ và báo giá lịch sử, chưa trừ chi phí thuê bao và proxy. Thu nhập thực tế thay đổi theo mức sử dụng và báo giá.",
   "历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。": "Khoản phải thu 7 ngày đã xác minh cao nhất của một tài khoản: {0} ({1} đến {2}, giờ Bắc Kinh). Tính theo báo giá lịch sử, chưa trừ chi phí thuê bao và proxy.",
-  "北京时间": "Giờ Bắc Kinh"
+  "北京时间": "Giờ Bắc Kinh",
+  "让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。": "Tạo thu nhập từ hạn mức Claude Max chưa dùng. Xem báo giá quyết toán riêng, kết nối tài khoản và theo dõi khoản phải thu dựa trên hóa đơn đã xác minh với CCMAX."
 }

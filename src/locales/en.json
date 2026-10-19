@@ -1369,8 +1369,9 @@
   "已核实 {0}/{1} 份日账单": "{0}/{1} daily bills verified",
   "按账单当日约定报价统计，记录不足时仅显示已有应收。应收未扣订阅及代理成本，已确认利润不等于已打款。": "Calculated at each bill day’s agreed rate. Incomplete periods show only recorded receivables, before subscription and proxy costs. Confirmed profit does not mean payment has been received.",
   "历史单账号收益纪录": "Historical account earnings record",
-  "历史单账号最高 7 天已核实应收": "Highest historical 7-day receivables for one account",
+  "历史单账号最高 7 天已核实应收": "Highest historical verified 7-day receivables for one account",
   "基于完整 7 天已核实日账单和历史约定报价，未扣订阅及代理成本。实际收入因用量和报价而异。": "Based on seven complete days of verified bills at historical agreed rates, before subscription and proxy costs. Actual earnings vary with usage and rates.",
   "历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。": "Highest historical 7-day verified receivables for one account: {0} ({1} to {2}, Beijing time). Calculated at historical rates, before subscription and proxy costs.",
-  "北京时间": "Beijing time"
+  "北京时间": "Beijing time",
+  "让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。": "Put your idle Claude Max capacity to work. View your settlement quote, connect your account, and track verified account earnings with CCMAX."
 }

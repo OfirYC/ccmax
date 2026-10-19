@@ -5,6 +5,15 @@ import hi from '../src/locales/hi.json' with { type: 'json' };
 
 const report = { asOf: '2026-10-19', days: 7, record: { from: '2026-09-07', to: '2026-09-13', receivableUsd: '123.45000000' } };
 const headers = { 'x-ccmax-request': '1' };
+const languages = [
+  { locale: 'zh-CN', catalog: null, amount: '$123.45', unit: '$0.1200' },
+  { locale: 'en', catalog: en, amount: '$123.45', unit: '$0.1200' },
+  { locale: 'vi', catalog: vi, amount: '123,45\u00a0US$', unit: '0,1200\u00a0US$' },
+  { locale: 'hi', catalog: hi, amount: '$123.45', unit: '$0.1200' },
+] as const;
+const translated = (catalog: Record<string, string> | null, source: string) => catalog?.[source] ?? source;
+const description = '让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。';
+const historicalMessage = '历史单账号最高 7 天已核实应收：{0}（{1} 至 {2}，北京时间）。按历史报价统计，未扣订阅及代理成本。';
 
 test('historical record displays the supplied verified week, dates and basis across landing, invitation, promotion and languages', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN'));
@@ -15,6 +24,14 @@ test('historical record displays the supplied verified week, dates and basis acr
   await expect(page.getByTestId('historical-weekly-peak')).toContainText('$123.45');
   await expect(page.locator('.historical-weekly-peak')).toContainText('2026-09-07 — 2026-09-13');
   await expect(page.locator('.login-value-card')).toHaveCount(0);
+  for (const { locale, catalog, amount } of languages) {
+    await page.locator('.language-switcher select').selectOption(locale);
+    await expect(page.getByTestId('historical-weekly-peak')).toContainText(amount);
+    await expect(page.locator('.historical-weekly-peak')).toContainText(translated(catalog, '历史单账号最高 7 天已核实应收'));
+    await expect(page).toHaveTitle(translated(catalog, 'CCMAX · Max 账号收益工作空间'));
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', translated(catalog, description));
+  }
+  await page.locator('.language-switcher select').selectOption('zh-CN');
   await page.screenshot({ path: 'test-results/historical-record-login-desktop.png', fullPage: true });
   expect((await page.request.post('/api/auth/login', { headers, data: { email: 'owner@example.com', password: 'e2e-owner-password' } })).ok()).toBe(true);
   const response = await page.request.post('/api/team/invitations', { headers, data: { name: 'Historical record campaign', rates: { ai008: 0.12 } } });
@@ -25,21 +42,35 @@ test('historical record displays the supplied verified week, dates and basis acr
   await expect(campaign).toBeVisible();
   await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some(entry => entry.name.endsWith('/api/marketing/weekly-record')))).toBe(true);
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-  await campaign.getByRole('button', { name: '复制推广文案' }).click();
-  const promotion = await page.evaluate(() => navigator.clipboard.readText());
-  expect(promotion).toContain('$123.45'); expect(promotion).toContain('2026-09-07'); expect(promotion).toContain(invitation.url);
+  for (const { locale, catalog, amount } of languages) {
+    await page.locator('.language-switcher select').selectOption(locale);
+    await campaign.getByRole('button', { name: translated(catalog, '复制推广文案') }).click();
+    const promotion = await page.evaluate(() => navigator.clipboard.readText());
+    const expectedRecord = translated(catalog, historicalMessage).replace('{0}', amount).replace('{1}', report.record.from).replace('{2}', report.record.to);
+    expect(promotion).toContain(expectedRecord);
+    expect(promotion).toContain(invitation.url);
+    if (locale !== 'zh-CN') expect(promotion).not.toMatch(/[\u3400-\u9fff]/u);
+  }
+  await page.locator('.language-switcher select').selectOption('zh-CN');
   await page.request.post('/api/auth/logout', { headers, data: {} });
   await page.goto(invitation.url);
   await expect(page.getByTestId('historical-weekly-peak')).toContainText('$123.45');
   await expect(page.getByTestId('unit-earnings')).toHaveText('$0.1200');
   await expect(page.locator('.historical-weekly-peak')).toContainText('未扣订阅及代理成本');
   await page.screenshot({ path: 'test-results/historical-record-invite-desktop.png', fullPage: true });
-  for (const [locale, catalog] of [['en', en], ['vi', vi], ['hi', hi]] as const) {
+  await page.locator('input[name="name"]').fill('Keep my signup input');
+  for (const { locale, catalog, amount, unit } of languages) {
     await page.locator('.language-switcher select').selectOption(locale);
-    await expect(page.locator('.historical-weekly-peak')).toContainText(catalog['历史单账号最高 7 天已核实应收']);
-    expect(await page.locator('.historical-weekly-peak').innerText()).not.toMatch(/[\u3400-\u9fff]/u);
+    await expect(page.locator('.historical-weekly-peak')).toContainText(translated(catalog, '历史单账号最高 7 天已核实应收'));
+    await expect(page.getByTestId('historical-weekly-peak')).toContainText(amount);
+    await expect(page.getByTestId('unit-earnings')).toHaveText(unit);
+    await expect(page.getByRole('button', { name: translated(catalog, '立即注册，添加账号'), exact: true })).toBeEnabled();
+    await expect(page.locator('input[name="name"]')).toHaveValue('Keep my signup input');
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', translated(catalog, description));
+    if (locale !== 'zh-CN') expect(await page.locator('.historical-weekly-peak').innerText()).not.toMatch(/[\u3400-\u9fff]/u);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/historical-record-invite-mobile-${locale}.png`, fullPage: true });
   }
   await page.locator('.language-switcher select').selectOption('zh-CN');
   await page.screenshot({ path: 'test-results/historical-record-invite-mobile.png', fullPage: true });
