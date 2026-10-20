@@ -186,6 +186,32 @@ describe('owned platform account recovery',()=>{
     expect(await db.query("SELECT id FROM audits WHERE action='binding.reauthorized'")).toHaveLength(0);
   });
 
+  it('invalidates a Gatelink link after an upstream 409 while keeping idempotent retries and fresh recovery available',async()=>{
+    const {connection,binding}=await platform('gatelink'),attemptId=id(),requestKey=id();
+    const secret={bindingId:binding.id,proxyId,pendingState:'gate-recovery',options:{email:account.email,proxy:fixedUrl,existingExternalId:binding.external_id},session:{cookies:[],token:'fixture',csrf:'',user:{role:'agent'}}};
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at) VALUES($1,$2,$3,$4,$5,'https://auth.example/?state=gate-recovery',$6)`,[attemptId,agent.id,connection.id,account.id,box.encrypt(secret),new Date(Date.now()+600000)]);
+    const payload={callback:'one-use-gate#gate-recovery',key:requestKey};
+    const job=await call('POST',`/api/oauth/${attemptId}/exchange`,payload);expect(job.statusCode).toBe(200);
+    let writes=0;
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
+      const path=new URL(String(input)).pathname;
+      if(path==='/api/submissions')return Response.json({items:[{id:binding.external_id,upstreamEmail:account.email,upstreamDailyCost:null}],total:1,totalPages:1});
+      expect(path).toBe('/api/oauth-submissions/exchange');expect(init.method).toBe('POST');writes++;
+      return Response.json({message:'private-code and proxy credentials'},{status:409});
+    }));
+    await worker.runOne();
+    const [attempt]=await db.query('SELECT state,secret,authorization_url FROM oauth_attempts WHERE id=$1',[attemptId]);
+    expect(attempt).toMatchObject({state:'needs_attention',authorization_url:''});expect(box.decrypt(attempt.secret)).toEqual({});
+    const [result]=await db.query('SELECT state,error FROM jobs WHERE id=$1',[job.json().id]);
+    expect(result.state).toBe('needs_attention');expect(result.error).toContain('HTTP 409');expect(result.error).not.toContain('private-code');
+    const retry=await call('POST',`/api/oauth/${attemptId}/exchange`,payload);
+    expect(retry.statusCode).toBe(200);expect(retry.json().id).toBe(job.json().id);
+    expect((await call('POST',`/api/oauth/${attemptId}/exchange`,{...payload,key:id()})).statusCode).toBe(409);
+    expect((await call('POST',`/api/bindings/${binding.id}/reauthorize`,{options:{},key:id()})).statusCode).toBe(200);
+    expect(writes).toBe(1);
+    expect((await db.query('SELECT account_id,external_id,status FROM bindings WHERE id=$1',[binding.id]))[0]).toMatchObject({account_id:account.id,external_id:binding.external_id,status:'disabled'});
+  });
+
   it.each(['interrupted write','interrupted detail read'] as const)('handles Mini CC recovery with an %s without submitting the authorization code twice',async failure=>{
     const {connection,binding}=await platform('minicc');
     await db.query('INSERT INTO proxy_bindings(id,proxy_id,connection_id,external_id) VALUES($1,$2,$3,$4)',[id(),proxyId,connection.id,'fixed-proxy']);

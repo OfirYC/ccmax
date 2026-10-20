@@ -8,7 +8,7 @@ import ProxySetup from '../ProxySetup';
 import AccountPlatformManager from '../AccountPlatformManager';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowRight, Check, Copy, ExternalLink, KeyRound, Plus, ShieldCheck, UserRound, Zap } from 'lucide-react';
-import { api, dateTime, key, post, useData } from '../api';
+import { api, ApiError, dateTime, key, post, useData } from '../api';
 import { RateBadge } from '../PriceDisplay';
 import { authorizationState, parseOAuthCallback } from '../../shared/oauth';
 import { Badge, Empty, ErrorBox, Field, Form, Modal, PageHead, PlatformMark, Submit, useSession, useToast } from '../components';
@@ -30,16 +30,26 @@ function Onboard({account:initial,onClose,connectionId,recoveryBindingId,ownedAc
   const inFlight=jobIds.some(id=>!jobResults.some(j=>j.id===id&&!['queued','running'].includes(j.state)));
   const startable=selected.filter(cid=>available.some((c:any)=>c.id===cid)&&!attempts.some(a=>a.connection_id===cid));
   useEffect(()=>{if(!connectionId||!connections.data)return;const c=available.find((c:any)=>c.id===connectionId);setSelected(c?[c.id]:[]);if(c)void loadOptions(c);},[connectionId,connections.data,account?.id]);
-  async function loadAttempts(){if(!account)return;try{const d=await api(`/api/accounts/${account.id}/attempts`);setAttempts(d.attempts.filter((a:any)=>(!connectionId||a.connection_id===connectionId)&&a.state==='pending'&&new Date(a.expires_at)>new Date()));}catch(e){setError((e as Error).message);}}
+  function retainAttempts(next:any[]){
+    setAttempts(next);
+    setCallbacks(values=>Object.fromEntries(Object.entries(values).filter(([id])=>next.some(a=>a.id===id))));
+  }
+  async function loadAttempts(){if(!account)return;try{const d=await api(`/api/accounts/${account.id}/attempts`);retainAttempts(d.attempts.filter((a:any)=>(!connectionId||a.connection_id===connectionId)&&a.state==='pending'&&a.authorization_url&&new Date(a.expires_at)>new Date()));}catch(e){setError((e as Error).message);}}
   useEffect(()=>{loadAttempts();},[account?.id]);
+  useEffect(()=>{
+    if(!attempts.length)return;
+    const expiry=Math.min(...attempts.map(a=>new Date(a.expires_at).getTime()));
+    const timer=setTimeout(()=>retainAttempts(attempts.filter(a=>new Date(a.expires_at)>new Date())),Math.max(0,expiry-Date.now())+50);
+    return()=>clearTimeout(timer);
+  },[attempts]);
   useEffect(()=>{if(!jobIds.length)return;let active=true;let timer:ReturnType<typeof setTimeout>;async function poll(){try{const d=await api('/api/jobs');if(!active)return;const jobs=d.jobs.filter((j:any)=>jobIds.includes(j.id));setJobResults(jobs);if(jobs.length<jobIds.length||jobs.some((j:any)=>['queued','running'].includes(j.state)))timer=setTimeout(poll,1800);else{await loadAttempts();if(jobs.some((j:any)=>j.kind!=='oauth_start'&&j.state==='succeeded')){const latest=await api('/api/accounts');const updated=latest.accounts.find((a:any)=>a.id===account.id);if(updated)setAccount(updated);}toast(jobs.every((j:any)=>j.state==='succeeded')?t("平台任务已完成"):t("部分平台任务需要处理，请查看各平台结果"),jobs.every((j:any)=>j.state==='succeeded')?'success':'error');}}catch(e){if(active)setError((e as Error).message);}}poll();return()=>{active=false;clearTimeout(timer);};},[jobIds.join(',')]);
   async function toggle(c:any){setSelected(s=>s.includes(c.id)?s.filter(v=>v!==c.id):[...s,c.id]);await loadOptions(c);}
   async function loadOptions(c:any){if(!options[c.id]){setOptions(o=>({...o,[c.id]:{loading:true}}));try{const data=await api(`/api/connections/${c.id}/options`);setOptions(o=>({...o,[c.id]:data}));setConfigs(v=>({...v,[c.id]:{...v[c.id],...defaultOptions(data)}}));}catch(e){setOptions(o=>({...o,[c.id]:{error:(e as Error).message}}));}}}
   const update=(c:string,k:string,v:any)=>setConfigs(old=>({...old,[c]:{...old[c],[k]:v}}));
-  async function start(){setBusy(true);setError('');try{const d=recoveryBindingId?await post(`/api/bindings/${recoveryBindingId}/reauthorize`,{options:configs[connectionId!]||{},key:key()}):await post(`/api/accounts/${account.id}/authorize`,{targets:startable.map(c=>({connectionId:c,options:configs[c]||{}})),key:key()});setJobResults([]);setJobIds((recoveryBindingId?[d]:d.jobs).map((j:any)=>j.id));}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function start(){setBusy(true);setError('');try{const d=recoveryBindingId?await post(`/api/bindings/${recoveryBindingId}/reauthorize`,{options:configs[connectionId!]||{},key:key()}):await post(`/api/accounts/${account.id}/authorize`,{targets:startable.map(c=>({connectionId:c,options:configs[c]||{}})),key:key()});setJobResults([]);setJobIds((recoveryBindingId?[d]:d.jobs).map((j:any)=>j.id));}catch(e){if(e instanceof ApiError&&e.status===409)await loadAttempts();setError((e as Error).message);}finally{setBusy(false);}}
   async function complete(attemptId?:string){
     setBusy(true);setError('');
-    const jobs:string[]=[],errors:string[]=[];
+    const jobs:string[]=[],errors:string[]=[];let conflict=false;
     try{
       const filled=attempts.filter(a=>(!attemptId||a.id===attemptId)&&callbacks[a.id]?.trim());
       if(!filled.length)throw new Error(t("请至少填写一个平台的完整授权回调"));
@@ -56,8 +66,9 @@ function Onboard({account:initial,onClose,connectionId,recoveryBindingId,ownedAc
           setCallbacks(values=>{const next={...values};delete next[a.id];return next;});
           setAttempts(values=>values.filter(value=>value.id!==a.id));
           setSelected(values=>values.filter(cid=>cid!==a.connection_id));
-        }catch(e){errors.push(`${onboardingPlatformName(targetConnection(a))}: ${translateMessage((e as Error).message)}`);}
+        }catch(e){if(e instanceof ApiError&&e.status===409)conflict=true;errors.push(`${onboardingPlatformName(targetConnection(a))}: ${translateMessage((e as Error).message)}`);}
       }
+      if(conflict)await loadAttempts();
       if(errors.length)setError(errors.join('；'));
     }catch(e){setError(translateMessage((e as Error).message));}
     finally{if(jobs.length){setJobResults([]);setJobIds(jobs);}setBusy(false);}

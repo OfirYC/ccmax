@@ -399,10 +399,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       const jobs=[];
       for(const t of d.targets) {
         const [c]=await tx.query('SELECT id FROM connections WHERE id=$1 AND enabled=true',[t.connectionId]);assert(c,'连接不存在或已停用');
+        const payload={accountId,proxyId:proxy.id,options:t.options};
+        const [previous]=await tx.query(`SELECT id FROM jobs WHERE requested_by=$1 AND connection_id=$2 AND kind='oauth_start' AND idempotency_key=$3`,[req.user.id,c.id,d.key]);
+        if(previous){jobs.push(await enqueue(tx,box,req.user.id,c.id,'oauth_start',payload,d.key));continue;}
         const [b]=await tx.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[accountId,c.id]);assert(!b,'此账号已在所选平台上号，请联系管理员核实归属',409);
         const [pending]=await tx.query(`SELECT id FROM oauth_attempts WHERE account_id=$1 AND connection_id=$2 AND state IN ('pending','exchanging') AND expires_at>now()`,[accountId,c.id]);
         assert(!pending,'已有有效授权流程，请完成回调或等待过期',409);
-        jobs.push(await enqueue(tx,box,req.user.id,c.id,'oauth_start',{accountId,proxyId:proxy.id,options:t.options},d.key));
+        jobs.push(await enqueue(tx,box,req.user.id,c.id,'oauth_start',payload,d.key));
       }return {jobs};
     });
   });
@@ -427,7 +430,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.get('/api/accounts/:id/attempts',async req=>{
     const accountId=identifier.parse((req.params as Row).id);
     const [a]=await db.query('SELECT id FROM accounts WHERE id=$1 AND (owner_id=$2 OR $3::boolean)',[accountId,req.user.id,req.user.role==='owner']);assert(a,'账号不存在',404);
-    return {attempts:publicConnectionRows(req.user,await db.query(`SELECT o.id,o.connection_id,o.authorization_url,o.state,o.expires_at,c.provider,c.name AS connection_name
+    return {attempts:publicConnectionRows(req.user,await db.query(`SELECT o.id,o.connection_id,
+      CASE WHEN o.state='pending' AND o.expires_at>now() THEN o.authorization_url ELSE '' END AS authorization_url,
+      o.state,o.expires_at,c.provider,c.name AS connection_name
       FROM oauth_attempts o JOIN connections c ON c.id=o.connection_id WHERE o.account_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 30`,[accountId,req.user.id]))};
   });
   app.post('/api/oauth/:id/exchange',async req=>{
@@ -441,6 +446,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
         const [account]=await tx.query('SELECT proxy_id FROM accounts WHERE id=$1',[a.account_id]);
         return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:account.proxy_id,attemptId,callback:d.callback},d.key);
       }
+      // Terminal attempts have already erased their secrets. Check their state
+      // before reading the proxy snapshot so stale links get a useful conflict.
+      assert(a.state!=='needs_attention' && new Date(a.expires_at)>new Date(),'此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调',409);
+      assert(a.state==='pending','授权已过期或已经提交，请核对任务状态',409);
       const secret=box.decrypt(a.secret);assert(secret.proxyId,'旧授权流程没有固定代理，请重新授权');
       const proxy=await accountProxy(tx,box,a.account_id,secret.proxyId);
       if(secret.bindingId) {
@@ -448,7 +457,6 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
           WHERE b.id=$1 AND b.account_id=$2 AND b.connection_id=$3 AND (account.owner_id=$4 OR $5::boolean) AND account.ownership_verified`,[secret.bindingId,a.account_id,a.connection_id,req.user.id,req.user.role==='owner']);
         assert(binding,'重新授权的原绑定或账号归属已变化，请重新核对',409);
       }
-      assert(a.state==='pending' && new Date(a.expires_at)>new Date(),'授权已过期或已经提交，请核对任务状态',409);
       // Reject a wrong-platform callback before consuming the attempt or code.
       // Old Gatelink attempts stored the state only inside their authorization URL.
       const pendingState=secret.pendingState||authorizationState(a.authorization_url);

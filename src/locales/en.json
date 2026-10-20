@@ -1383,5 +1383,8 @@
   "请求平台": "Request platform",
   "平台请求超时（{0} 秒）": "Platform request timed out ({0} seconds)",
   "平台连接中断或网络异常": "Platform connection interrupted or network error",
-  "写入结果可能未知，请先核对上游结果": "The write result may be unknown. Check the upstream result first"
+  "写入结果可能未知，请先核对上游结果": "The write result may be unknown. Check the upstream result first",
+  "此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调": "This authorization is no longer valid. Check Sync jobs, then generate a new link and use its new callback",
+  "Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态": "Gatelink reported an authorization conflict. Check the account and authorization status in Gatelink first",
+  "已有平台账号请从「平台管理」重新授权": "For an existing platform account, reauthorize it from Platform management"
 }

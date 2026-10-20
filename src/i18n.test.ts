@@ -108,6 +108,16 @@ describe('language switching', () => {
     }
   });
 
+  it('translates Gatelink conflicts and invalid authorization recovery in every language',()=>{
+    for(const locale of ['en','vi','hi'] as const) {
+      setLocale(locale);
+      const conflict=translateMessage('Gatelink 提交授权回调失败（HTTP 409）；Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态；已有平台账号请从「平台管理」重新授权');
+      expect(conflict).not.toMatch(/[\u3400-\u9fff]/u);expect(conflict).toContain('409');
+      expect(translateMessage('此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调')).toBe(t('此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调'));
+      expect(conflict).toContain(t('已有平台账号请从「平台管理」重新授权'));
+    }
+  });
+
   it('translates the complete bulk-update toast before matching a generic effective-date suffix',()=>{
     const source='已调整 {0} 位直属下级，{1} 00:00 北京时间生效',values=[12,'2026-10-19'];
     const original=t(source,values);

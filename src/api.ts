@@ -1,10 +1,13 @@
 import { t, getLocale } from './i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 export type RecordData=Record<string,any>;
+export class ApiError extends Error {
+  constructor(message:string,public status:number){super(message);}
+}
 export async function api<T=any>(url:string,options:RequestInit={}) : Promise<T> {
   const response=await fetch(url,{...options,headers:{...(options.body!==undefined?{'Content-Type':'application/json'}:{}),'x-ccmax-request':'1',...options.headers},credentials:'same-origin'});
   const data=await response.json().catch(()=>({error:t("服务器响应异常")}));
-  if(!response.ok) throw new Error(data.error||t("请求失败"));return data;
+  if(!response.ok) throw new ApiError(data.error||t("请求失败"),response.status);return data;
 }
 export const post=<T=any>(url:string,body:unknown)=>api<T>(url,{method:'POST',body:JSON.stringify(body)});
 export const mutate=(url:string,method:string,body:unknown)=>api(url,{method,body:JSON.stringify(body)});

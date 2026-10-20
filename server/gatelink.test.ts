@@ -55,6 +55,14 @@ describe('Gatelink error diagnosis',()=>{
     const client=new ProviderClient('gatelink',credentials,async()=>{calls++;return Response.json(body,{status:422});});
     return {request:()=>client.call(path),calls:()=>calls};
   };
+  it.each(['/api/oauth-submissions/authorize','/api/oauth-submissions/exchange'])('explains a 409 conflict at %s without exposing the response or replaying the write',async path=>{
+    let calls=0;
+    const client=new ProviderClient('gatelink',credentials,async()=>{calls++;return Response.json({message:privateValue,upstream:{detail:privateValue}},{status:409});});
+    const error=await client.call(path,'POST',{}).catch(error=>error);
+    expect(error).toMatchObject({statusCode:502,upstreamStatus:409});
+    expect(error.message).toContain('HTTP 409');expect(error.message).toContain('授权状态冲突');
+    expect(error.message).not.toContain(privateValue);expect(calls).toBe(1);
+  });
   it.each([
     ['/api/auth/login','登录'],['/api/settings/submission','读取上号配置'],['/api/submissions?page=1&pageSize=100','同步账号'],
     ['/api/oauth-submissions/authorize','生成授权链接'],['/api/oauth-submissions/exchange','提交授权回调'],

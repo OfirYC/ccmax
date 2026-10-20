@@ -262,7 +262,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       if(job.kind==='oauth_exchange') {
         try {
           const payload=box.decrypt(job.payload);
-          await db.query(`UPDATE oauth_attempts SET state='needs_attention',secret=$2 WHERE id=$1 AND state='exchanging'`,[payload.attemptId,box.encrypt({})]);
+          await db.query(`UPDATE oauth_attempts SET state='needs_attention',secret=$2,authorization_url='' WHERE id=$1 AND state='exchanging'`,[payload.attemptId,box.encrypt({})]);
         } catch { /* the job error already records an encryption/configuration failure */ }
       }
       if(job.kind==='sync') await db.query(`UPDATE connections SET status='error',last_error=$2 WHERE id=$1`,[job.connection_id,message]);

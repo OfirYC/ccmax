@@ -1383,5 +1383,8 @@
   "请求平台": "Gửi yêu cầu đến nền tảng",
   "平台请求超时（{0} 秒）": "Yêu cầu nền tảng hết thời gian chờ ({0} giây)",
   "平台连接中断或网络异常": "Kết nối nền tảng bị gián đoạn hoặc lỗi mạng",
-  "写入结果可能未知，请先核对上游结果": "Kết quả ghi có thể chưa rõ. Hãy kiểm tra kết quả trên nền tảng trước"
+  "写入结果可能未知，请先核对上游结果": "Kết quả ghi có thể chưa rõ. Hãy kiểm tra kết quả trên nền tảng trước",
+  "此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调": "Ủy quyền này không còn hiệu lực. Kiểm tra tác vụ đồng bộ, sau đó tạo liên kết mới và dùng callback mới",
+  "Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态": "Gatelink báo xung đột ủy quyền. Hãy kiểm tra tài khoản và trạng thái ủy quyền trên Gatelink trước",
+  "已有平台账号请从「平台管理」重新授权": "Với tài khoản đã có trên nền tảng, hãy cấp quyền lại từ Quản lý nền tảng"
 }

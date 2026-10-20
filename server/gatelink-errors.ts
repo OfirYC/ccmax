@@ -50,6 +50,8 @@ export async function gatelinkFailure(response:Response,path:string) {
     :/^\/api\/admin\/accounts\/[^/]+\/enabled$/.test(pathname)?'修改账号状态':'请求';
   let message=`Gatelink ${operation}失败（HTTP ${response.status}）`;
   if(response.status===403)message+='；当前主账号无此权限';
+  if(response.status===409 && ['/api/oauth-submissions/authorize','/api/oauth-submissions/exchange'].includes(pathname))
+    message+='；Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态；已有平台账号请从「平台管理」重新授权';
   if(response.status===422) {
     const data=await errorMetadata(response),invalid=validationFields(data);
     const rawStatus=data?.upstream?.httpStatus;

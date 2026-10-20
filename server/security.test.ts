@@ -330,6 +330,41 @@ describe('CCMAX authorization and ledger safeguards', () => {
     await expect(enqueue(db,box,owner.id,conn.id,'import_rt',{accountId:acct.id},id())).rejects.toThrow('正在执行');
   });
 
+  it('returns the original authorization job on retries even after a link or binding exists',async()=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'retry-link@example.com',false),conn=await connection('gatelink'),box=secretBox(key);
+    await bindProxy(cookie,acct);
+    const requestKey=id(),payload={targets:[{connectionId:conn.id,options:{accountType:'stable'}}],key:requestKey};
+    const first=await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,payload);expect(first.statusCode).toBe(200);
+    const jobId=first.json().jobs[0].id,attemptId=id();
+    await db.query("UPDATE jobs SET state='succeeded',payload=$2 WHERE id=$1",[jobId,box.encrypt({})]);
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
+      VALUES($1,$2,$3,$4,$5,'https://auth.example.com/?state=retry',$6)`,[attemptId,owner.id,conn.id,acct.id,box.encrypt({}),new Date(Date.now()+600000)]);
+    const retry=await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,payload);
+    expect(retry.statusCode).toBe(200);expect(retry.json().jobs[0].id).toBe(jobId);
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{...payload,key:id()})).statusCode).toBe(409);
+    expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{...payload,targets:[{connectionId:conn.id,options:{accountType:'speed'}}]})).statusCode).toBe(409);
+    await db.query("UPDATE oauth_attempts SET state='done' WHERE id=$1",[attemptId]);
+    await db.transaction(tx=>saveBinding(tx,conn,remote('retry-original',acct.email),acct));
+    const completed=await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,payload);
+    expect(completed.statusCode).toBe(200);expect(completed.json().jobs[0].id).toBe(jobId);
+    expect(await db.query('SELECT id FROM jobs')).toHaveLength(1);
+  });
+
+  it.each(['needs_attention','expired','exchanging','done'])('hides obsolete links and rejects %s callbacks before reading erased secrets',async state=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'"),acct=await account(owner,'obsolete-link@example.com',false),conn=await connection('gatelink');
+    await bindProxy(cookie,acct);
+    const attemptId=id();
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,state,secret,authorization_url,expires_at)
+      VALUES($1,$2,$3,$4,$5,'erased-secret','https://auth.example.com/?state=obsolete',$6)`,[attemptId,owner.id,conn.id,acct.id,state==='expired'?'pending':state,new Date(Date.now()+(state==='expired'?-60000:600000))]);
+    const listed=(await api(cookie,'GET',`/api/accounts/${acct.id}/attempts`)).json().attempts;
+    expect(listed).toHaveLength(1);expect(listed[0].authorization_url).toBe('');
+    const response=await api(cookie,'POST',`/api/oauth/${attemptId}/exchange`,{callback:'old-code#obsolete',key:id()});
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toContain(['needs_attention','expired'].includes(state)?'重新生成链接':'核对任务状态');
+    expect(await db.query('SELECT id FROM jobs')).toHaveLength(0);expect(await db.query('SELECT * FROM oauth_code_claims')).toHaveLength(0);
+    if(['needs_attention','expired'].includes(state))expect((await api(cookie,'POST',`/api/accounts/${acct.id}/authorize`,{targets:[{connectionId:conn.id,options:{}}],key:id()})).statusCode).toBe(200);
+  });
+
   it('blocks foreign origins and disables the whole descendant tree when its parent is suspended',async()=>{
     const cookie=await login('owner@example.com','correct horse battery staple');
     const a=(await api(cookie,'POST','/api/team',{name:'Parent',email:'parent@example.com',password:'parent-password',rates:{gatelink:0.3,ai008:0.3}})).json().user;
