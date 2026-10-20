@@ -1373,5 +1373,15 @@
   "北京时间": "Giờ Bắc Kinh",
   "让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。": "Tạo thu nhập từ hạn mức Claude Max chưa dùng. Xem báo giá quyết toán riêng, kết nối tài khoản và theo dõi khoản phải thu dựa trên hóa đơn đã xác minh với CCMAX.",
   "单账号历史 7 天收益最高 {0}！": "Thu nhập 7 ngày cao nhất từng ghi nhận của một tài khoản: {0}!",
-  "闲置 Claude Max，立即加入 CCMAX 变现：": "Biến hạn mức Claude Max chưa dùng thành thu nhập. Tham gia CCMAX:"
+  "闲置 Claude Max，立即加入 CCMAX 变现：": "Biến hạn mức Claude Max chưa dùng thành thu nhập. Tham gia CCMAX:",
+  "登录平台": "Đăng nhập nền tảng",
+  "验证平台登录会话": "Xác minh phiên đăng nhập nền tảng",
+  "读取上号配置": "Đọc cấu hình kết nối tài khoản",
+  "导入固定出口代理": "Nhập proxy đầu ra cố định",
+  "读取平台代理": "Đọc proxy của nền tảng",
+  "读取账号详情": "Đọc thông tin tài khoản",
+  "请求平台": "Gửi yêu cầu đến nền tảng",
+  "平台请求超时（{0} 秒）": "Yêu cầu nền tảng hết thời gian chờ ({0} giây)",
+  "平台连接中断或网络异常": "Kết nối nền tảng bị gián đoạn hoặc lỗi mạng",
+  "写入结果可能未知，请先核对上游结果": "Kết quả ghi có thể chưa rõ. Hãy kiểm tra kết quả trên nền tảng trước"
 }

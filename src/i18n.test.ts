@@ -96,6 +96,18 @@ describe('language switching', () => {
     }
   });
 
+  it('translates Mini CC failure steps, read errors and uncertain write results',()=>{
+    for(const locale of ['en','vi','hi'] as const) {
+      setLocale(locale);
+      const write=translateMessage('提交 OAuth 上号；平台请求超时（120 秒）；写入结果可能未知，请先核对上游结果');
+      expect(write).not.toMatch(/[\u3400-\u9fff]/u);
+      expect(write).toContain('120');
+      expect(write).toContain(t('提交 OAuth 上号'));
+      const read=translateMessage('读取账号详情；平台连接中断或网络异常');
+      expect(read).toBe(`${t('读取账号详情')}; ${t('平台连接中断或网络异常')}`);
+    }
+  });
+
   it('translates the complete bulk-update toast before matching a generic effective-date suffix',()=>{
     const source='已调整 {0} 位直属下级，{1} 00:00 北京时间生效',values=[12,'2026-10-19'];
     const original=t(source,values);

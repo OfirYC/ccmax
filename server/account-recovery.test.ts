@@ -186,6 +186,37 @@ describe('owned platform account recovery',()=>{
     expect(await db.query("SELECT id FROM audits WHERE action='binding.reauthorized'")).toHaveLength(0);
   });
 
+  it.each(['interrupted write','interrupted detail read'] as const)('handles Mini CC recovery with an %s without submitting the authorization code twice',async failure=>{
+    const {connection,binding}=await platform('minicc');
+    await db.query('INSERT INTO proxy_bindings(id,proxy_id,connection_id,external_id) VALUES($1,$2,$3,$4)',[id(),proxyId,connection.id,'fixed-proxy']);
+    const attemptId=id(),secret={bindingId:binding.id,proxyId,pendingState:'mini-recovery',options:{email:account.email,proxy:fixedUrl,proxyExternalId:'fixed-proxy',existingExternalId:binding.external_id},session:{cookies:[['mini','private-session']],token:'',csrf:'',user:{role:'supplier'}}};
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at) VALUES($1,$2,$3,$4,$5,'https://auth.example/?state=mini-recovery',$6)`,[attemptId,agent.id,connection.id,account.id,box.encrypt(secret),new Date(Date.now()+600000)]);
+    const job=await call('POST',`/api/oauth/${attemptId}/exchange`,{callback:'one-use-mini#mini-recovery',key:id()});expect(job.statusCode).toBe(200);
+    let writes=0,readsAfterWrite=0;
+    const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async input=>{
+      const path=new URL(String(input)).pathname;
+      if(path==='/api/proxies/manage')return Response.json({total:1,proxies:[{id:'fixed-proxy',url:fixedUrl,status:'active'}]});
+      if(path==='/api/meta')return Response.json({groups:[{id:'group'}],policyTemplates:[{id:'policy',is_default:true,group_ids:['group'],policy:{max_rpm:1,max_tpm:2,max_concurrent:3,max_sessions:4}}],ccTemplates:[{id:'cc',is_default:true}]});
+      if(path==='/api/accounts/exchange') {
+        writes++;
+        if(failure==='interrupted write')throw new TypeError('private-proxy / one-use-mini');
+        return Response.json({id:binding.external_id});
+      }
+      expect(path).toBe(`/api/accounts/${binding.external_id}/detail`);
+      if(writes&&++readsAfterWrite===1)throw new TypeError('private-detail');
+      return Response.json({account:{email:account.email,outbound_proxy_id:'fixed-proxy',status:writes?'active':'disabled'}});
+    }));
+    await worker.runOne();
+    const [stored]=await db.query('SELECT state,error,payload FROM jobs WHERE id=$1',[job.json().id]);
+    expect(stored.state).toBe(failure==='interrupted write'?'needs_attention':'succeeded');
+    if(failure==='interrupted write')expect(stored.error).toBe('提交 OAuth 上号；平台连接中断或网络异常；写入结果可能未知，请先核对上游结果');
+    expect(box.decrypt(stored.payload)).toEqual({});
+    const [attempt]=await db.query('SELECT state,secret FROM oauth_attempts WHERE id=$1',[attemptId]);
+    expect(attempt.state).toBe(failure==='interrupted write'?'needs_attention':'done');expect(box.decrypt(attempt.secret)).toEqual({});
+    expect(writes).toBe(1);expect(await worker.runOne()).toBe(false);
+    expect((await db.query('SELECT * FROM bindings WHERE id=$1',[binding.id]))[0]).toMatchObject({account_id:account.id,external_id:binding.external_id,status:failure==='interrupted write'?'disabled':'active',daily_usd:'123.45000000',cost_7d:'456.00000000',cost_30d:'789.00000000'});
+  });
+
   it('rejects a stale upstream identity before changing its status',async()=>{
     const {binding}=await platform('ai008');let writes=0;
     const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{

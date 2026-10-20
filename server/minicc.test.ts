@@ -16,9 +16,110 @@ function client(handler:(path:string,body:any,init:RequestInit)=>any) {
     return data instanceof Response?data:Response.json(data);
   });
 }
-afterEach(()=>vi.useRealTimers());
+afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();});
+
+function fakeRequestTimeouts() {
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal,'timeout').mockImplementation(duration=>{
+    const controller=new AbortController();
+    setTimeout(()=>controller.abort(new DOMException('Request timed out','TimeoutError')),duration);
+    return controller.signal;
+  });
+}
 
 describe('Mini CC Gateway adapter',()=>{
+  it.each(['/api/accounts/auth-url','/api/accounts/exchange','/api/accounts/import-rt','/api/proxies/import'])('waits for a slow single submission at %s beyond the previous 25-second cutoff',async path=>{
+    fakeRequestTimeouts();let calls=0,signal:AbortSignal|undefined;
+    const c=client(async(_path,_body,init)=>{
+      calls++;signal=init.signal!;
+      await new Promise<void>((resolve,reject)=>{
+        const timer=setTimeout(resolve,35000);
+        signal!.addEventListener('abort',()=>{clearTimeout(timer);reject(signal!.reason);},{once:true});
+      });
+      return {ok:true};
+    });
+    const result=expect(c.call(path,'POST',{code:'private-once'})).resolves.toEqual({ok:true});
+    await vi.advanceTimersByTimeAsync(25001);expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(9999);await result;expect(calls).toBe(1);
+  });
+
+  it('stops a stalled exchange at 120 seconds, reports its step and never repeats the write',async()=>{
+    fakeRequestTimeouts();let calls=0;
+    const c=client(async(_path,_body,init)=>{
+      calls++;
+      return new Promise((_resolve,reject)=>init.signal!.addEventListener('abort',()=>reject(new Error('private-code / proxy-password')),{once:true}));
+    });
+    const result=expect(c.call('/api/accounts/exchange','POST',{code:'private-once'})).rejects.toMatchObject({upstreamStatus:0,message:'提交 OAuth 上号；平台请求超时（120 秒）；写入结果可能未知，请先核对上游结果'});
+    await vi.advanceTimersByTimeAsync(120000);await result;expect(calls).toBe(1);
+  });
+
+  it('retries a failed account detail read without repeating a successful token import',async()=>{
+    vi.useFakeTimers();let writes=0,reads=0;
+    const c=client(path=>{
+      if(path==='/api/meta')return meta();
+      if(path==='/api/accounts/import-rt'){writes++;return {id:'verified'};}
+      expect(path).toBe('/api/accounts/verified/detail');reads++;
+      if(reads===1)throw new TypeError('private-network-message');
+      return {account:{email:'owned@example.com',outbound_proxy_id:'fixed-proxy'}};
+    });
+    const result=expect(c.importRefreshToken({email:'owned@example.com',...fixedProxy},'one-use-token')).resolves.toMatchObject({id:'verified',email:'owned@example.com'});
+    await vi.advanceTimersByTimeAsync(300);await result;expect(writes).toBe(1);expect(reads).toBe(2);
+  });
+
+  it('bounds failed read retries and avoids claiming that the read wrote account data',async()=>{
+    vi.useFakeTimers();let reads=0;
+    const c=client(()=>{reads++;throw new TypeError('private-cookie / private-proxy');});
+    const result=expect(c.call('/api/accounts/private-id/detail')).rejects.toMatchObject({upstreamStatus:0,message:'读取账号详情；平台连接中断或网络异常'});
+    await vi.advanceTimersByTimeAsync(300);await result;expect(reads).toBe(2);
+  });
+
+  it('handles interrupted response bodies as network failures and retries only the read',async()=>{
+    vi.useFakeTimers();let reads=0;
+    const c=client(()=>{
+      reads++;
+      return reads===1?new Response(new ReadableStream({start(controller){controller.error(new TypeError('private-response'));}})):{ok:true};
+    });
+    const result=expect(c.call('/api/meta')).resolves.toEqual({ok:true});
+    await vi.advanceTimersByTimeAsync(300);await result;expect(reads).toBe(2);
+  });
+
+  it('keeps the write timeout active while awaiting the response body',async()=>{
+    fakeRequestTimeouts();let writes=0;
+    const c=client((_path,_body,init)=>{
+      writes++;
+      return new Response(new ReadableStream({start(controller){init.signal!.addEventListener('abort',()=>controller.error(init.signal!.reason),{once:true});}}));
+    });
+    const result=expect(c.call('/api/accounts/import-rt','POST',{refresh_token:'private-token'})).rejects.toMatchObject({upstreamStatus:0,message:'Refresh token 上号；平台请求超时（120 秒）；写入结果可能未知，请先核对上游结果'});
+    await vi.advanceTimersByTimeAsync(120000);await result;expect(writes).toBe(1);
+  });
+
+  it('keeps normal reads at 25 seconds and retries a timed-out read at most once',async()=>{
+    fakeRequestTimeouts();let reads=0;
+    const c=client((_path,_body,init)=>{
+      reads++;
+      return new Promise((_resolve,reject)=>init.signal!.addEventListener('abort',()=>reject(init.signal!.reason),{once:true}));
+    });
+    const result=expect(c.call('/api/me')).rejects.toMatchObject({upstreamStatus:0,message:'验证平台登录会话；平台请求超时（25 秒）'});
+    await vi.advanceTimersByTimeAsync(50300);await result;expect(reads).toBe(2);
+  });
+
+  it.each([401,403,422])('does not retry a denied read (HTTP %s) or expose its raw body',async status=>{
+    let calls=0;
+    const c=client(()=>{calls++;return Response.json({token:'private-secret'},{status});});
+    await expect(c.call('/api/meta')).rejects.toMatchObject({upstreamStatus:status,message:expect.not.stringContaining('private-secret')});
+    expect(calls).toBe(1);
+  });
+
+  it('retries a transient gateway failure on a read, while preserving malformed-response failures',async()=>{
+    vi.useFakeTimers();let calls=0;
+    const c=client(()=>++calls===1?new Response('',{status:503}):{ok:true});
+    const result=expect(c.call('/api/meta')).resolves.toEqual({ok:true});
+    await vi.advanceTimersByTimeAsync(300);await result;expect(calls).toBe(2);
+    calls=0;
+    await expect(client(()=>{calls++;return new Response('private-invalid-json');}).call('/api/meta')).rejects.toThrow('响应格式变化');
+    expect(calls).toBe(1);
+  });
+
   it('authenticates using a private cookie session and verifies /api/me',async()=>{
     const c=client((path,body,init)=>{
       if(path==='/api/login') {

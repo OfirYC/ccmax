@@ -21,6 +21,21 @@ export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;acc
 export class UpstreamError extends AppError {
   constructor(public upstreamStatus:number, message:string) { super(502,message); }
 }
+function miniOperation(path:string) {
+  const pathname=path.split('?')[0];
+  if(pathname==='/api/login')return '登录平台';
+  if(pathname==='/api/me')return '验证平台登录会话';
+  if(pathname==='/api/meta')return '读取上号配置';
+  if(pathname==='/api/accounts/auth-url')return '生成上号授权链接';
+  if(pathname==='/api/accounts/exchange')return '提交 OAuth 上号';
+  if(pathname==='/api/accounts/import-rt')return 'Refresh token 上号';
+  if(pathname==='/api/proxies/import')return '导入固定出口代理';
+  if(pathname==='/api/proxies/manage')return '读取平台代理';
+  if(pathname==='/api/accounts')return '同步账号与实时用量';
+  if(/^\/api\/accounts\/[^/]+\/detail$/.test(pathname))return '读取账号详情';
+  if(/^\/api\/accounts\/[^/]+\/status$/.test(pathname))return '修改平台账号状态';
+  return '请求平台';
+}
 function upstreamAmount(value:unknown,message:string) {
   assert(typeof value==='string'||typeof value==='number',message,502);
   let amount:Decimal;
@@ -49,14 +64,34 @@ export class ProviderClient {
   restoreSession(session:any) { this.cookies=new Map(session.cookies);this.token=session.token;this.csrf=session.csrf;this.user=session.user; }
   async call(path:string,method='GET',body?:unknown) {
     assert(path.startsWith('/api/') && !path.includes('://'),'非法平台接口路径');
+    // Mini CC performs token exchange and proxy connectivity checks inline.
+    // Keep these single submissions alive long enough for the upstream to finish.
+    const timeoutMs=this.provider==='minicc'&&method==='POST'&&[
+      '/api/accounts/auth-url','/api/accounts/exchange','/api/accounts/import-rt','/api/proxies/import',
+    ].includes(path)?120000:25000;
+    for(let attempt=0;;attempt++) {
+      try {return await this.callOnce(path,method,body,timeoutMs);}
+      catch(error) {
+        // Retrying a read can verify a successful write whose detail read failed.
+        // Never replay an OAuth code, refresh token or other write automatically.
+        if(this.provider!=='minicc'||method!=='GET'||attempt>=1||!(error instanceof UpstreamError)||![0,502,503,504].includes(error.upstreamStatus))throw error;
+        await new Promise(resolve=>setTimeout(resolve,300));
+      }
+    }
+  }
+  private async callOnce(path:string,method:string,body:unknown,timeoutMs:number) {
     const base=PROVIDERS[this.provider].url;
     const headers:Record<string,string>={'Content-Type':'application/json','Accept':'application/json','Origin':base};
     if(this.cookies.size) headers.Cookie=[...this.cookies].map(([k,v])=>`${k}=${v}`).join('; ');
     if(this.token) headers.Authorization=`Bearer ${this.token}`;
     if(this.csrf && method!=='GET') headers['x-csrf-token']=this.csrf;
+    const signal=AbortSignal.timeout(timeoutMs),operation=this.provider==='minicc'?miniOperation(path):null;
+    const networkFailure=()=>new UpstreamError(0,[operation,signal.aborted?`平台请求超时（${timeoutMs/1000} 秒）`:'平台连接中断或网络异常',
+      ...(['GET','HEAD'].includes(method)?[]:['写入结果可能未知，请先核对上游结果']),
+    ].filter(Boolean).join('；'));
     let response:Response;
-    try { response=await this.request(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(25000)}); }
-    catch { throw new UpstreamError(0,'平台连接超时或网络异常；写入结果可能未知，请核对后操作'); }
+    try { response=await this.request(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal}); }
+    catch { throw networkFailure(); }
     for(const cookie of response.headers.getSetCookie()) {
       const pair=cookie.split(';')[0], index=pair.indexOf('=');
       if(index>0) this.cookies.set(pair.slice(0,index),pair.slice(index+1));
@@ -64,7 +99,10 @@ export class ProviderClient {
     // Never expose a raw upstream body: account APIs can contain tokens/proxies.
     if(!response.ok) throw new UpstreamError(response.status,this.provider==='gatelink'?await gatelinkFailure(response,path):`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}`);
     if(response.status===204) return {};
-    try { return await response.json() as any; }
+    let text:string;
+    try {text=await response.text();}
+    catch {throw networkFailure();}
+    try { return JSON.parse(text) as any; }
     catch { throw new UpstreamError(response.status,'平台响应格式变化，请检查适配器'); }
   }
   async login() {

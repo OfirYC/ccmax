@@ -1373,5 +1373,15 @@
   "北京时间": "Beijing time",
   "让闲置 Claude Max 额度产生收益。查看专属结算报价，添加账号，追踪有账单依据的实际应收。": "Put your idle Claude Max capacity to work. View your settlement quote, connect your account, and track verified account earnings with CCMAX.",
   "单账号历史 7 天收益最高 {0}！": "Highest historical 7-day earnings for one account: {0}!",
-  "闲置 Claude Max，立即加入 CCMAX 变现：": "Turn idle Claude Max capacity into earnings. Join CCMAX:"
+  "闲置 Claude Max，立即加入 CCMAX 变现：": "Turn idle Claude Max capacity into earnings. Join CCMAX:",
+  "登录平台": "Sign in to platform",
+  "验证平台登录会话": "Verify platform session",
+  "读取上号配置": "Read onboarding settings",
+  "导入固定出口代理": "Import fixed exit proxy",
+  "读取平台代理": "Read platform proxies",
+  "读取账号详情": "Read account details",
+  "请求平台": "Request platform",
+  "平台请求超时（{0} 秒）": "Platform request timed out ({0} seconds)",
+  "平台连接中断或网络异常": "Platform connection interrupted or network error",
+  "写入结果可能未知，请先核对上游结果": "The write result may be unknown. Check the upstream result first"
 }
