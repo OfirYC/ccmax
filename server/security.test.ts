@@ -6,6 +6,7 @@ import { ingestUsage, requestWithdrawal, balance, createInvoice, confirmInvoice,
 import { openTestDB, seedSettlement } from './test-db.js';
 import { enqueue, saveBinding, createWorker } from './worker.js';
 import type { FastifyInstance } from 'fastify';
+import { publicProvider } from './platform-privacy.js';
 
 const key = '11'.repeat(32);
 
@@ -133,14 +134,14 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const earningsBefore=await db.query('SELECT user_id,rate,gross_usd,profit_usd FROM earnings ORDER BY user_id');
     const changed=await api(ownerCookie,'PUT',`/api/team/${child.id}/rates`,{provider:'ai008',rate:0.25});expect(changed.json().effectiveDate).toBe(nextDay());
     const teamPrices=(await api(childCookie,'GET','/api/team')).json();
-    expect(teamPrices.rates.find((r:any)=>r.user_id===child.id&&r.provider==='ai008').effective_date).toBe('1970-01-01');
-    expect(teamPrices.upcoming.find((r:any)=>r.user_id===child.id&&r.provider==='ai008').effective_date).toBe(nextDay());
+    expect(teamPrices.rates.find((r:any)=>r.user_id===child.id&&r.provider==='B').effective_date).toBe('1970-01-01');
+    expect(teamPrices.upcoming.find((r:any)=>r.user_id===child.id&&r.provider==='B').effective_date).toBe(nextDay());
     const mine=(cookie:string)=>api(cookie,'GET','/api/connections').then(r=>r.json().connections);
     const ownerPrices=await mine(ownerCookie),childPrices=await mine(childCookie),leafPrices=await mine(leafCookie);
     expect(ownerPrices.find((c:any)=>c.id===ai.id)).toMatchObject({payout_rate:'0.5000',settlement_rate:'0.5000',upcoming_settlement_rate:null});
     expect(childPrices.find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.2000',settlement_effective_date:'1970-01-01',upcoming_settlement_rate:'0.2500',upcoming_settlement_date:nextDay()});
-    expect(childPrices.find((c:any)=>c.provider==='gatelink').settlement_rate).toBe('0.0000');
-    expect(childPrices.find((c:any)=>c.provider==='minicc')).toMatchObject({settlement_rate:null,upcoming_settlement_rate:null});
+    expect(childPrices.find((c:any)=>c.provider==='A').settlement_rate).toBe('0.0000');
+    expect(childPrices.find((c:any)=>c.provider==='C')).toMatchObject({settlement_rate:null,upcoming_settlement_rate:null});
     expect(childPrices.every((c:any)=>!Object.hasOwn(c,'payout_rate')&&!Object.hasOwn(c,'upcoming_payout_rate'))).toBe(true);
     expect(leafPrices.find((c:any)=>c.id===ai.id)).toMatchObject({settlement_rate:'0.1000',upcoming_settlement_rate:null});
     expect((await api(childCookie,'PUT',`/api/team/${child.id}/rates`,{provider:'ai008',rate:0.8})).statusCode).toBe(403);
@@ -168,7 +169,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const history=await db.query('SELECT * FROM usage_days'),earnings=await db.query('SELECT * FROM earnings');
     const paths=['/api/connections','/api/dashboard','/api/accounts','/api/jobs','/api/proxies','/api/telemetry','/api/usage','/api/usage/export',`/api/invoices/${invoice.id}/export`,`/api/invoices/preview?from=1970-01-01&to=${prior()}`];
     for(const cookie of [ownerCookie,childCookie])for(const path of paths) {
-      const response=await api(cookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);if(path==='/api/proxies'&&cookie===ownerCookie)expect(response.json().proxies).toEqual([]);else expect(response.body,path).toContain(`AI008 · ${conn.id.slice(0,8)}`);
+      const response=await api(cookie,'GET',path);expect(response.statusCode,path).toBe(200);expect(response.body,path).not.toContain(internal);if(path==='/api/proxies'&&cookie===ownerCookie)expect(response.json().proxies).toEqual([]);else expect(response.body,path).toContain(`平台 B · ${conn.id.slice(0,8)}`);
     }
     expect((await api(childCookie,'GET',`/api/accounts/${acct.id}/attempts`)).body).not.toContain(internal);
     expect((await db.query('SELECT name FROM connections WHERE id=$1',[conn.id]))[0].name).toBe(internal);
@@ -219,7 +220,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const a=created.json().user,ac=await login(a.email,'mini-parent-password');
     const b=(await api(ac,'POST','/api/team',{name:'Mini Leaf',email:'mini-leaf@example.com',password:'mini-leaf-password',rates:{ai008:0.1,gatelink:0.1},effectiveFrom:'1970-01-01'})).json().user;
     const team=(await api(cookie,'GET','/api/team')).json();
-    expect(team.providers[provider].historicalUsage).toBe(true);
+    expect(team.providers[publicProvider(provider)].historicalUsage).toBe(true);
     expect(team.rates.filter((r:any)=>r.provider===provider)).toHaveLength(0);
     const mini=await connection(provider,'0.8'),ai=await connection('ai008','0.5'),acct=await account(b);
     const binding=await db.transaction(tx=>saveBinding(tx,mini,remote('mini-remote',acct.email)));
@@ -532,6 +533,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect(acct).toMatchObject({owner_id:member.id,submitted_by:member.id,ownership_verified:false});
     const conns=await Promise.all(['gatelink','ai008','minicc'].map(p=>connection(p)));
     const {ProviderClient}=await import('./providers.js');
+    const states=new Map(conns.map(c=>[c.provider,id()]));
     const imported=new Set<string>(),actualProxyUrls:string[]=[];
     const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
       const path=new URL(String(input)).pathname,body=init.body?JSON.parse(String(init.body)):{};
@@ -544,15 +546,15 @@ describe('CCMAX authorization and ledger safeguards', () => {
       if(path.endsWith('/proxies/import')||path.endsWith('/outbound-proxies/import')) {
         actualProxyUrls.push(body.text);imported.add(provider);return Response.json({imported:1,failed:0});
       }
-      if(path.endsWith('/authorize')) {actualProxyUrls.push(body.proxy);return Response.json({authorizationUrl:'https://auth.example.com/gate?state=state-gatelink'});}
+      if(path.endsWith('/authorize')) {actualProxyUrls.push(body.proxy);return Response.json({authorizationUrl:`https://auth.example.com/authorize?state=${states.get(provider)}`});}
       if(path.endsWith('/auth-url')) {
         expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
-        return Response.json({url:`https://auth.example.com/${provider}`,state:`state-${provider}`});
+        return Response.json({url:`https://auth.example.com/authorize?state=${states.get(provider)}`,state:states.get(provider)});
       }
       if(path.endsWith('/exchange')) {
         if(provider==='gatelink') {actualProxyUrls.push(body.proxy);return Response.json({item:{id:'acct-gate',upstreamEmail:acct.email}});}
         expect(body.outbound_proxy_mode).toBe('manual');expect(body.outbound_proxy_id).toBe(`remote-${provider}`);
-        expect(body.code).toBe(`one-use-${conns.find(c=>c.provider===provider)!.id}#state-${provider}`);expect(body.pending_state).toBe(`state-${provider}`);
+        expect(body.code).toBe(`one-use-${conns.find(c=>c.provider===provider)!.id}#${states.get(provider)}`);expect(body.pending_state).toBe(states.get(provider));
         return Response.json({id:`acct-${provider}`});
       }
       if(path.endsWith('/detail')||path.endsWith('/acct-ai008'))return Response.json({account:{email:acct.email,outbound_proxy_id:`remote-${provider}`}});

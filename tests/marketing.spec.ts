@@ -34,7 +34,7 @@ test('historical record displays the supplied verified week, dates and basis acr
   await page.locator('.language-switcher select').selectOption('zh-CN');
   await page.screenshot({ path: 'test-results/historical-record-login-desktop.png', fullPage: true });
   expect((await page.request.post('/api/auth/login', { headers, data: { email: 'owner@example.com', password: 'e2e-owner-password' } })).ok()).toBe(true);
-  const response = await page.request.post('/api/team/invitations', { headers, data: { name: 'Historical record campaign', rates: { ai008: 0.12 } } });
+  const response = await page.request.post('/api/team/invitations', { headers, data: { name: 'Historical record campaign', rates: { B: 0.12 } } });
   expect(response.ok()).toBe(true);
   const invitation = (await response.json()).invitation;
   await page.goto('/team');

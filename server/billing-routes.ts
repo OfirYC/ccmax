@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { DB, Row } from './db.js';
 import { assert, audit, requireOwner, today, type SecretBox } from './core.js';
 import { queueBillingRange, shiftBillingDay } from './billing-scheduler.js';
-import { platformName } from '../shared/platforms.js';
+import { publicPlatformName } from './platform-privacy.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>Number.isFinite(Date.parse(v)) && new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v,'日期无效');
 
@@ -19,7 +19,7 @@ export function registerBilling(app: FastifyInstance, db: DB, box: SecretBox) {
     const rows=await db.query(`SELECT d.*,c.provider,c.name AS connection_name,s.raw_usd,s.created_at AS source_at
       FROM billing_days d JOIN connections c ON c.id=d.connection_id LEFT JOIN upstream_statements s ON s.id=d.statement_id
       WHERE d.day BETWEEN $1 AND $2 AND ($3='' OR c.provider=$3) ORDER BY d.day DESC,c.provider,c.id LIMIT 12 OFFSET $4`,[...params,(q.page-1)*12]);
-    return {rows:rows.map(({source_error,...row})=>({...row,connection_name:`${platformName(row.provider)} · ${row.connection_id.slice(0,8)}`})),totals,page:q.page,total:totals.count,timezone:'Asia/Shanghai',dailyAfter:'02:00'};
+    return {rows:rows.map(({source_error,...row})=>({...row,connection_name:`${publicPlatformName(row.provider)} · ${row.connection_id.slice(0,8)}`})),totals,page:q.page,total:totals.count,timezone:'Asia/Shanghai',dailyAfter:'02:00'};
   });
   app.post('/api/billing/collect',async req=>{
     await requireOwner(req.user);

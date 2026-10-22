@@ -12,7 +12,7 @@ export default function ProxySetup({account,onChange}:{account:any;onChange:(acc
   const own=account.owner_id===user.id,hasProxy=account.proxy_bound??!!account.proxy_id;
   const proxies=(data?.proxies||[]).filter((proxy:any)=>proxy.owner_id===user.id);
   const bound=proxies.find((proxy:any)=>proxy.id===account.proxy_id),enabled=account.proxy_enabled??bound?.enabled;
-  const needsSync=account.proxy_sync_state?account.proxy_sync_state!=='succeeded':(account.bindings||[]).some((binding:any)=>binding.provider!=='gatelink'&&!(binding.proxy_verified??binding.proxy_id===account.proxy_id));
+  const needsSync=account.proxy_sync_state?account.proxy_sync_state!=='succeeded':(account.bindings||[]).some((binding:any)=>binding.provider!=='A'&&!(binding.proxy_verified??binding.proxy_id===account.proxy_id));
   const syncing=['queued','running'].includes(account.proxy_sync_state);
   async function bind(proxyId:string) {
     const result=await post(`/api/accounts/${account.id}/proxy`,{proxyId});

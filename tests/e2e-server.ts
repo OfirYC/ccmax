@@ -19,7 +19,7 @@ for(const [provider,rate] of [['gatelink','0.5'],['ai008','0.6']]) {
  const [c]=await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,status) VALUES($1,$2,$5,$3,$4,'connected') RETURNING *",[id(),provider,box.encrypt({username:'fixture',password:'fixture'}),rate,`private-upstream-${provider}@example.com`]);
  await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,$3,'1970-01-01')",[id(),c.id,rate]);
  for(const [user,rate] of [[agent,'0.3'],[leaf,'0.1']])await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,'1970-01-01',$5)",[id(),user,provider,rate,owner.id]);
- const b=await db.transaction(tx=>saveBinding(tx,c,{id:'fixture-'+provider,email:'claude-fixture@example.com',name:'fixture',status:'active',dailyUsd:'100',cost7d:null,cost30d:null,utilization:null}));
+ const b=await db.transaction(tx=>saveBinding(tx,c,{id:id(),email:'claude-fixture@example.com',name:'fixture',status:'active',dailyUsd:'100',cost7d:null,cost30d:null,utilization:null}));
  const snapshot=normalizeTelemetry('ai008',{stats:{daily_cost:100,daily_req:120,daily_tok:42000,rpm:4,tpm:1200,concurrent:1},max_rpm:50,max_tpm:50000,
    req_24h:150,ok_24h:144,limited_24h:3,usage_windows:{req_7d:720,tokens_7d:252000,cost_7d:600}});
  snapshot.modelsAt=new Date().toISOString();snapshot.periods.today.models=[{model:'opus',usageUsd:'80'},{model:'fable',usageUsd:'20'}];

@@ -39,7 +39,7 @@ describe('priced team invitations', () => {
     const parent = await agent('parent'), first = await invite(parent.cookie), second = await invite(parent.cookie, { rates: { ai008: 0.2 } });
     const token = tokenOf(first), preview = await request('GET', `/api/invitations/${token}`);
     expect(preview.statusCode, preview.body).toBe(200);
-    expect(preview.json()).toMatchObject({ inviterName: 'parent', rates: { ai008: '0.1234', minicc: '0.0000' } });
+    expect(preview.json()).toMatchObject({ inviterName: 'parent', rates: { B: '0.1234', C: '0.0000' } });
     expect(preview.body).not.toContain('Private campaign');
     expect(preview.body).not.toContain('parent@example.com');
     expect(preview.body).not.toContain('token_secret');
@@ -52,7 +52,7 @@ describe('priced team invitations', () => {
     expect(quotes).toEqual([{ provider: 'ai008', rate: '0.1234', effective_date: today(), created_by: parent.user.id }, { provider: 'minicc', rate: '0.0000', effective_date: today(), created_by: parent.user.id }]);
     expect((await db.query("SELECT rate FROM rates r JOIN users u ON u.id=r.user_id WHERE u.email='other@example.com'"))[0].rate).toBe('0.2000');
     await request('PUT', `/api/team/${member.id}/rates`, { provider: 'ai008', rate: 0.1 }, parent.cookie);
-    expect((await request('GET', `/api/invitations/${token}`)).json().rates.ai008).toBe('0.1234');
+    expect((await request('GET', `/api/invitations/${token}`)).json().rates.B).toBe('0.1234');
     expect((await request('GET', '/api/team/invitations', undefined, parent.cookie)).json().invitations.find((i: any) => i.id === first.id)).toMatchObject({ used_count: 1, url: first.url });
     expect((await db.query('SELECT * FROM invitation_redemptions WHERE user_id=$1', [member.id]))).toHaveLength(1);
     expect((await db.query("SELECT * FROM audits WHERE action='invitation.accept' AND actor_id=$1", [member.id]))).toHaveLength(1);

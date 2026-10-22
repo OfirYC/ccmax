@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BadgeDollarSign, CheckCircle2, CircleDollarSign, Trophy, Wallet, Zap } from 'lucide-react';
 import { bestQuote, calculateQuotedEarnings, monetizationReference, type WeeklyRecordReport } from '../shared/monetization';
-import { platformName } from '../shared/platforms';
+import { platformName } from './platforms';
 import { money, useData } from './api';
 import { Empty, ErrorBox, Field, Loading } from './components';
 import { t } from './i18n';

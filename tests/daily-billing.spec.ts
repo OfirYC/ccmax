@@ -7,7 +7,7 @@ test('an administrator sees automatic bill updates without collection or import 
   await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');
   await page.getByRole('button',{name:'进入工作空间'}).click();
   await expect(page.getByRole('heading',{name:'你好，平台管理员',exact:true})).toBeVisible();
-  const connections=await(await page.request.get('/api/connections')).json(),c=connections.connections.find((r:any)=>r.provider==='gatelink');
+  const connections=await(await page.request.get('/api/connections')).json(),c=connections.connections.find((r:any)=>r.provider==='A');
   const day=new Date(Date.now()+8*3600000-86400000).toISOString().slice(0,10);
   // Presentation fixtures exercise an estimated result and a partial failure;
   // no upstream requests, new invoices or wallet entries are made by this test.
@@ -34,7 +34,7 @@ test('an administrator sees automatic bill updates without collection or import 
   await expect(page.getByText('每天北京时间 02:00 后自动更新昨日账单。',{exact:true})).toBeVisible();
   updated=true;await page.clock.fastForward(10000);await expect(panel).toContainText('5 / 5');
   await page.setViewportSize({width:1440,height:900});
-  await page.getByRole('link',{name:'平台管理',exact:true}).click();const card=page.locator('.connection-card').filter({has:page.locator('.platform-mark.gatelink')});
+  await page.getByRole('link',{name:'平台管理',exact:true}).click();const card=page.locator('.connection-card').filter({has:page.locator('.platform-mark.A')});
   await expect(card).toContainText('每天 02:00 后（北京时间）');await card.getByRole('button',{name:'配置连接',exact:true}).click();
   await expect(page.getByRole('dialog').getByRole('checkbox',{name:'历史接口不可用时，允许按日终快照预估自动出账'})).toHaveCount(0);
   await expect(page.getByRole('dialog')).not.toContainText('23:55');
@@ -60,7 +60,7 @@ test('a day with no usable source stays pending without an invented zero bill or
   await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');await page.getByRole('button',{name:'进入工作空间'}).click();
   await expect(page.getByRole('heading',{name:'你好，平台管理员',exact:true})).toBeVisible();
   await page.route('**/api/billing/days?**',route=>route.fulfill({json:{rows:[{
-    connection_id:'pending',provider:'gatelink',day:'2026-10-18',basis:'snapshot',state:'awaiting_data',statement_id:null,
+    connection_id:'pending',provider:'A',day:'2026-10-18',basis:'snapshot',state:'awaiting_data',statement_id:null,
     account_count:1,finalized_count:0,issue_count:1,raw_usd:null,error:null,source_error:'HTTP 403',
     issues:[{externalId:'pending',message:'当日用量数据待补齐'}],
   }],total:1,page:1}}));

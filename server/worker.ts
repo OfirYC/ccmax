@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { ancestry, assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
 import { ProviderClient, UpstreamError, usesAdminOAuth, type ProviderKey, type UpstreamAccount } from './providers.js';
+import { privateAuthorizationUrl } from './platform-privacy.js';
 import { accountProxy } from './proxies.js';
 import { saveTelemetry } from './telemetry.js';
 import { awaitSnapshotBilling, failDailyBilling, recordDailyStatement } from './daily-billing.js';
@@ -155,6 +156,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         // Repair and verify that proxy before asking it to issue a new link.
         if(recovery&&usesAdminOAuth(connection.provider))await client.setAccountProxy(recovery.external_id,options);
         const oauth=await client.startOAuth(options);
+        assert(actor.role==='owner'||!privateAuthorizationUrl(oauth.url),'授权链接暂不可用，请联系管理员核对平台配置',502);
         const oauthId=id();
         await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
           VALUES($1,$2,$3,$4,$5,$6,$7)`,[oauthId,actor.id,connection.id,account.id,

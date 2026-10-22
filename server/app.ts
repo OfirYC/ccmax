@@ -7,7 +7,7 @@ import type { DB, Row } from './db.js';
 import { AppError, assert, audit, dayString, hashPassword, id, nextDay, requireDirect, requireOwner, secretBox, subtree, today, verifyPassword } from './core.js';
 import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, withdrawalDestination } from './billing.js';
 import { enqueue, enqueueAccountProxySync } from './worker.js';
-import { PROVIDERS, PROVIDER_KEYS, ProviderClient, type ProviderKey } from './providers.js';
+import { PROVIDERS, PROVIDER_KEYS, platformCatalog, ProviderClient, type ProviderKey } from './providers.js';
 import { accountProxy, parseProxy, proxyFingerprint } from './proxies.js';
 import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 import { apiKeyService } from './api-keys.js';
@@ -23,6 +23,7 @@ import { validateOAuthCallback } from './oauth-callback.js';
 import { isPublicInvitation, registerInvitations } from './invitations.js';
 import { registerMonetization } from './monetization.js';
 import { isPublicWeeklyRecord } from './weekly-record.js';
+import { decodePlatformRequest, encodePlatformResponse, publicPlatformName } from './platform-privacy.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -36,7 +37,7 @@ const key=z.string().min(8).max(100);
 const publicUser=(u:Row)=>({id:u.id,name:u.name,email:u.email,role:u.role,parent_id:u.parent_id,active:u.active,created_at:u.created_at});
 // All roles receive public platform identity, including administrators and CSVs.
 // Saved labels can contain master-account emails and are never display names.
-const connectionName=(_user:Row,provider:ProviderKey,connectionId:string,_internalName:string)=>`${PROVIDERS[provider].name} · ${connectionId.slice(0,8)}`;
+const connectionName=(_user:Row,provider:ProviderKey,connectionId:string,_internalName:string)=>`${publicPlatformName(provider)} · ${connectionId.slice(0,8)}`;
 const publicConnectionRows=(user:Row,rows:Row[]):Row[]=>rows.map(r=>({...r,connection_name:connectionName(user,r.provider,r.connection_id,r.connection_name)}));
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const optionSchema=z.object({accountType:z.enum(['speed','stable','team','max','pro']).optional(),policyTemplateId:z.string().max(100).optional(),groupIds:z.array(z.string().max(100)).max(30).optional(),ccTemplateId:z.string().max(100).optional()}).strict();
@@ -99,6 +100,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     request.user=session;
     if(request.apiKey) await keys.used(request.apiKey);
   });
+  app.addHook('preValidation',async request=>{
+    request.body=decodePlatformRequest(request.body);
+    // Fastify's query parser uses its own object prototype. Normalize the
+    // top-level query before decoding public platform filters.
+    request.query=decodePlatformRequest({...request.query as Row});
+  });
+  app.addHook('preSerialization',async(request,_reply,payload)=>encodePlatformResponse(payload,request.user?.role==='owner'));
   app.addHook('onResponse',async(request,reply)=>{
     if(request.apiKey&&request.user&&!['GET','HEAD','OPTIONS'].includes(request.method)) {
       try {await audit(db,request.user.id,'api.request',request.apiKey.id,{method:request.method,route:request.routeOptions.url,status:reply.statusCode,requestId:request.id});}
@@ -152,7 +160,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       ) m ON m.user_id=u.id WHERE u.id=ANY($1::text[]) ORDER BY u.created_at`,[ids,q.from,q.to]);
     const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,current]);
     const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
-    return {users,rates,upcoming,period:q,providers:PROVIDERS};
+    return {users,rates,upcoming,period:q,providers:platformCatalog(req.user.role==='owner')};
   });
   app.get('/api/team/pricing',async req=>pricingReport(db,req.user));
   app.post('/api/team/rates/preview',async req=>previewBatchPricing(db,req.user,batchPricingSchema.parse(req.body)));
@@ -216,8 +224,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       ...c,name:connectionName(req.user,c.provider,c.id,c.name),
       settlement_rate:root?payout_rate:own_rate,settlement_effective_date:root?payout_effective_date:own_effective_date,
       upcoming_settlement_rate:root?upcoming_payout_rate:own_upcoming_rate,upcoming_settlement_date:root?upcoming_payout_date:own_upcoming_date,
-      ...(root?{payout_rate,last_error,upcoming_payout_rate,upcoming_payout_date}:{}),capabilities:PROVIDERS[c.provider as ProviderKey],
-    })),providers:PROVIDERS,today:current};
+      ...(root?{payout_rate,last_error,upcoming_payout_rate,upcoming_payout_date}:{}),capabilities:platformCatalog(root)[c.provider],
+    })),providers:platformCatalog(req.user.role==='owner'),today:current};
   });
   app.post('/api/connections',async req=>{
     await requireOwner(req.user);
@@ -250,7 +258,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.get('/api/connections/:id/options',async req=>{
     const target=identifier.parse((req.params as Row).id),[c]=await db.query('SELECT * FROM connections WHERE id=$1 AND enabled=true',[target]);assert(c,'平台连接不存在或已停用',404);
-    const client=new ProviderClient(c.provider,box.decrypt(c.credentials));await client.login();return client.options();
+    const client=new ProviderClient(c.provider,box.decrypt(c.credentials));await client.login();const options=await client.options();
+    if(req.user.role==='owner')return options;
+    const labels={policies:'策略',groups:'分组',templates:'模板'} as const;
+    return {...options,...Object.fromEntries(Object.entries(labels).filter(([key])=>Array.isArray((options as Row)[key])).map(([key,label])=>[key,(options as Row)[key].map((item:Row,index:number)=>({...item,name:`${label} ${index+1}`}))]))};
   });
   app.post('/api/connections/sync',async req=>{
     await requireOwner(req.user);const d=z.object({connectionIds:z.array(identifier).min(1).max(20),key}).parse(req.body);
@@ -323,7 +334,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       return {...a,proxy_bound:!!a.proxy_id,proxy_id:own?a.proxy_id:null,proxy_name:own?a.proxy_name:null,proxy_endpoint:own?a.proxy_endpoint:null,
         proxy_sync_state:!a.proxy_id?null:active?.state??(failed?'needs_attention':pending.length?'pending':'succeeded'),proxy_sync_error:failed?.error??null,
         bindings:visibleBindings.filter(b=>b.account_id===a.id).map(b=>({...b,proxy_verified:!!a.proxy_id&&b.proxy_id===a.proxy_id,proxy_id:own?b.proxy_id:null}))};
-    }),providers:PROVIDERS,day:today()};
+    }),providers:platformCatalog(req.user.role==='owner'),day:today()};
   });
   app.post('/api/accounts/:id/proxy',async req=>{
     const accountId=identifier.parse((req.params as Row).id),d=z.object({proxyId:identifier}).parse(req.body);
@@ -542,7 +553,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     });
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
     const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];
-    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:PROVIDERS,pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
+    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:platformCatalog(req.user.role==='owner'),pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
   });
   app.get('/api/finance',async req=>{
     const q=z.object({tab:z.enum(['all','mine','children']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);

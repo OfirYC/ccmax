@@ -46,7 +46,7 @@ test('an owner reconciles every wallet and platform without changing invoices or
   const report=await(await response).json();expect(report.ok).toBe(true);expect(report.platforms).toHaveLength(3);expect(report.checked.finalizedUsageDays).toBeGreaterThanOrEqual(2);
   const dialog=page.getByRole('dialog');await expect(dialog.getByText(en['账目一致性核对通过'],{exact:true})).toBeVisible();
   await expect(dialog.getByRole('heading',{name:en['各代理资金余额'],exact:true})).toBeVisible();
-  await expect(dialog.getByRole('row').filter({hasText:'Mini CC Gateway'})).toBeVisible();
+  await expect(dialog.getByRole('row').filter({hasText:en['平台 C']})).toBeVisible();
   await page.setViewportSize({width:390,height:844});await dialog.locator('.finance-audit-totals').screenshot({path:'test-results/finance-audit-mobile.png'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.getByRole('button',{name:en['关闭弹窗']}).click();

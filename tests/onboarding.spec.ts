@@ -57,7 +57,7 @@ for (const rejectionStatus of [400, 409]) test(`platform authorizations stay ind
   await page.screenshot({ path: `test-results/oauth-platforms-${rejectionStatus}-mobile.png`, fullPage: true });
 });
 
-test('Gatelink refreshes conflicts, discards failed and expired links, and generates a fresh authorization', async ({ page }) => {
+test('平台 A refreshes conflicts, discards failed and expired links, and generates a fresh authorization', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN'));
   await page.goto('/');
   await page.getByLabel('登录邮箱').fill('owner@example.com');
@@ -66,11 +66,11 @@ test('Gatelink refreshes conflicts, discards failed and expired links, and gener
   await expect(page.locator('h1')).toContainText('你好');
   const headers = { 'x-ccmax-request': '1' };
   const account = (await (await page.request.post('/api/accounts', { headers, data: { email: 'gate-conflict@example.com' } })).json()).account;
-  const proxy = await (await page.request.post('/api/proxies', { headers, data: { name: 'Gatelink conflict proxy', url: 'http://gate.proxy.example.com:8080' } })).json();
+  const proxy = await (await page.request.post('/api/proxies', { headers, data: { name: '平台 A conflict proxy', url: 'http://gate.proxy.example.com:8080' } })).json();
   expect((await page.request.post(`/api/accounts/${account.id}/proxy`, { headers, data: { proxyId: proxy.id } })).ok()).toBe(true);
-  const connection = (await (await page.request.get('/api/connections')).json()).connections.find((c: any) => c.provider === 'gatelink');
+  const connection = (await (await page.request.get('/api/connections')).json()).connections.find((c: any) => c.provider === 'A');
   await page.clock.install();
-  const makeAttempt = (state: string) => ({ id: randomUUID(), connection_id: connection.id, provider: 'gatelink', authorization_url: `https://auth.example.com/?state=${state}`, state: 'pending', expires_at: new Date(Date.now() + 600000).toISOString() });
+  const makeAttempt = (state: string) => ({ id: randomUUID(), connection_id: connection.id, provider: 'A', authorization_url: `https://auth.example.com/?state=${state}`, state: 'pending', expires_at: new Date(Date.now() + 600000).toISOString() });
   const original = makeAttempt('old-gate'), concurrent = makeAttempt('concurrent-gate');
   let visible = [original], starts = 0, exchanges = 0;
   await page.route(`**/api/accounts/${account.id}/attempts`, route => route.fulfill({ json: { attempts: visible } }));
@@ -90,16 +90,16 @@ test('Gatelink refreshes conflicts, discards failed and expired links, and gener
     visible = [{ ...makeAttempt('fresh-gate'), expires_at: new Date(Date.now() + 1200000).toISOString() }];
     return route.fulfill({ json: { jobs: [{ id: jobId, state: 'queued' }] } });
   });
-  await page.route('**/api/jobs', route => route.fulfill({ json: { jobs: [{ id: jobId, connection_id: connection.id, provider: 'gatelink', kind: 'oauth_start', state: 'succeeded' }] } }));
+  await page.route('**/api/jobs', route => route.fulfill({ json: { jobs: [{ id: jobId, connection_id: connection.id, provider: 'A', kind: 'oauth_start', state: 'succeeded' }] } }));
   await page.goto('/accounts');
   await page.getByRole('button', { name: '新增账号 / 多平台上号', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '多平台分别授权' });
   await dialog.getByLabel('选择已有 Claude 账号（可选）').selectOption(account.id);
   const cards = dialog.locator('.oauth-attempt');
   await expect(cards).toHaveCount(1);
-  await dialog.locator('.target-card').filter({ hasText: 'Gatelink' }).getByRole('checkbox').check();
+  await dialog.locator('.target-card').filter({ hasText: '平台 A' }).getByRole('checkbox').check();
   await cards.getByRole('textbox').fill('old-code#old-gate');
-  await cards.getByRole('button', { name: '提交 Gatelink 的授权', exact: true }).click();
+  await cards.getByRole('button', { name: '提交 平台 A 的授权', exact: true }).click();
   await expect(dialog.getByRole('alert')).toContainText('重新生成链接');
   await expect(cards).toHaveCount(0);
   const generate = dialog.getByRole('button', { name: '批量生成独立授权链接', exact: true });

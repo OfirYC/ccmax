@@ -43,20 +43,20 @@ describe('pricing risk reports and atomic batch adjustments',()=>{
   it('reports a future upstream drop to each affected parent without changing contracts or exposing other teams',async()=>{
     await quote(parent,'0.2',nextDay());
     const data=(await call(parent,'GET','/api/team/pricing')).json();
-    expect(data.prices.find((r:any)=>r.provider==='ai008')).toMatchObject({currentRate:'0.4000',nextRate:'0.2000'});
+    expect(data.prices.find((r:any)=>r.provider==='B')).toMatchObject({currentRate:'0.4000',nextRate:'0.2000'});
     expect(data.risks.filter((r:any)=>r.kind==='inverted')).toEqual([expect.objectContaining({payerId:parent.id,userId:child.id,date:nextDay(),ownRate:'0.2000',childRate:'0.3000',lossPer100Usd:'10.00000000'})]);
     expect(data.directUsers.map((u:any)=>u.id)).toEqual([child.id]);
     expect(JSON.stringify(data)).not.toContain('private-');expect(JSON.stringify(data)).not.toContain(sibling.id);expect(JSON.stringify(data)).not.toContain('0.5000');
     expect((await db.query('SELECT rate FROM rates WHERE user_id=$1',[child.id]))[0].rate).toBe('0.3000');
-    const leafView=(await call(child,'GET','/api/team/pricing')).json();expect(leafView.prices.find((r:any)=>r.provider==='ai008').currentRate).toBe('0.3000');expect(leafView.risks).toHaveLength(0);
+    const leafView=(await call(child,'GET','/api/team/pricing')).json();expect(leafView.prices.find((r:any)=>r.provider==='B').currentRate).toBe('0.3000');expect(leafView.risks).toHaveLength(0);
   });
 
   it('evaluates multiple owner connections at their lowest enabled contract and treats missing quotes separately from zero',async()=>{
     const extra=id();await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'ai008','private-second','x',0.25)",[extra]);
     await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,0.25,'1970-01-01')",[id(),extra]);
-    let data=(await call(owner,'GET','/api/team/pricing')).json();expect(data.prices.find((p:any)=>p.provider==='ai008').currentRate).toBe('0.2500');expect(data.risks.some((r:any)=>r.userId===parent.id&&r.kind==='inverted')).toBe(true);
+    let data=(await call(owner,'GET','/api/team/pricing')).json();expect(data.prices.find((p:any)=>p.provider==='B').currentRate).toBe('0.2500');expect(data.risks.some((r:any)=>r.userId===parent.id&&r.kind==='inverted')).toBe(true);
     await db.query('UPDATE connections SET enabled=false WHERE id=$1',[extra]);
-    data=(await call(owner,'GET','/api/team/pricing')).json();expect(data.prices.find((p:any)=>p.provider==='ai008').currentRate).toBe('0.5000');
+    data=(await call(owner,'GET','/api/team/pricing')).json();expect(data.prices.find((p:any)=>p.provider==='B').currentRate).toBe('0.5000');
     await quote(parent,'0',nextDay());await quote(child,'0',nextDay());
     data=(await call(parent,'GET','/api/team/pricing')).json();expect(data.risks.some((r:any)=>r.date===nextDay()&&r.kind==='inverted')).toBe(false);
     const missing=await user(parent,'unpriced');data=(await call(parent,'GET','/api/team/pricing')).json();expect(data.risks.some((r:any)=>r.userId===missing.id&&r.kind==='missing_child')).toBe(true);
@@ -67,11 +67,11 @@ describe('pricing risk reports and atomic batch adjustments',()=>{
     const response=await call(owner,'PATCH',`/api/connections/${connectionId}`,{payoutRate:0.2});
     expect(response.statusCode,response.body).toBe(200);
     const report=(await call(owner,'GET','/api/team/pricing')).json();
-    expect(report.prices.find((p:any)=>p.provider==='ai008')).toMatchObject({currentRate:'0.5000',nextRate:'0.2000'});
+    expect(report.prices.find((p:any)=>p.provider==='B')).toMatchObject({currentRate:'0.5000',nextRate:'0.2000'});
     expect(report.risks).toContainEqual(expect.objectContaining({userId:parent.id,date:nextDay(),childRate:'0.4000',lossPer100Usd:'20.00000000'}));
     expect(await db.query('SELECT * FROM rates ORDER BY id')).toEqual(before);
     const agent=(await call(parent,'GET','/api/team/pricing')).json();
-    expect(agent.prices.find((p:any)=>p.provider==='ai008')).toMatchObject({currentRate:'0.4000',nextRate:'0.4000'});
+    expect(agent.prices.find((p:any)=>p.provider==='B')).toMatchObject({currentRate:'0.4000',nextRate:'0.4000'});
     expect(JSON.stringify(agent)).not.toContain('private-');
   });
 

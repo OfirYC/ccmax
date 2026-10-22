@@ -17,7 +17,7 @@ test('account pool cards filter platform usage, retain management, paginate and 
       b.telemetry.modelsAt=b.snapshot_at;b.telemetry.day=data.day;
     }
     const cached=structuredClone(account);cached.id=randomUUID();cached.email='cached-account@example.com';cached.label='MAX 5x · Backup';
-    cached.bindings=cached.bindings.filter((b:any)=>b.provider==='gatelink');
+    cached.bindings=cached.bindings.filter((b:any)=>b.provider==='A');
     for(const b of cached.bindings){b.id=randomUUID();b.data_fresh=false;b.status='error';b.snapshot_at='2026-01-01T00:00:00Z';b.telemetry.periods.today.billedUsd='99999';}
     const pending={...account,id:randomUUID(),email:'pending-account@example.com',label:'Awaiting OAuth',ownership_verified:false,bindings:[]};
     data.accounts=[account,cached,pending,...Array.from({length:extra},(_,n)=>({...pending,id:randomUUID(),email:`pending-${String(n).padStart(2,'0')}@example.com`}))];
@@ -34,10 +34,10 @@ test('account pool cards filter platform usage, retain management, paginate and 
   await expect(page.getByRole('article',{name:'cached-account@example.com',exact:true}).locator('.pool-card-bill .amount')).toHaveText('—');
   await expect(page.locator('body')).not.toContainText('private-upstream-');
   await page.setViewportSize({width:1512,height:1050});await page.screenshot({path:'test-results/account-pool-desktop.png',fullPage:true});
-  await page.getByLabel('筛选平台').selectOption('ai008');await expect(page.getByRole('article')).toHaveCount(1);
+  await page.getByLabel('筛选平台').selectOption('B');await expect(page.getByRole('article')).toHaveCount(1);
   await expect(account.locator('.pool-binding')).toHaveCount(1);await expect(account.locator('.pool-card-bill .amount')).toHaveText('$100.00');
   await expect(page.locator('.pool-summary')).toContainText('$100.00');
-  await page.getByRole('button',{name:'列表',exact:true}).click();await expect(page.getByRole('row').filter({hasText:'claude-fixture@example.com'})).toContainText('AI008');
+  await page.getByRole('button',{name:'列表',exact:true}).click();await expect(page.getByRole('row').filter({hasText:'claude-fixture@example.com'})).toContainText('平台 B');
   await page.getByRole('button',{name:'卡片',exact:true}).click();
   await page.getByLabel('筛选平台').selectOption('all');await page.getByLabel('筛选账号状态').selectOption('attention');await expect(page.getByRole('article')).toHaveCount(1);await expect(page.getByRole('article')).toContainText('cached-account@example.com');
   await page.getByLabel('筛选账号状态').selectOption('pending');await expect(page.getByRole('article')).toHaveCount(1);await expect(page.getByRole('article')).toContainText('待授权核实');

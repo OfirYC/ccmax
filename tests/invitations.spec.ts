@@ -8,19 +8,19 @@ const headers = { 'x-ccmax-request': '1' }, password = 'invitation-browser-passw
 test('agents create different priced links and invitees register themselves into the right team', async ({ page, browser }) => {
   await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN'));
   expect((await page.request.post('/api/auth/login', { headers, data: { email: 'owner@example.com', password: 'e2e-owner-password' } })).ok()).toBe(true);
-  const parentResponse = await page.request.post('/api/team', { headers, data: { name: '邀请人', email: 'invite-parent@example.com', password, rates: { gatelink: 0.4, ai008: 0.4, minicc: 0.4 } } });
+  const parentResponse = await page.request.post('/api/team', { headers, data: { name: '邀请人', email: 'invite-parent@example.com', password, rates: { A: 0.4, B: 0.4, C: 0.4 } } });
   expect(parentResponse.ok()).toBe(true);
   const parent = (await parentResponse.json()).user;
   await page.request.post('/api/auth/login', { headers, data: { email: parent.email, password } });
   await page.goto('/team');
   const section = page.locator('.team-invitations');
-  async function create(name: string, ai008: string, maxUses: string) {
+  async function create(name: string, B: string, maxUses: string) {
     await section.getByRole('button', { name: '创建邀请链接' }).click();
     const dialog = page.getByRole('dialog', { name: '创建邀请链接' });
     await dialog.getByLabel('链接名称').fill(name);
-    await dialog.getByLabel('Gatelink 结算折扣', { exact: true }).fill('0.2');
-    await dialog.getByLabel('AI008 结算折扣', { exact: true }).fill(ai008);
-    await dialog.getByLabel('Mini CC Gateway 结算折扣', { exact: true }).fill('0');
+    await dialog.getByLabel('平台 A 结算折扣', { exact: true }).fill('0.2');
+    await dialog.getByLabel('平台 B 结算折扣', { exact: true }).fill(B);
+    await dialog.getByLabel('平台 C 结算折扣', { exact: true }).fill('0');
     await dialog.getByLabel('注册人数上限').fill(maxUses);
     await dialog.getByRole('button', { name: '生成邀请链接' }).click();
     await expect(dialog).toHaveCount(0);
@@ -61,7 +61,7 @@ test('agents create different priced links and invitees register themselves into
     await recipient.getByLabel('近 7 天实际账单（USD）').fill('100');
     await expect(recipient.getByTestId('weekly-earnings')).toHaveText('$20.00');
     await expect(recipient.getByTestId('monthly-earnings')).toHaveText('—');
-    await recipient.getByLabel('用于核算的结算报价').selectOption('minicc');
+    await recipient.getByLabel('用于核算的结算报价').selectOption('C');
     await expect(recipient.getByTestId('weekly-earnings')).toHaveText('$0.00');
     await recipient.setViewportSize({ width: 390, height: 844 });
     expect(await recipient.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -88,8 +88,8 @@ test('agents create different priced links and invitees register themselves into
     const self = await (await recipient.request.get('/api/auth/me')).json();
     expect(self.user.parent_id).toBe(parent.id);
     const connections = await (await recipient.request.get('/api/connections')).json();
-    expect(connections.connections.find((c: any) => c.provider === 'ai008').settlement_rate).toBe('0.1234');
-    expect(connections.connections.find((c: any) => c.provider === 'minicc').settlement_rate).toBe('0.0000');
+    expect(connections.connections.find((c: any) => c.provider === 'B').settlement_rate).toBe('0.1234');
+    expect(connections.connections.find((c: any) => c.provider === 'C').settlement_rate).toBe('0.0000');
     await recipient.goto(partner.url);
     await expect(recipient.locator('.invite-card')).toContainText('你当前已登录。请先退出账号，再使用邀请链接注册新成员。');
     await expect(recipient.getByRole('button', { name: '立即注册，添加账号' })).toHaveCount(0);
@@ -110,7 +110,7 @@ test('agents create different priced links and invitees register themselves into
 
 test('invitation registration supports all languages and retains form input when switching', async ({ page, request }) => {
   await request.post('/api/auth/login', { headers, data: { email: 'owner@example.com', password: 'e2e-owner-password' } });
-  const response = await request.post('/api/team/invitations', { headers, data: { name: 'Language campaign', rates: { ai008: 0.12 }, expiresInDays: null } });
+  const response = await request.post('/api/team/invitations', { headers, data: { name: 'Language campaign', rates: { B: 0.12 }, expiresInDays: null } });
   expect(response.ok()).toBe(true);
   await page.goto((await response.json()).invitation.url);
   await expect(page.locator('h1')).toContainText(en['让闲置 Max 额度，']);

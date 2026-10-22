@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, ArrowUpRight, Clock3, LayoutGrid, List, RefreshCw, Search, Server, ShieldCheck, UserRound, Zap } from 'lucide-react';
-import { platformName } from '../shared/platforms';
+import { platformName } from './platforms';
 import { dateTime, number } from './api';
 import { Badge, Empty, Loading, Paginator, Table, useSession } from './components';
 import { PlatformIdentity } from './PlatformIdentity';

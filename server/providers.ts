@@ -6,14 +6,20 @@ import { normalizeTelemetry,normalizeModelAmounts } from './telemetry.js';
 import { telemetryPeriods,type AccountTelemetry } from '../shared/telemetry.js';
 import { authorizationState } from '../shared/oauth.js';
 import { statefulOAuthCallback } from './oauth-callback.js';
-import { platformNames } from '../shared/platforms.js';
+import { upstreamNames, publicPlatformName } from './platform-privacy.js';
 
 export const PROVIDERS = {
-  gatelink: { name:platformNames.gatelink, url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:true,statusRequiresAdmin:true },
-  ai008: { name:platformNames.ai008, url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
-  minicc: { name:platformNames.minicc, url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
-  maxchat: { name:platformNames.maxchat, url:'https://cldgtw.maxchatapi.com', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  gatelink: { name:upstreamNames.gatelink, url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:true,statusRequiresAdmin:true },
+  ai008: { name:upstreamNames.ai008, url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  minicc: { name:upstreamNames.minicc, url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  maxchat: { name:upstreamNames.maxchat, url:'https://cldgtw.maxchatapi.com', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
 } as const;
+// Owner-only source metadata; public catalogs never contain upstream names/URLs.
+export function platformCatalog(owner=false) {
+  return Object.fromEntries(Object.entries(PROVIDERS).map(([provider,{name,url,...capabilities}])=>[provider,{
+    ...capabilities,name:publicPlatformName(provider),...(owner?{upstreamName:name,url}:{}),
+  }]));
+}
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
 export const usesAdminOAuth=(provider:ProviderKey)=>provider==='ai008'||provider==='maxchat';

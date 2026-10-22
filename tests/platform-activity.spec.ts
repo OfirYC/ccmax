@@ -8,7 +8,7 @@ test('platform data cards show scoped usage, unavailable samples, genuine zero, 
   await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
   await page.goto('/');await page.getByLabel('登录邮箱').fill('agent@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-agent-password');await page.getByRole('button',{name:'进入工作空间'}).click();
   await page.locator('.nav-item[href="/platforms"]').click();
-  const ai=page.getByRole('region',{name:'AI008',exact:true}),gate=page.getByRole('region',{name:'Gatelink',exact:true}),mini=page.getByRole('region',{name:'Mini CC Gateway',exact:true});
+  const ai=page.getByRole('region',{name:'平台 B',exact:true}),gate=page.getByRole('region',{name:'平台 A',exact:true}),mini=page.getByRole('region',{name:'平台 C',exact:true});
   await expect(page.locator('.connection-card')).toHaveCount(3);await expect(ai.locator('.platform-bill-now .amount')).toHaveText('$100.00');
   await expect(ai.locator('.platform-bill-periods')).toContainText('$600.00');await expect(ai.locator('.platform-data-rates')).toContainText('1,200');
   await expect(ai.locator('.platform-data-models')).toContainText('$80.00');await expect(ai.locator('.platform-data-models')).toContainText('$20.00');
@@ -24,7 +24,7 @@ test('platform data cards show scoped usage, unavailable samples, genuine zero, 
 
   let zero=false;
   await page.route('**/api/telemetry/platforms?*',async route=>{
-    const response=await route.fetch(),data=await response.json(),platform=data.platforms.find((p:any)=>p.provider==='gatelink');
+    const response=await route.fetch(),data=await response.json(),platform=data.platforms.find((p:any)=>p.provider==='A');
     for(const period of Object.values(platform.periods) as any[]){
       period.fresh=zero?1:0;
       for(const key of ['billedUsd','rpm','tpm','concurrent','requests','tokens']){period[key].value=zero?'0':null;period[key].covered=zero?1:0;}

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { DB, Row } from './db.js';
 import { AppError, assert, audit, hashPassword, id, secretBox, today } from './core.js';
 import { lockPricing } from './pricing.js';
-import { PROVIDERS, PROVIDER_KEYS } from './providers.js';
+import { platformCatalog, PROVIDER_KEYS } from './providers.js';
 
 const tokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -107,7 +107,7 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
   app.get('/api/invitations/:token', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async req => db.transaction(async tx => {
     const invite = await available(tx, (req.params as Row).token);
     const [inviter] = await tx.query('SELECT name FROM users WHERE id=$1', [invite.inviter_id]);
-    return { inviterName: inviter.name, rates: await rates(tx, invite.id), providers: PROVIDERS, expiresAt: invite.expires_at };
+    return { inviterName: inviter.name, rates: await rates(tx, invite.id), providers: platformCatalog(), expiresAt: invite.expires_at };
   }));
 
   app.post('/api/invitations/:token/register', { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } }, async req => {

@@ -1,4 +1,4 @@
-import { platformName } from '../shared/platforms';
+import { platformName } from './platforms';
 import { usePlatformCatalog } from './PlatformIdentity';
 import { useEffect, useRef, useState } from 'react';
 import { dateTime, key, post, useData } from './api';
@@ -45,13 +45,13 @@ export default function AccountPlatformManager({account,onClose,onOnboard,onRefr
       const pending=busy===connection.id||job&&['queued','running'].includes(job.state);
       const proxyReady=(current.proxy_bound??!!current.proxy_id)&&current.proxy_enabled;
       const verifiedProxy=proxyReady&&(binding?.proxy_verified??binding?.proxy_id===current.proxy_id);
-      const canEnable=proxyReady&&(connection.provider!=='gatelink'||verifiedProxy);
+      const canEnable=proxyReady&&(connection.provider!=='A'||verifiedProxy);
       return <section className="account-platform-card" key={connection.id} aria-label={name}>
         <div className="account-platform-head"><PlatformMark provider={connection.provider}/><strong>{name}</strong><Badge state={binding?.status||'pending'} label={binding?undefined:t('未接入')}/></div>
         <div className="account-platform-price"><span>{t('我的结算折扣')}</span><RateBadge value={connection.settlement_rate}/><small>{t('平台账单 × 此折扣 = 我的应收美元')}</small></div>
         {connection.upcoming_settlement_rate!==null&&connection.upcoming_settlement_rate!==undefined&&<p className="form-hint">{t('待生效')} <RateBadge value={connection.upcoming_settlement_rate}/> · {connection.upcoming_settlement_date}</p>}
         {binding?<>
-          <p className="account-platform-proxy">{verifiedProxy?t('沿用账号固定代理'):connection.provider==='gatelink'?t('重新授权后自动应用账号代理'):t('系统自动同步账号代理')}</p>
+          <p className="account-platform-proxy">{verifiedProxy?t('沿用账号固定代理'):connection.provider==='A'?t('重新授权后自动应用账号代理'):t('系统自动同步账号代理')}</p>
           <small>{t('最近同步')} {dateTime(binding.snapshot_at||binding.last_seen_at)}</small>
           <details className="account-platform-ids"><summary>{t('对账信息')}</summary><small>{t('上游账号 ID：')}{binding.external_id}</small><small>{t('对账绑定 ID：')}{binding.id}</small></details>
           <div className="account-platform-actions">
@@ -62,7 +62,7 @@ export default function AccountPlatformManager({account,onClose,onOnboard,onRefr
             {canManage&&current.ownership_verified&&connection.enabled&&<button className="button primary" disabled={!proxyReady||!!pending} onClick={()=>onOnboard(current,connection.id,binding.id)}>{t('重新授权')}</button>}
           </div>
           {editing===binding.id&&<div className="account-platform-editor"><Field label={t('{0} 目标状态',[name])}><select value={enabled} onChange={event=>setEnabled(event.target.value)}><option value="active">{t('启用')}</option><option value="disabled">{t('停用')}</option></select></Field><button className="button primary" disabled={!!pending||enabled==='active'&&!canEnable} onClick={()=>submit(connection,binding,enabled==='active')}>{t('保存状态')}</button><button className="button" onClick={()=>setEditing('')}>{t('取消')}</button></div>}
-          {connection.provider==='gatelink'&&<p className="form-hint">{t('Gatelink 启停需要上游管理员权限；权限不足时会显示原因，可通过重新授权修复登录凭据。')}</p>}
+          {connection.provider==='A'&&<p className="form-hint">{t('平台 A 启停需要上游管理员权限；权限不足时会显示原因，可通过重新授权修复登录凭据。')}</p>}
         </>:<div className="account-platform-actions">{own&&connection.enabled&&<button className="button primary" disabled={!proxyReady} onClick={()=>onOnboard(current,connection.id)}>{t('上号到此平台')}</button>}</div>}
         {job&&<div className="account-platform-job"><Badge state={job.state}/><small>{t('任务编号：')}{job.id}</small>{job.error&&<p className="error-text">{translateMessage(job.error)}</p>}{job.state==='succeeded'&&<p className="teal-text">{t('操作已完成，账号状态已重新读取。')}</p>}{job.state==='needs_attention'&&<p className="form-hint">{t('操作结果需要核对，请刷新账号状态后再决定是否重试。')}</p>}</div>}
       </section>;

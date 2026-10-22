@@ -11,9 +11,9 @@ async function login(client: APIRequestContext, email: string, pass = password) 
   const response = await client.post('/api/auth/login', { headers, data: { email, password: pass } });
   expect(response.ok(), await response.text()).toBe(true);
 }
-async function create(client: APIRequestContext, name: string, email: string, ai008: number) {
+async function create(client: APIRequestContext, name: string, email: string, B: number) {
   const response = await client.post('/api/team', { headers, data: {
-    name, email, password, rates: { gatelink: 0.2, ai008, minicc: 0.2 }, effectiveFrom: '1970-01-01',
+    name, email, password, rates: { A: 0.2, B, C: 0.2 }, effectiveFrom: '1970-01-01',
   } });
   expect(response.ok(), await response.text()).toBe(true);
   return (await response.json()).user;
@@ -32,13 +32,13 @@ test('an upstream cut keeps contracts, shows losses, and requires review of the 
     await login(highClient, 'bulk-high@example.com');
     await create(highClient, '下层保留合同', 'bulk-grandchild@example.com', 0.25);
   } finally { await highClient.dispose(); }
-  const cut = await request.put(`/api/team/${parent.id}/rates`, { headers, data: { provider: 'ai008', rate: 0.2 } });
+  const cut = await request.put(`/api/team/${parent.id}/rates`, { headers, data: { provider: 'B', rate: 0.2 } });
   expect(cut.ok()).toBe(true);
   const tomorrow = (await cut.json()).effectiveDate;
   await page.goto('/');
   await expect(page.getByText('结算价格倒挂提醒', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: '代理团队', exact: true }).click();
-  const own = page.locator('.own-price-grid>div').filter({ hasText: 'ai008' });
+  const own = page.locator('.own-price-grid>div').filter({ hasText: '平台 B' });
   await expect(own).toContainText('× 0.4000');
   await expect(own).toContainText('× 0.2000');
   const warning = page.locator('.price-risk-details');
@@ -49,7 +49,7 @@ test('an upstream cut keeps contracts, shows losses, and requires review of the 
 
   await page.getByRole('button', { name: '批量调价', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '批量调整直属下级价格' });
-  await dialog.getByLabel('调价平台').selectOption('ai008');
+  await dialog.getByLabel('调价平台').selectOption('B');
   await dialog.getByRole('button', { name: '选择全部', exact: true }).click();
   await dialog.getByRole('button', { name: '预览调价结果', exact: true }).click();
   const preview = dialog.locator('.batch-preview>.table-scroll');
@@ -91,7 +91,7 @@ test('bulk scale and fixed updates invalidate stale previews and remain usable i
   await page.goto('/team');
   await page.getByRole('button', { name: '批量调价', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('调价平台').selectOption('ai008');
+  await dialog.getByLabel('调价平台').selectOption('B');
   await dialog.getByLabel('调价方式').selectOption('scale');
   await dialog.getByLabel('下调比例').fill('0.8');
   await dialog.getByLabel('选择成员 预览校验下级').check();
@@ -101,7 +101,7 @@ test('bulk scale and fixed updates invalidate stale previews and remain usable i
   await expect(dialog.locator('.batch-preview')).toHaveCount(0);
   await dialog.getByRole('button', { name: '预览调价结果' }).click();
   await expect(dialog.locator('.batch-preview')).toContainText('× 0.1000');
-  const update = await page.request.put(`/api/team/${child.id}/rates`, { headers, data: { provider: 'ai008', rate: 0.25 } });
+  const update = await page.request.put(`/api/team/${child.id}/rates`, { headers, data: { provider: 'B', rate: 0.25 } });
   expect(update.ok()).toBe(true);
   await dialog.getByRole('button', { name: '确认批量调价' }).click();
   await expect(dialog.getByRole('alert')).toContainText('报价或团队关系已变化，请重新预览后提交');
@@ -113,7 +113,7 @@ test('bulk scale and fixed updates invalidate stale previews and remain usable i
   await expect(page.locator('.team-members-panel')).toContainText('待生效 × 0.1250');
 
   await page.getByRole('button', { name: '批量调价', exact: true }).click();
-  await dialog.getByLabel('调价平台').selectOption('ai008');
+  await dialog.getByLabel('调价平台').selectOption('B');
   await dialog.getByLabel('调价方式').selectOption('fixed');
   await dialog.getByLabel('新的统一折扣').fill('0');
   await dialog.getByLabel('选择成员 预览校验下级').check();

@@ -41,6 +41,7 @@ describe('owned platform account recovery',()=>{
     const platforms=await Promise.all((['ai008','minicc','gatelink','maxchat'] as const).map(platform));
     for(const {binding} of platforms)await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:'2021-01-01',rawUsd:'100',final:true,source:'verified-recovery-test'}));
     const history=await db.query('SELECT * FROM usage_days ORDER BY id'),earnings=await db.query('SELECT * FROM earnings ORDER BY id');
+    const states=new Map(platforms.map(({connection})=>[connection.provider,id()]));
     const proxies=new Map<ProviderKey,string>(),writes:string[]=[];
     const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async(input,init={})=>{
       const path=new URL(String(input)).pathname,body=init.body?JSON.parse(String(init.body)):{};
@@ -58,12 +59,12 @@ describe('owned platform account recovery',()=>{
         if(provider==='minicc')expect(body).toMatchObject({overwrite_existing:true,replace_outbound_proxy:true,outbound_proxy_id:'fixed-proxy'});
         if(provider==='ai008'||provider==='maxchat'){expect(path).toBe(`/api/admin/oauth-accounts/${externalId}/reauthorize`);expect(proxies.get(provider)).toBe('fixed-proxy');}
         writes.push('start-'+provider);
-        return Response.json({url:`https://auth.example/?state=${provider}`,state:provider,authorizationUrl:`https://auth.example/?state=${provider}`});
+        return Response.json({url:`https://auth.example/?state=${states.get(provider)}`,state:states.get(provider),authorizationUrl:`https://auth.example/?state=${states.get(provider)}`});
       }
       if(path.endsWith('/exchange')) {
         writes.push('exchange-'+provider);
         if(provider==='gatelink')return Response.json({item:{id:externalId,upstreamEmail:account.email,upstreamDailyCost:null,upstreamStatus:'active'}});
-        expect(body.code).toBe(`private-code-${provider}#${provider}`);
+        expect(body.code).toBe(`private-code-${provider}#${states.get(provider)}`);
         if(provider==='ai008'||provider==='maxchat')expect(path).toBe(`/api/admin/oauth-accounts/${externalId}/reauthorize/exchange`);
         else expect(body).toMatchObject({overwrite_existing:true,replace_outbound_proxy:true,outbound_proxy_id:'fixed-proxy'});
         proxies.set(provider,'fixed-proxy');return Response.json(provider==='ai008'||provider==='maxchat'?{ok:true}:{id:externalId});
@@ -80,7 +81,7 @@ describe('owned platform account recovery',()=>{
       expect((await call('POST',`/api/bindings/${binding.id}/reauthorize`,{options:{},key:id()})).statusCode).toBe(409);
       const [attempt]=await db.query('SELECT * FROM oauth_attempts WHERE connection_id=$1',[connection.id]);expect(box.decrypt(attempt.secret).bindingId).toBe(binding.id);
       const visible=await call('GET',`/api/accounts/${account.id}/attempts`);expect(visible.statusCode).toBe(200);expect(visible.json().attempts.some((a:any)=>a.id===attempt.id)).toBe(true);
-      const exchanged=await call('POST',`/api/oauth/${attempt.id}/exchange`,{callback:`private-code-${connection.provider}#${connection.provider}`,key:id()});expect(exchanged.statusCode).toBe(200);
+      const exchanged=await call('POST',`/api/oauth/${attempt.id}/exchange`,{callback:`private-code-${connection.provider}#${states.get(connection.provider)}`,key:id()});expect(exchanged.statusCode).toBe(200);
       await worker.runOne();
       expect((await db.query('SELECT state,error FROM jobs WHERE id=$1',[exchanged.json().id]))[0]).toMatchObject({state:'succeeded',error:null});
       const [after]=await db.query('SELECT * FROM bindings WHERE id=$1',[binding.id]);

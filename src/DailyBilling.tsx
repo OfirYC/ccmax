@@ -6,7 +6,7 @@ import { Badge, Empty, ErrorBox, Loading, Modal, Paginator, Table } from './comp
 import { t } from './i18n';
 import { useLocale } from './LanguageSwitcher';
 import { PlatformIdentity } from './PlatformIdentity';
-import { platformName } from '../shared/platforms';
+import { platformName } from './platforms';
 
 export function DailyBilling({from,to,provider}:{from:string;to:string;provider:string}) {
   useLocale();

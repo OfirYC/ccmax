@@ -273,7 +273,7 @@ describe('automatic daily billing',()=>{
       const [session]=await db.query('SELECT * FROM sessions');
       await saveAt('23:59:00','100');const snapshot=await snapshotDay(db,connection,day);
       const result=await recordDailyStatement(db,connection,owner,day,snapshot.rows,{basis:'snapshot',sourceError:'history HTTP 403'});
-      const progress=await app.inject({url:'/api/billing/days',headers});expect(progress.statusCode).toBe(200);expect(progress.json().rows[0].basis).toBe('snapshot');expect(progress.json().rows[0].connection_name).toMatch(/^AI008/);expect(progress.body).not.toContain('Private upstream');expect(progress.body).not.toContain('403');expect(progress.body).not.toContain('source_error');
+      const progress=await app.inject({url:'/api/billing/days',headers});expect(progress.statusCode).toBe(200);expect(progress.json().rows[0].basis).toBe('snapshot');expect(progress.json().rows[0].connection_name).toMatch(/^平台 B/);expect(progress.body).not.toContain('Private upstream');expect(progress.body).not.toContain('403');expect(progress.body).not.toContain('source_error');
       expect((await app.inject({url:'/api/billing/statements/'+result.statementId,headers})).json().rows[0].sourceAt).toBeDefined();
       const [invoice]=await db.query('SELECT * FROM invoices WHERE user_id=$1',[owner.id]);
       const exported=await app.inject({url:'/api/invoices/'+invoice.id+'/export',headers});expect(exported.body).toContain('快照预估');

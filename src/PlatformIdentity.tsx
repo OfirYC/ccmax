@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import { platformName } from '../shared/platforms';
+import { platformName } from './platforms';
 import { useData } from './api';
 import { PlatformMark } from './components';
 import { RateBadge } from './PriceDisplay';

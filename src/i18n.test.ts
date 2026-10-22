@@ -78,14 +78,14 @@ describe('language switching', () => {
 
   it('preserves dynamic error details when translating and switching languages', () => {
     setLocale('en');
-    const message = translateMessage('User $& 在 2026-10-17 没有 Mini CC 结算折扣，无法记账');
-    expect(message).toBe('User $& has no Mini CC settlement rate on 2026-10-17; posting is blocked');
+    const message = translateMessage('User $& 在 2026-10-17 没有 平台 C 结算折扣，无法记账');
+    expect(message).toBe('User $& has no 平台 C settlement rate on 2026-10-17; posting is blocked');
     setLocale('vi');
-    expect(translateMessage(message)).toBe('User $& chưa có tỷ lệ quyết toán Mini CC vào 2026-10-17; không thể ghi sổ');
+    expect(translateMessage(message)).toBe('User $& chưa có tỷ lệ quyết toán 平台 C vào 2026-10-17; không thể ghi sổ');
   });
 
-  it('translates Gatelink failure steps and safe validation metadata',()=>{
-    const source='Gatelink 生成授权链接失败（HTTP 422）；参数校验未通过：proxy；Gatelink 的上游返回 HTTP 400';
+  it('translates 平台 A failure steps and safe validation metadata',()=>{
+    const source='平台 A 生成授权链接失败（HTTP 422）；参数校验未通过：proxy；平台 A 的上游返回 HTTP 400';
     for(const locale of ['en','vi','hi'] as const) {
       setLocale(locale);
       const message=translateMessage(source);
@@ -96,7 +96,7 @@ describe('language switching', () => {
     }
   });
 
-  it('translates Mini CC failure steps, read errors and uncertain write results',()=>{
+  it('translates 平台 C failure steps, read errors and uncertain write results',()=>{
     for(const locale of ['en','vi','hi'] as const) {
       setLocale(locale);
       const write=translateMessage('提交 OAuth 上号；平台请求超时（120 秒）；写入结果可能未知，请先核对上游结果');
@@ -108,10 +108,10 @@ describe('language switching', () => {
     }
   });
 
-  it('translates Gatelink conflicts and invalid authorization recovery in every language',()=>{
+  it('translates 平台 A conflicts and invalid authorization recovery in every language',()=>{
     for(const locale of ['en','vi','hi'] as const) {
       setLocale(locale);
-      const conflict=translateMessage('Gatelink 提交授权回调失败（HTTP 409）；Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态；已有平台账号请从「平台管理」重新授权');
+      const conflict=translateMessage('平台 A 提交授权回调失败（HTTP 409）；平台 A 授权状态冲突，请先在 平台 A 核对账号及授权状态；已有平台账号请从「平台管理」重新授权');
       expect(conflict).not.toMatch(/[\u3400-\u9fff]/u);expect(conflict).toContain('409');
       expect(translateMessage('此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调')).toBe(t('此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调'));
       expect(conflict).toContain(t('已有平台账号请从「平台管理」重新授权'));

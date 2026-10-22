@@ -1,7 +1,7 @@
 import PlatformActivity, { PlatformActivityOverview } from '../PlatformActivity';
 import { usePlatformCatalog } from '../PlatformIdentity';
 import { t } from '../i18n';
-import { platformName } from '../../shared/platforms';
+import { platformName } from '../platforms';
 import { useLocale } from '../LanguageSwitcher';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -21,7 +21,7 @@ export default function Platforms(){useLocale();
   return <>
     <PageHead eyebrow={t("平台连接管理")} title={t("平台管理")} description={t("查看各平台用量、运行状态与结算价格，直接管理平台连接和上号。")} actions={<><button className="button" onClick={refreshAll}><RefreshCw size={15}/>{t("刷新展示")}</button>{root&&<>
       <button className="button" disabled={busy} onClick={()=>sync((data?.connections||[]).filter((c:any)=>c.enabled).map((c:any)=>c.id))}><RefreshCw size={15} className={busy?'spin':''}/>{t("同步全部")}</button>
-      <button className="button primary" onClick={()=>setEdit({provider:'gatelink'})}><Plus size={16}/>{t("添加连接")}</button>
+      <button className="button primary" onClick={()=>setEdit({provider:'A'})}><Plus size={16}/>{t("添加连接")}</button>
     </>}</>}/>
     <ErrorBox error={error}/><ErrorBox error={activity.error}/><PricingNotice report={pricing.data}/>
     <PlatformActivityOverview connections={data?.connections||[]} activity={stats} loading={!stats}/>
@@ -29,7 +29,7 @@ export default function Platforms(){useLocale();
     <p className="page-note platform-scope-note">{t("平台数据按账号归属统计；过期或缺失指标不计入汇总。平台账单为折扣前金额，不等于结算收益。")}</p>
     <div className="notice"><ShieldCheck size={18}/><span>{root?t("平台主账号凭据加密保存，仅管理员可配置。所有页面只显示平台名称和当前用户的结算价格。"):t("账号归属与结算由 CCMAX 统一管理。以下为直属上级给你的结算价格。")}</span></div>
     {loading?<Loading/>:<div className="connections-grid platform-data-grid">{data?.connections.map((c:any)=><section className="panel connection-card" key={c.id} aria-label={platformName(c.provider)}>
-      <div className="platform-card-head"><PlatformMark provider={c.provider}/><div><h2>{platformName(c.provider)}</h2><small className="platform-connection-id">{c.id.slice(0,8)}</small><small>{c.capabilities.url.replace(/^https?:\/\//,'')}</small></div><Badge state={c.enabled?c.status:'disabled'}/></div>
+      <div className="platform-card-head"><PlatformMark provider={c.provider}/><div><h2>{platformName(c.provider)}</h2><small className="platform-connection-id">{c.id.slice(0,8)}</small>{root&&<><small>{c.capabilities.upstreamName}</small><small>{c.capabilities.url?.replace(/^https?:\/\//,'')}</small></>}</div><Badge state={c.enabled?c.status:'disabled'}/></div>
       <PlatformActivity connectionId={c.id} activity={stats?.platforms?.find((p:any)=>p.id===c.id)} loading={!stats} scope={scope}/>
       <SettlementPrice connection={c} root={root}/>
       <details className="platform-capabilities"><summary>{t("平台能力与同步信息")}</summary><div className="connection-facts">
@@ -49,14 +49,14 @@ export default function Platforms(){useLocale();
           <a href={c.capabilities.url} target="_blank" rel="noreferrer" className="button">{t("打开平台")} <ArrowUpRight size={14}/></a>
         </>}
       </div>
-    </section>)}{!data?.connections.length&&<div className="panel"><Empty title={root?t("连接你的第一个平台"):t("暂无可用平台")} detail={root?t("添加你自己的上游主账号，即可拉取账号与实时用量。"):t("请联系上级开通平台。")} action={root&&<button className="button primary" onClick={()=>setEdit({provider:'gatelink'})}><Plus size={15}/>{t("添加平台")}</button>}/></div>}</div>}
+    </section>)}{!data?.connections.length&&<div className="panel"><Empty title={root?t("连接你的第一个平台"):t("暂无可用平台")} detail={root?t("添加你自己的上游主账号，即可拉取账号与实时用量。"):t("请联系上级开通平台。")} action={root&&<button className="button primary" onClick={()=>setEdit({provider:'A'})}><Plus size={15}/>{t("添加平台")}</button>}/></div>}</div>}
     <div className="info-grid"><div><Link2 size={20}/><h3>{t("选择平台，独立上号")}</h3><p>{t("可在平台卡片直接上号，也可到账号管理同时选择多个平台。所有平台共用账号固定代理。")}</p></div><div><KeyRound size={20}/><h3>{t("按自己的价格结算")}</h3><p>{t("平台账单 × 你的折扣 = 你的应收。已有报价调整从次日北京时间生效，历史账单保留当日价格。")}</p></div></div>
     {edit&&<Modal title={edit.id?t("配置平台连接"):t("添加平台连接")} subtitle={t("填写你拥有或有权管理的平台主账号")} onClose={()=>setEdit(null)}><Form onSubmit={async f=>{
-      const payload:any={payoutRate:Number(f.get('payoutRate')),snapshotBilling:edit.snapshot_billing??edit.provider==='gatelink'};
+      const payload:any={payoutRate:Number(f.get('payoutRate')),snapshotBilling:edit.snapshot_billing??edit.provider==='A'};
       if(edit.id){payload.enabled=f.get('enabled')==='on';if(f.get('username'))payload.username=f.get('username');if(f.get('password'))payload.password=f.get('password');await mutate(`/api/connections/${edit.id}`,'PATCH',payload);}else{Object.assign(payload,{provider:f.get('provider'),name:platformName(String(f.get('provider'))),username:f.get('username'),password:f.get('password'),effectiveFrom:f.get('effectiveFrom')});await post('/api/connections',payload);}
       toast(edit.id?t("连接配置已更新；新的上游折扣从次日北京时间生效"):t("平台已添加，正在核验并同步账号"));setEdit(null);await refreshAll();
     }}>
-      <Field label={t("平台")}><select aria-label={t("平台")} name="provider" defaultValue={edit.provider} onChange={e=>setEdit({...edit,provider:e.target.value})} disabled={!!edit.id}>{Object.entries(data?.providers||{}).map(([p,v]:[string,any])=><option key={p} value={p}>{v.name} · {v.url.replace(/^https?:\/\//,'')}</option>)}</select></Field>
+      <Field label={t("平台")}><select aria-label={t("平台")} name="provider" defaultValue={edit.provider} onChange={e=>setEdit({...edit,provider:e.target.value})} disabled={!!edit.id}>{Object.entries(data?.providers||{}).map(([p,v]:[string,any])=><option key={p} value={p}>{t(v.name)}{v.upstreamName?` · ${v.upstreamName}`:''}{v.url?` · ${v.url.replace(/^https?:\/\//,'')}`:''}</option>)}</select></Field>
       <Field label={edit.id?t("新的登录账号（留空保留）"):t("登录账号")}><input name="username" autoComplete="off" required={!edit.id} placeholder={t("平台登录邮箱或用户名")}/></Field>
       <Field label={edit.id?t("新的密码（留空保留）"):t("登录密码")}><input type="password" name="password" autoComplete="new-password" required={!edit.id}/></Field>
       <RateField name="payoutRate" label={t("上游给你的结算折扣")} recipient="self" hint={t("0–1，例如 0.3 表示平台账单 $100，你收到 $30。修改从次日北京时间生效，历史日账单按当日留档价格计算。")} defaultValue={edit.upcoming_payout_rate??edit.payout_rate??''}/>
