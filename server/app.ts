@@ -350,7 +350,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     await db.transaction(async tx=>{
       const [b]=await tx.query('SELECT b.*,c.provider FROM bindings b JOIN connections c ON c.id=b.connection_id WHERE b.id=$1 FOR UPDATE OF b',[bindingId]);assert(b,'平台绑定不存在',404);
       const p=await accountProxy(tx,box,b.account_id);
-      assert(b.provider==='gatelink','AI008 / Mini CC 请使用平台代理同步核对，不允许仅凭说明确认');
+      assert(b.provider==='gatelink','此平台请使用平台代理同步核对，不允许仅凭说明确认');
       await tx.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1',[bindingId,p.id]);
       await audit(tx,req.user.id,'binding.proxy.manual_confirm',bindingId,{proxyId:p.id,evidence:d.evidence});
     });return {ok:true};

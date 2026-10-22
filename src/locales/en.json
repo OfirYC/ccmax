@@ -38,7 +38,7 @@
   "从实时用量到可提现利润": "From live usage to withdrawable profit",
   "实时用量仅供查看。管理员核对日账单后，按平台 → 直属代理 → 更下级的顺序确认结算。确认只入利润账本，实际打款通过提现流程记录。": "Live usage is for reference. After the administrator verifies daily bills, settlement is confirmed from the platform to direct agents, then further downstream. Confirmation credits the profit ledger; actual payments are recorded through withdrawals.",
   "多平台上号的实际边界": "Multi-platform onboarding requirements",
-  "可同时发起多个平台授权。每个平台需要各自有效的 OAuth 授权码，授权码不能跨平台重复使用。每个账号必须先绑定专属代理，所有平台使用同一代理。AI008 和 Mini CC 还支持 refresh token 导入；Gatelink 使用 OAuth 授权。": "You can authorize multiple platforms at once. Each platform requires its own valid OAuth code; codes cannot be reused across platforms. Bind a dedicated proxy first; all platforms use that same proxy. AI008 and Mini CC also support refresh token import; Gatelink uses OAuth.",
+  "可同时发起多个平台授权。每个平台需要各自有效的 OAuth 授权码，授权码不能跨平台重复使用。每个账号必须先绑定专属代理，所有平台使用同一代理。AI008、Mini CC 和 MaxChat Gateway 还支持 refresh token 导入；Gatelink 使用 OAuth 授权。": "You can authorize multiple platforms at once. Each platform requires its own valid OAuth code; codes cannot be reused across platforms. Bind a dedicated proxy first; all platforms use that same proxy. AI008, Mini CC and MaxChat Gateway also support refresh token import; Gatelink uses OAuth.",
   "连接平台，": "Connect platforms,",
   "让团队生意更简单。": "make team business simpler.",
   "登录你的账号，管理账号、团队与每一笔收益。": "Sign in to manage accounts, your team, and every dollar earned.",
@@ -636,7 +636,7 @@
   "请选择自己添加且已启用的代理": "Select an enabled proxy that you added",
   "不能把其他团队上传的代理绑定给此账号": "Cannot bind another team's proxy to this account",
   "平台绑定不存在": "Platform binding not found",
-  "AI008 / Mini CC 请使用平台代理同步核对，不允许仅凭说明确认": "AI008 / Mini CC require proxy sync verification; notes alone are insufficient",
+  "此平台请使用平台代理同步核对，不允许仅凭说明确认": "This platform requires proxy sync verification; notes alone are insufficient",
   "不能修改该账号代理": "Cannot change this account's proxy",
   "Gatelink 需在上游修改代理，再由管理员核实": "Update the Gatelink proxy upstream first, then have an administrator verify it",
   "该账号已存在，请联系管理员核对归属": "This account already exists. Contact your administrator to check ownership.",
@@ -1003,7 +1003,7 @@
   "OAuth state 不匹配": "OAuth state does not match this authorization",
   "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "The upstream email or account owner differs from the submitted account; administrator review is required",
   "多平台分别授权": "Authorize each platform",
-  "选择 3 个平台就需要分别完成 3 次授权。每个平台的链接、回调和授权码独立，不能共用。": "Selecting 3 platforms requires 3 separate authorizations. Each platform has its own link, callback and single-use code.",
+  "选择 {0} 个平台就需要分别完成 {0} 次授权。每个平台的链接、回调和授权码独立，不能共用。": "Selecting {0} platforms requires {0} separate authorizations. Each platform has its own link, callback and single-use code.",
   "批量生成独立授权链接": "Generate separate authorization links",
   "粘贴 {0} 的完整回调或 code#state": "Paste the full callback or code#state for {0}",
   "只接受此平台当前链接生成的完整回调或 code#state，单独的 code 无法核对平台。": "Use the full callback or code#state from this platform’s current link. A code alone cannot identify its authorization flow.",
@@ -1386,5 +1386,6 @@
   "写入结果可能未知，请先核对上游结果": "The write result may be unknown. Check the upstream result first",
   "此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调": "This authorization is no longer valid. Check Sync jobs, then generate a new link and use its new callback",
   "Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态": "Gatelink reported an authorization conflict. Check the account and authorization status in Gatelink first",
-  "已有平台账号请从「平台管理」重新授权": "For an existing platform account, reauthorize it from Platform management"
+  "已有平台账号请从「平台管理」重新授权": "For an existing platform account, reauthorize it from Platform management",
+  "留空保持未定价；填写 0 表示零折扣。": "Leave blank to keep unpriced; enter 0 for a zero rate."
 }

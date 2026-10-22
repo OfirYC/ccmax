@@ -14,7 +14,7 @@ describe('account proxy integrity',()=>{
     expect(proxyFingerprint(url,'ab'.repeat(32))).toBe(proxyFingerprint(url.replace('secret','rotated'),'ab'.repeat(32)));
     for(const value of ['file:///etc/passwd','ftp://proxy.example.com','http://user:secret@proxy.example.com/path','http://user:secret@proxy.example.com?x=1','invalid'])expect(()=>parseProxy(value)).toThrow();
   });
-  for(const provider of ['gatelink','ai008','minicc'] as const) {
+  for(const provider of ['gatelink','ai008','minicc','maxchat'] as const) {
     it(`${provider} refuses proxy-free authorization before contacting the upstream`,async()=>{
       let calls=0;const c=client(provider,()=>{calls++;return {};});
       await expect(c.startOAuth({email:'claude@example.com'})).rejects.toThrow('专属出口代理');
@@ -22,7 +22,7 @@ describe('account proxy integrity',()=>{
       expect(calls).toBe(0);
     });
   }
-  for(const provider of ['ai008','minicc'] as const) {
+  for(const provider of ['ai008','minicc','maxchat'] as const) {
     it(`${provider} resolves an exact authenticated proxy and refuses mismatched mappings`,async()=>{
       const c=client(provider,()=>({total:1,proxies:[{id:'physical-proxy',upstream_id:'physical-proxy',url,status:'active'}]}));
       expect(await c.provisionProxy(url)).toBe('physical-proxy');

@@ -223,3 +223,5 @@ html[lang="hi"]{line-height:1.65}
 .historical-weekly-peak.dark{margin:0;background:#ffffff08;border-color:#ffffff1c}.historical-weekly-peak.dark>strong{color:#e4efe1}.historical-weekly-peak.dark>p,.historical-weekly-peak.dark>small,.historical-weekly-peak.dark>strong>small{color:#adceba}
 .monetization-start>.historical-weekly-peak{margin:0 22px 18px;max-width:650px}
 @media(max-width:520px){.historical-weekly-peak{padding:20px}.historical-weekly-peak>strong{font-size:34px}.monetization-start>.historical-weekly-peak{margin-left:16px;margin-right:16px}}
+
+.platform-mark.maxchat{color:#7657a1;background:#f1ebf9}

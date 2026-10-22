@@ -17,7 +17,7 @@ describe('owned platform account recovery',()=>{
     [owner]=await db.query("SELECT * FROM users WHERE role='owner'");
     const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'recovery-owner-password'}});
     cookie=String(login.headers['set-cookie']).split(';')[0];
-    const created=await call('POST','/api/team',{name:'Recovery agent',email:'recovery-agent@example.com',password:'recovery-agent-password',rates:{ai008:0.3,minicc:0.3,gatelink:0.3},effectiveFrom:'2020-01-01'});
+    const created=await call('POST','/api/team',{name:'Recovery agent',email:'recovery-agent@example.com',password:'recovery-agent-password',rates:{ai008:0.3,minicc:0.3,gatelink:0.3,maxchat:0.3},effectiveFrom:'2020-01-01'});
     agent=created.json().user;
     const agentLogin=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:agent.email,password:'recovery-agent-password'}});
     cookie=String(agentLogin.headers['set-cookie']).split(';')[0];
@@ -38,7 +38,7 @@ describe('owned platform account recovery',()=>{
       const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'recovery-owner-password'}});
       cookie=String(login.headers['set-cookie']).split(';')[0];
     }
-    const platforms=await Promise.all((['ai008','minicc','gatelink'] as const).map(platform));
+    const platforms=await Promise.all((['ai008','minicc','gatelink','maxchat'] as const).map(platform));
     for(const {binding} of platforms)await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:'2021-01-01',rawUsd:'100',final:true,source:'verified-recovery-test'}));
     const history=await db.query('SELECT * FROM usage_days ORDER BY id'),earnings=await db.query('SELECT * FROM earnings ORDER BY id');
     const proxies=new Map<ProviderKey,string>(),writes:string[]=[];
@@ -56,7 +56,7 @@ describe('owned platform account recovery',()=>{
       if(path.endsWith('/authorize')||path.endsWith('/auth-url')||path.endsWith('/reauthorize')) {
         if(provider==='gatelink')expect(body).toMatchObject({overwriteExisting:true,proxy:fixedUrl});
         if(provider==='minicc')expect(body).toMatchObject({overwrite_existing:true,replace_outbound_proxy:true,outbound_proxy_id:'fixed-proxy'});
-        if(provider==='ai008'){expect(path).toBe(`/api/admin/oauth-accounts/${externalId}/reauthorize`);expect(proxies.get(provider)).toBe('fixed-proxy');}
+        if(provider==='ai008'||provider==='maxchat'){expect(path).toBe(`/api/admin/oauth-accounts/${externalId}/reauthorize`);expect(proxies.get(provider)).toBe('fixed-proxy');}
         writes.push('start-'+provider);
         return Response.json({url:`https://auth.example/?state=${provider}`,state:provider,authorizationUrl:`https://auth.example/?state=${provider}`});
       }
@@ -64,9 +64,9 @@ describe('owned platform account recovery',()=>{
         writes.push('exchange-'+provider);
         if(provider==='gatelink')return Response.json({item:{id:externalId,upstreamEmail:account.email,upstreamDailyCost:null,upstreamStatus:'active'}});
         expect(body.code).toBe(`private-code-${provider}#${provider}`);
-        if(provider==='ai008')expect(path).toBe(`/api/admin/oauth-accounts/${externalId}/reauthorize/exchange`);
+        if(provider==='ai008'||provider==='maxchat')expect(path).toBe(`/api/admin/oauth-accounts/${externalId}/reauthorize/exchange`);
         else expect(body).toMatchObject({overwrite_existing:true,replace_outbound_proxy:true,outbound_proxy_id:'fixed-proxy'});
-        proxies.set(provider,'fixed-proxy');return Response.json(provider==='ai008'?{ok:true}:{id:externalId});
+        proxies.set(provider,'fixed-proxy');return Response.json(provider==='ai008'||provider==='maxchat'?{ok:true}:{id:externalId});
       }
       if(path.endsWith('/detail')||path.endsWith('/'+externalId))return Response.json({account:{email:account.email,outbound_proxy_id:proxies.get(provider),status:proxies.has(provider)?'active':'disabled'}});
       throw new Error('Unexpected recovery endpoint');
@@ -88,10 +88,10 @@ describe('owned platform account recovery',()=>{
     }
     expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(history);
     expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(earnings);
-    expect(await db.query('SELECT * FROM bindings')).toHaveLength(3);
+    expect(await db.query('SELECT * FROM bindings')).toHaveLength(4);
     expect((await db.query('SELECT owner_id,ownership_verified FROM accounts WHERE id=$1',[account.id]))[0]).toMatchObject({owner_id:agent.id,ownership_verified:true});
-    expect(await db.query("SELECT * FROM audits WHERE action='binding.reauthorized'")).toHaveLength(3);
-    expect(writes.filter(write=>write.startsWith('exchange-'))).toHaveLength(3);
+    expect(await db.query("SELECT * FROM audits WHERE action='binding.reauthorized'")).toHaveLength(4);
+    expect(writes.filter(write=>write.startsWith('exchange-'))).toHaveLength(4);
   });
 
   it('rejects foreign and unverified bindings, proxy overrides and disabled proxies before queuing recovery',async()=>{

@@ -1,4 +1,4 @@
-import { platformName } from '../../shared/platforms';
+import { platformName, platformNames } from '../../shared/platforms';
 import { PlatformIdentity } from '../PlatformIdentity';
 import { useState } from 'react';
 import { Link,useSearchParams } from 'react-router-dom';
@@ -25,7 +25,7 @@ export default function Analytics(){
     <section className="panel telemetry-filters">
       <div className="telemetry-filter-row"><div className="tabs" aria-label={t('数据归属')}>
         {([['team',user.role==='owner'?t('全平台账号'):t('本人及下级团队')],['self',t('仅本人')],['descendants',t('仅下级团队')]]).map(([v,label])=><button key={v} className={scope===v?'active':''} onClick={()=>change('scope',v)}>{label}</button>)}
-      </div><select className="compact-select" aria-label={t('筛选平台')} value={params.get('provider')||''} onChange={e=>change('provider',e.target.value)}><option value="">{t('所有平台')}</option><option value="gatelink">Gatelink</option><option value="ai008">AI008</option><option value="minicc">Mini CC Gateway</option></select></div>
+      </div><select className="compact-select" aria-label={t('筛选平台')} value={params.get('provider')||''} onChange={e=>change('provider',e.target.value)}><option value="">{t('所有平台')}</option>{Object.entries(platformNames).map(([provider,name])=><option key={provider} value={provider}>{name}</option>)}</select></div>
       <div className="telemetry-filter-row"><div className="tabs" aria-label={t('统计窗口')}>{telemetryPeriods.map(p=><button key={p} className={period===p?'active':''} onClick={()=>change('period',p)}>{periodLabels()[p]}</button>)}</div>
         <form className="search-input" onSubmit={e=>{e.preventDefault();change('search',search.trim());}}><Search size={15}/><input aria-label={t('搜索账号')} value={search} onChange={e=>setSearch(e.target.value)} placeholder={t('搜索邮箱或归属成员')}/><button className="text-button" type="submit">{t('查询')}</button></form>
       </div>

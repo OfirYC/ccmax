@@ -1,3 +1,4 @@
+import { platformNames } from './platforms.js';
 export const apiScopes = ['read', 'team:write', 'accounts:write', 'finance:write'] as const;
 export type ApiScope = typeof apiScopes[number];
 type Schema = Record<string, unknown>;
@@ -9,7 +10,7 @@ const text = { type: 'string' }, uuid = { type: 'string', format: 'uuid' };
 const date = { type: 'string', format: 'date' }, boolean = { type: 'boolean' };
 const email = { type: 'string', format: 'email', maxLength: 200 };
 const password = { type: 'string', minLength: 12, maxLength: 200 };
-const provider = { type: 'string', enum: ['gatelink', 'ai008', 'minicc'] };
+const provider = { type: 'string', enum: Object.keys(platformNames) };
 const key = { type: 'string', minLength: 8, maxLength: 100, description: 'Client-generated idempotency key. Reuse only for the identical request.' };
 const rate = { type: 'number', minimum: 0, maximum: 1, multipleOf: 0.0001 };
 const money = { type: 'string', pattern: '^(0|[1-9]\\d{0,15})(\\.\\d{1,8})?$', example: '10.00000000' };
@@ -26,7 +27,7 @@ export const apiEndpoints: ApiEndpoint[] = [
   { method: 'GET', path: '/api/team/pricing', scope: 'read', summary: 'Personal current/next rates and direct-downline margin risks; existing contracts remain unchanged' },
   { method: 'POST', path: '/api/team/rates/preview', scope: 'team:write', summary: 'Preview direct-child rate changes and affected margins', body: object({ provider, userIds: { type: 'array', items: uuid, minItems: 1, maxItems: 500, uniqueItems: true }, mode: { type: 'string', enum: ['fixed', 'scale', 'cap'] }, value: rate }, ['provider', 'userIds', 'mode']) },
   { method: 'POST', path: '/api/team/rates/batch', scope: 'team:write', summary: 'Apply a reviewed batch atomically for the next Beijing day; stale snapshots and unacknowledged risks return 409', body: object({ provider, userIds: { type: 'array', items: uuid, minItems: 1, maxItems: 500, uniqueItems: true }, mode: { type: 'string', enum: ['fixed', 'scale', 'cap'] }, value: rate, snapshot: { type: 'string', pattern: '^[a-f0-9]{64}$' }, acknowledgeRisk: boolean }, ['provider', 'userIds', 'mode', 'snapshot']) },
-  { method: 'POST', path: '/api/team', scope: 'team:write', summary: 'Create a direct child agent with explicitly agreed platform rates', body: object({ name: { ...text, maxLength: 80 }, email, password, rates: { type: 'object', properties: { gatelink: rate, ai008: rate, minicc: rate }, minProperties: 1, additionalProperties: false }, effectiveFrom: date }, ['name', 'email', 'password', 'rates']) },
+  { method: 'POST', path: '/api/team', scope: 'team:write', summary: 'Create a direct child agent with explicitly agreed platform rates', body: object({ name: { ...text, maxLength: 80 }, email, password, rates: { type: 'object', properties: Object.fromEntries(Object.keys(platformNames).map(key=>[key,rate])), minProperties: 1, additionalProperties: false }, effectiveFrom: date }, ['name', 'email', 'password', 'rates']) },
   { method: 'PATCH', path: '/api/team/:id', scope: 'team:write', summary: 'Suspend/reactivate a direct child or reset their password', body: { ...object({ active: boolean, newPassword: password }, []), minProperties: 1 } },
   { method: 'PUT', path: '/api/team/:id/rates', scope: 'team:write', summary: 'Set a direct child price; existing prices change from the next Beijing day', body: object({ provider, rate, effectiveFrom: date }, ['provider', 'rate']) },
   { method: 'GET', path: '/api/connections', scope: 'read', summary: 'Platform capabilities and the calling agent’s settlement prices' },
@@ -46,7 +47,7 @@ export const apiEndpoints: ApiEndpoint[] = [
   { method: 'POST', path: '/api/bindings/:id/reauthorize', scope: 'accounts:write', summary: 'Reauthorize an owned verified platform account while preserving its binding and financial history', body: object({ options, key }) },
   { method: 'GET', path: '/api/accounts/:id/attempts', scope: 'read', summary: 'OAuth authorization URLs and attempts for an owned account' },
   { method: 'POST', path: '/api/oauth/:id/exchange', scope: 'accounts:write', summary: 'Submit a platform OAuth callback and queue the exchange', body: object({ callback: { ...text, maxLength: 8000 }, key }) },
-  { method: 'POST', path: '/api/accounts/:id/import-token', scope: 'accounts:write', summary: 'Queue refresh-token import for AI008 or Mini CC', body: object({ connectionId: uuid, refreshToken: { ...text, minLength: 10, maxLength: 10000 }, options, key }) },
+  { method: 'POST', path: '/api/accounts/:id/import-token', scope: 'accounts:write', summary: 'Queue refresh-token import for a supported platform', body: object({ connectionId: uuid, refreshToken: { ...text, minLength: 10, maxLength: 10000 }, options, key }) },
   { method: 'POST', path: '/api/bindings/:id/proxy/sync', scope: 'accounts:write', summary: 'Queue fixed proxy synchronization for an owned verified binding', body: object({ key }) },
   { method: 'POST', path: '/api/bindings/:id/status', scope: 'accounts:write', summary: 'Queue enable/disable for an owned verified binding', body: object({ enabled: boolean, key }) },
   { method: 'GET', path: '/api/jobs', scope: 'read', summary: 'Last 100 visible jobs or one job by id', query: { id: uuid } },

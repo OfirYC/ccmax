@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { platformNames as publicPlatformNames } from '../shared/platforms';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowRight, RefreshCw } from 'lucide-react';
 import { post } from './api';
@@ -14,7 +15,7 @@ export function PricingNotice({report}:{report:any}) {
   return <Link to="/team" className={`notice ${inverted.length?'pricing-warning':'amber'}`}><AlertTriangle size={18}/><span><strong>{inverted.length?t('结算价格倒挂提醒'):t('结算价格尚不完整')}</strong><br/>{t('原价继续生效，请检查当前及待生效报价，并按需批量调整直属下级。')}</span><ArrowRight size={17}/></Link>;
 }
 
-const platformNames:Record<string,string>={gatelink:'Gatelink',ai008:'AI008',minicc:'Mini CC Gateway'};
+const platformNames:Record<string,string>=publicPlatformNames;
 
 function RiskRows({risks,today}:{risks:any[];today?:string}) {
   const maxLoss=risks.filter(r=>r.kind==='inverted').reduce<string|null>((max,r)=>max===null||Number(r.lossPer100Usd)>Number(max)?r.lossPer100Usd:max,null);

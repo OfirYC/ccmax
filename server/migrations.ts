@@ -108,11 +108,11 @@ export async function accountProxies(tx:DB) {
   await tx.query('CREATE INDEX proxies_owner ON proxies(owner_id)');
 }
 
-export async function extendProviders(tx: DB) {
+export async function extendProviders(tx: DB, tables:('connections'|'rates'|'invitation_rates')[]=['connections','rates']) {
   // Existing deployments retain their connections, rates and financial history.
   // New platform prices require an explicit contract; never copy another rate.
   const allowed=PROVIDER_KEYS.map(p=>`'${p}'`).join(',');
-  for(const table of ['connections','rates']) {
+  for(const table of tables) {
     await tx.query(`ALTER TABLE ${table} DROP CONSTRAINT ${table}_provider_check`);
     await tx.query(`ALTER TABLE ${table} ADD CONSTRAINT ${table}_provider_check CHECK(provider IN (${allowed}))`);
   }

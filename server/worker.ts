@@ -2,7 +2,7 @@ import type { DB, Row } from './db.js';
 import { createHash } from 'node:crypto';
 import { ancestry, assert, audit, id, today, type SecretBox } from './core.js';
 import { ingestUsage } from './billing.js';
-import { ProviderClient, UpstreamError, type ProviderKey, type UpstreamAccount } from './providers.js';
+import { ProviderClient, UpstreamError, usesAdminOAuth, type ProviderKey, type UpstreamAccount } from './providers.js';
 import { accountProxy } from './proxies.js';
 import { saveTelemetry } from './telemetry.js';
 import { awaitSnapshotBilling, failDailyBilling, recordDailyStatement } from './daily-billing.js';
@@ -151,9 +151,9 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         assert(recovery?bound?.id===recovery.id:!bound,'平台已存在该账号，请由管理员核对归属后使用');
         if(recovery)await client.verifySubmissionTarget(recovery.external_id,account.email);
         const options=await submissionOptions(client,connection,proxy,{...payload.options,email:account.email,...(recovery?{existingExternalId:recovery.external_id}:{})});
-        // AI008's targeted reauthorization uses the existing account's proxy.
+        // Targeted admin OAuth reauthorization uses the existing account's proxy.
         // Repair and verify that proxy before asking it to issue a new link.
-        if(recovery&&connection.provider==='ai008')await client.setAccountProxy(recovery.external_id,options);
+        if(recovery&&usesAdminOAuth(connection.provider))await client.setAccountProxy(recovery.external_id,options);
         const oauth=await client.startOAuth(options);
         const oauthId=id();
         await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)

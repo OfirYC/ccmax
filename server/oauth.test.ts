@@ -25,7 +25,7 @@ describe('independent platform OAuth callbacks', () => {
     }
   });
 
-  it.each(['gatelink', 'ai008', 'minicc'] as const)('checks %s state before any upstream call', async provider => {
+  it.each(['gatelink', 'ai008', 'minicc', 'maxchat'] as const)('checks %s state before any upstream call', async provider => {
     let calls = 0;
     const client = new ProviderClient(provider, { username: 'fixture', password: 'fixture' }, async () => {
       calls++; return Response.json({});

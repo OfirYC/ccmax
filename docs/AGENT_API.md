@@ -2,6 +2,8 @@
 
 每位代理可以使用自己的 API 密钥，将自己的网站或后端接入 CCMAX。API 复用网站的账号、团队、上号、用量和结算服务，数据范围与密钥所属账号一致。
 
+支持的 provider：`gatelink`、`ai008`、`minicc`、`maxchat`。MaxChat Gateway 使用独立结算折扣及固定代理映射；只展示平台名称与调用者的价格，上游主账号凭据不向 API 客户端返回。
+
 ## 获取密钥
 
 1. 登录 CCMAX，进入「设置与审计 → API 接入」。
@@ -103,17 +105,17 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 ## 上号流程
 
 1. 查询 `/api/connections` 和 `/api/connections/:id/options`，确定平台连接、能力和可用配置。
-2. `POST /api/accounts` 创建本人账号；`POST /api/proxies` 添加本人固定出口代理；`POST /api/accounts/:id/proxy` 以 `{proxyId}` 绑定一次。该请求返回 `{account,jobs,reauthorizeConnectionIds}`，后台自动将同一账号代理同步到已接入的 AI008 / Mini CC；后续上号和重新授权自动沿用，不能逐个平台指定不同代理。Gatelink 旧绑定如需重新授权，会列在 `reauthorizeConnectionIds`，完成 OAuth 即自动应用固定代理。
+2. `POST /api/accounts` 创建本人账号；`POST /api/proxies` 添加本人固定出口代理；`POST /api/accounts/:id/proxy` 以 `{proxyId}` 绑定一次。该请求返回 `{account,jobs,reauthorizeConnectionIds}`，后台自动将同一账号代理同步到已接入的 AI008 / Mini CC / MaxChat；后续上号和重新授权自动沿用，不能逐个平台指定不同代理。Gatelink 旧绑定如需重新授权，会列在 `reauthorizeConnectionIds`，完成 OAuth 即自动应用固定代理。
 3. `POST /api/accounts/:id/authorize`，提交 `{targets:[{connectionId,options:{}}],key}`，获得 `{jobs}`。每次逻辑操作使用新的 UUID 作为 `key`。
 4. 轮询 `/api/jobs?id=<任务编号>`；授权链接生成后从 `/api/accounts/:id/attempts` 获取 `authorization_url`。每个平台分别授权，不能复用授权码。
-5. `POST /api/oauth/:id/exchange`，其中 `:id` 是授权流程编号，提交 `{callback,key}`。三个平台均要求完整回调 URL 或 `code#state`，不能只提交 code；state 必须匹配目标流程，同一 code 不能跨平台重复提交。校验失败时流程保留为 pending，可纠正后提交。继续轮询任务，确认实际成功。
-6. AI008 / Mini CC 可用 `/api/accounts/:id/import-token` 代替 OAuth，提交 `{connectionId,refreshToken,options:{},key}`。RT 为一次性敏感凭据，不能写入自己的访问日志。
+5. `POST /api/oauth/:id/exchange`，其中 `:id` 是授权流程编号，提交 `{callback,key}`。四个平台均要求完整回调 URL 或 `code#state`，不能只提交 code；state 必须匹配目标流程，同一 code 不能跨平台重复提交。校验失败时流程保留为 pending，可纠正后提交。继续轮询任务，确认实际成功。
+6. AI008 / Mini CC / MaxChat 可用 `/api/accounts/:id/import-token` 代替 OAuth，提交 `{connectionId,refreshToken,options:{},key}`。RT 为一次性敏感凭据，不能写入自己的访问日志。
 
 任务可能为 `queued`、`running`、`succeeded`、`failed`、`needs_attention`。只有 `succeeded` 表示完成；`needs_attention` 先人工核对上游，不能直接重复提交。代理固定绑定、每个平台配置和旧账号归属核对规则与网站完全一致，Mini CC 使用服务端固定默认配置。
 
 `GET /api/proxies` 仅返回调用者本人添加的代理，不包含上级、下级、兄弟或其他成员的代理；管理员也按本人范围返回。代理修改和账号绑定只能操作本人的代理及本人账号。团队账号列表仅保留其他成员账号是否已绑定代理、是否启用及各平台是否同步的状态，不暴露其代理 ID、名称或出口。一个账号固定绑定一条代理，同一代理不能重复占用。账号返回 `proxy_bound`、`proxy_sync_state`、`proxy_sync_error`，各平台绑定返回 `proxy_verified`；可据此显示同步进度和失败原因。
 
-`POST /api/accounts/:id/proxy/sync` 提交 `{key}`，可在账号层统一重试代理同步；返回 `{jobs,reauthorizeConnectionIds}`，已有执行中的任务不会重复排队。旧的逐平台同步接口保留兼容。启用 AI008 / Mini CC 已有账号时，如尚未同步代理，服务端会先核对账号身份、自动应用并读回固定代理，再启用；失败会保留未核实状态。Gatelink 旧绑定需重新授权时不会假报同步成功。
+`POST /api/accounts/:id/proxy/sync` 提交 `{key}`，可在账号层统一重试代理同步；返回 `{jobs,reauthorizeConnectionIds}`，已有执行中的任务不会重复排队。旧的逐平台同步接口保留兼容。启用 AI008 / Mini CC / MaxChat 已有账号时，如尚未同步代理，服务端会先核对账号身份、自动应用并读回固定代理，再启用；失败会保留未核实状态。Gatelink 旧绑定需重新授权时不会假报同步成功。
 
 ### 修复已有平台账号
 

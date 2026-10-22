@@ -23,7 +23,7 @@ export default function TeamInvitations({ providers, pricing }: { providers: [st
     return copy([headline, t('闲置 Claude Max，立即加入 CCMAX 变现：'), url].filter(Boolean).join('\n'));
   }
   return <section className="panel team-invitations">
-    <div className="panel-head"><div><h2><Link2 size={17}/>{t('邀请链接')}</h2><p>{t('一条链接，一份报价。分享邀请与推广文案，对方自行注册，自动归属团队，无需逐个开户。')}</p></div><button className="button primary" disabled={!providers.length} onClick={() => { setSelected(providers.map(([p]) => p)); setCreating(true); }}><Plus size={15}/>{t('创建邀请链接')}</button></div>
+    <div className="panel-head"><div><h2><Link2 size={17}/>{t('邀请链接')}</h2><p>{t('一条链接，一份报价。分享邀请与推广文案，对方自行注册，自动归属团队，无需逐个开户。')}</p></div><button className="button primary" disabled={!providers.length||!pricing} onClick={() => { setSelected(providers.filter(([p])=>pricing.prices.some((price:any)=>price.provider===p&&(price.currentRate!==null||price.nextRate!==null))).map(([p]) => p)); setCreating(true); }}><Plus size={15}/>{t('创建邀请链接')}</button></div>
     <div className="invitation-error"><ErrorBox error={error}/></div>
     {loading ? <Loading/> : invitations.length ? <><Table headers={[t('邀请链接'), t('结算折扣'), t('已注册 / 人数上限'), t('到期时间（北京时间）'), t('状态'), t('操作')]}>{invitations.slice((page - 1) * 8, page * 8).map((invite: any) => {
       const state = invite.revoked_at ? 'revoked' : invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now() ? 'expired' : invite.max_uses !== null && invite.used_count >= invite.max_uses ? 'full' : 'active';

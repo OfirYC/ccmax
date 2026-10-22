@@ -38,7 +38,7 @@
   "从实时用量到可提现利润": "Từ sử dụng trực tiếp đến lợi nhuận có thể rút",
   "实时用量仅供查看。管理员核对日账单后，按平台 → 直属代理 → 更下级的顺序确认结算。确认只入利润账本，实际打款通过提现流程记录。": "Sử dụng trực tiếp chỉ để tham khảo. Sau khi quản trị viên xác minh hóa đơn ngày, quyết toán được xác nhận từ nền tảng đến đại lý trực tiếp rồi các cấp dưới. Xác nhận ghi vào sổ lợi nhuận; thanh toán thực tế được ghi qua quy trình rút tiền.",
   "多平台上号的实际边界": "Yêu cầu thêm tài khoản đa nền tảng",
-  "可同时发起多个平台授权。每个平台需要各自有效的 OAuth 授权码，授权码不能跨平台重复使用。每个账号必须先绑定专属代理，所有平台使用同一代理。AI008 和 Mini CC 还支持 refresh token 导入；Gatelink 使用 OAuth 授权。": "Bạn có thể cấp quyền nhiều nền tảng cùng lúc. Mỗi nền tảng cần mã OAuth hợp lệ riêng; không thể dùng lại mã giữa các nền tảng. Trước tiên hãy gắn proxy riêng; mọi nền tảng dùng cùng proxy đó. AI008 và Mini CC còn hỗ trợ nhập refresh token; Gatelink dùng OAuth.",
+  "可同时发起多个平台授权。每个平台需要各自有效的 OAuth 授权码，授权码不能跨平台重复使用。每个账号必须先绑定专属代理，所有平台使用同一代理。AI008、Mini CC 和 MaxChat Gateway 还支持 refresh token 导入；Gatelink 使用 OAuth 授权。": "Bạn có thể cấp quyền nhiều nền tảng cùng lúc. Mỗi nền tảng cần mã OAuth hợp lệ riêng; không thể dùng lại mã giữa các nền tảng. Trước tiên hãy gắn proxy riêng; mọi nền tảng dùng cùng proxy đó. AI008, Mini CC và MaxChat Gateway còn hỗ trợ nhập refresh token; Gatelink dùng OAuth.",
   "连接平台，": "Kết nối nền tảng,",
   "让团队生意更简单。": "kinh doanh cùng đội dễ dàng hơn.",
   "登录你的账号，管理账号、团队与每一笔收益。": "Đăng nhập để quản lý tài khoản, đội ngũ và từng khoản thu nhập.",
@@ -636,7 +636,7 @@
   "请选择自己添加且已启用的代理": "Chọn proxy do bạn thêm và đã bật",
   "不能把其他团队上传的代理绑定给此账号": "Không thể gắn proxy đội khác cho tài khoản này",
   "平台绑定不存在": "Không tìm thấy liên kết nền tảng",
-  "AI008 / Mini CC 请使用平台代理同步核对，不允许仅凭说明确认": "AI008 / Mini CC cần đồng bộ proxy để xác minh; chỉ ghi chú là chưa đủ",
+  "此平台请使用平台代理同步核对，不允许仅凭说明确认": "Nền tảng này cần đồng bộ proxy để xác minh; chỉ ghi chú là chưa đủ",
   "不能修改该账号代理": "Không thể đổi proxy tài khoản này",
   "Gatelink 需在上游修改代理，再由管理员核实": "Đổi proxy Gatelink trên nguồn trước, rồi nhờ quản trị viên xác minh",
   "该账号已存在，请联系管理员核对归属": "Tài khoản đã tồn tại. Liên hệ quản trị viên kiểm tra chủ sở hữu.",
@@ -1003,7 +1003,7 @@
   "OAuth state 不匹配": "OAuth state không khớp với lần cấp quyền này",
   "平台返回的邮箱或账号归属与提交账号不符，需要管理员核对": "Email hoặc chủ sở hữu tài khoản từ nền tảng khác với tài khoản đã gửi; cần quản trị viên kiểm tra",
   "多平台分别授权": "Ủy quyền riêng từng nền tảng",
-  "选择 3 个平台就需要分别完成 3 次授权。每个平台的链接、回调和授权码独立，不能共用。": "Chọn 3 nền tảng cần 3 lần ủy quyền riêng. Mỗi nền tảng có liên kết, callback và mã dùng một lần riêng.",
+  "选择 {0} 个平台就需要分别完成 {0} 次授权。每个平台的链接、回调和授权码独立，不能共用。": "Chọn {0} nền tảng cần {0} lần ủy quyền riêng. Mỗi nền tảng có liên kết, callback và mã dùng một lần riêng.",
   "批量生成独立授权链接": "Tạo các liên kết ủy quyền riêng",
   "粘贴 {0} 的完整回调或 code#state": "Dán callback đầy đủ hoặc code#state cho {0}",
   "只接受此平台当前链接生成的完整回调或 code#state，单独的 code 无法核对平台。": "Dùng callback đầy đủ hoặc code#state từ liên kết hiện tại của nền tảng này. Chỉ mã code không thể xác định phiên ủy quyền.",
@@ -1386,5 +1386,6 @@
   "写入结果可能未知，请先核对上游结果": "Kết quả ghi có thể chưa rõ. Hãy kiểm tra kết quả trên nền tảng trước",
   "此授权已失效，请先核对同步任务，再重新生成链接并使用新的回调": "Ủy quyền này không còn hiệu lực. Kiểm tra tác vụ đồng bộ, sau đó tạo liên kết mới và dùng callback mới",
   "Gatelink 授权状态冲突，请先在 Gatelink 核对账号及授权状态": "Gatelink báo xung đột ủy quyền. Hãy kiểm tra tài khoản và trạng thái ủy quyền trên Gatelink trước",
-  "已有平台账号请从「平台管理」重新授权": "Với tài khoản đã có trên nền tảng, hãy cấp quyền lại từ Quản lý nền tảng"
+  "已有平台账号请从「平台管理」重新授权": "Với tài khoản đã có trên nền tảng, hãy cấp quyền lại từ Quản lý nền tảng",
+  "留空保持未定价；填写 0 表示零折扣。": "Để trống để giữ trạng thái chưa định giá; nhập 0 cho tỷ lệ bằng không."
 }

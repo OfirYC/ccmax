@@ -139,5 +139,9 @@ export async function migrate(db: DB) {
       await invitationMigration(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (14)');
     }
+    if (!done.some(row=>Number(row.version)===15)) {
+      await extendProviders(tx,['connections','rates','invitation_rates']);
+      await tx.query('INSERT INTO migrations(version) VALUES (15)');
+    }
   });
 }

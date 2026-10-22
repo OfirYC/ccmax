@@ -22,7 +22,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
   const box = secretBox('ab'.repeat(32)), password = 'finance-test-password';
   async function user(parent: Row, name: string, rate: number) {
     const [user] = await db.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING *', [id(), parent.id, `${name}@finance.example`, name, parent.password_hash]);
-    for (const provider of ['ai008', 'gatelink', 'minicc']) await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,'1970-01-01',$5)", [id(), user.id, provider, rate, parent.id]);
+    for (const provider of ['ai008', 'gatelink', 'minicc', 'maxchat']) await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,'1970-01-01',$5)", [id(), user.id, provider, rate, parent.id]);
     return user;
   }
   async function binding(user = c, provider = 'ai008') {
@@ -48,7 +48,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     [owner] = await db.query("SELECT * FROM users WHERE role='owner'");
     a = await user(owner, 'a', 0.3); b = await user(a, 'b', 0.2); c = await user(b, 'c', 0.1); sibling = await user(owner, 'sibling', 0.15);
     connections = {};
-    for (const [provider, rate] of [['ai008', 0.7], ['gatelink', 0.6], ['minicc', 0.8]] as const) {
+    for (const [provider, rate] of [['ai008', 0.7], ['gatelink', 0.6], ['minicc', 0.8], ['maxchat', 0.65]] as const) {
       const connectionId = id(); connections[provider] = connectionId;
       await db.query('INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,$2,$2,$3,$4)', [connectionId, provider, box.encrypt({ username: 'fixture', password: 'fixture' }), rate]);
       await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,$3,'1970-01-01')", [id(), connectionId, rate]);
@@ -115,11 +115,11 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect((await balance(db, owner.id)).available).toBe('0.00000000');
   });
 
-  it('conserves every 8-decimal dollar through branches, four levels, all three platforms, invoices and payouts', async () => {
+  it('conserves every 8-decimal dollar through branches, four levels, all four platforms, invoices and payouts', async () => {
     const expected = new Map([owner, a, b, c, sibling].map(user => [user.id, 0n]));
     const samples = ['0.00000001', '0.00000007', '0.12345678', '100.12345678', '9876543210.12345678'];
     let upstream = 0n;
-    for (const [provider, rootRate] of [['ai008', 7000], ['gatelink', 6000], ['minicc', 8000]] as const) {
+    for (const [provider, rootRate] of [['ai008', 7000], ['gatelink', 6000], ['minicc', 8000], ['maxchat', 6500]] as const) {
       for (const [target, members, rates] of [[c, [owner, a, b, c], [rootRate, 3000, 2000, 1000]], [sibling, [owner, sibling], [rootRate, 1500]]] as [Row, Row[], number[]][]) {
         const bindingId = await binding(target, provider);
         for (let index = 0; index < samples.length; index++) {
@@ -143,7 +143,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
       await assertWalletAccounting(db, member.id);
     }
     expect([...expected.values()].reduce((total, profit) => total + profit, 0n)).toBe(upstream);
-    const funded=await audit();expect(funded.ok).toBe(true);expect(funded.checked).toMatchObject({wallets:5,finalizedUsageDays:30,provisionalUsageDays:0});
+    const funded=await audit();expect(funded.ok).toBe(true);expect(funded.checked).toMatchObject({wallets:5,finalizedUsageDays:40,provisionalUsageDays:0});
     expect(atoms(funded.totals.available_profit_usd)).toBe(upstream);
     expect(funded.platforms.every(p=>p.usage_days===10&&p.finalized_days===10&&Number(p.uninvoiced_receivable_usd)===0)).toBe(true);
     for (let index = 0; index < members.length; index++) {

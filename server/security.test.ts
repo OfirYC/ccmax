@@ -212,41 +212,41 @@ describe('CCMAX authorization and ledger safeguards', () => {
     const [sum]=await db.query('SELECT sum(profit_usd) AS profit,max(gross_usd) AS gross FROM earnings');expect(sum.profit).toBe(sum.gross);expect(sum.gross).toBe('0.00000005');
   });
 
-  it('requires independent Mini CC pricing throughout the tree and preserves historical profits',async()=>{
+  it.each(['minicc','maxchat'] as const)('requires independent %s pricing throughout the tree and preserves historical profits',async provider=>{
     const cookie=await login('owner@example.com','correct horse battery staple');
     const created=await api(cookie,'POST','/api/team',{name:'Mini Parent',email:'mini-parent@example.com',password:'mini-parent-password',rates:{ai008:0.3,gatelink:0.3},effectiveFrom:'1970-01-01'});
     expect(created.statusCode).toBe(200);
     const a=created.json().user,ac=await login(a.email,'mini-parent-password');
     const b=(await api(ac,'POST','/api/team',{name:'Mini Leaf',email:'mini-leaf@example.com',password:'mini-leaf-password',rates:{ai008:0.1,gatelink:0.1},effectiveFrom:'1970-01-01'})).json().user;
     const team=(await api(cookie,'GET','/api/team')).json();
-    expect(team.providers.minicc.historicalUsage).toBe(true);
-    expect(team.rates.filter((r:any)=>r.provider==='minicc')).toHaveLength(0);
-    const mini=await connection('minicc','0.8'),ai=await connection('ai008','0.5'),acct=await account(b);
+    expect(team.providers[provider].historicalUsage).toBe(true);
+    expect(team.rates.filter((r:any)=>r.provider===provider)).toHaveLength(0);
+    const mini=await connection(provider,'0.8'),ai=await connection('ai008','0.5'),acct=await account(b);
     const binding=await db.transaction(tx=>saveBinding(tx,mini,remote('mini-remote',acct.email)));
-    await expect(observe(binding.id,'100',true)).rejects.toThrow('没有 minicc 结算折扣');
+    await expect(observe(binding.id,'100',true)).rejects.toThrow(`没有 ${provider} 结算折扣`);
     expect(await db.query('SELECT * FROM usage_days')).toHaveLength(0);
-    expect((await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.6,effectiveFrom:prior()})).json().effectiveDate).toBe(prior());
-    expect((await api(cookie,'PUT',`/api/team/${b.id}/rates`,{provider:'minicc',rate:0.25,effectiveFrom:prior()})).statusCode).toBe(403);
-    expect((await api(ac,'PUT',`/api/team/${b.id}/rates`,{provider:'minicc',rate:0.25,effectiveFrom:prior()})).json().effectiveDate).toBe(prior());
+    expect((await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider,rate:0.6,effectiveFrom:prior()})).json().effectiveDate).toBe(prior());
+    expect((await api(cookie,'PUT',`/api/team/${b.id}/rates`,{provider,rate:0.25,effectiveFrom:prior()})).statusCode).toBe(403);
+    expect((await api(ac,'PUT',`/api/team/${b.id}/rates`,{provider,rate:0.25,effectiveFrom:prior()})).json().effectiveDate).toBe(prior());
     await observe(binding.id,'100',true);
     const aiBinding=await db.transaction(tx=>saveBinding(tx,ai,remote('ai-remote',acct.email)));
     await observe(aiBinding.id,'100',true);
     const profits=await db.query('SELECT user_id,sum(profit_usd) AS profit FROM earnings GROUP BY user_id');
     expect(profits.find(r=>r.user_id===a.id)?.profit).toBe('55.00000000');
     expect(profits.find(r=>r.user_id===b.id)?.profit).toBe('35.00000000');
-    expect((await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.9,effectiveFrom:prior()})).statusCode).toBe(400);
-    const changed=await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.9});
+    expect((await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider,rate:0.9,effectiveFrom:prior()})).statusCode).toBe(400);
+    const changed=await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider,rate:0.9});
     expect(changed.statusCode).toBe(200);expect(changed.json().effectiveDate).toBe(nextDay());
-    const allowed=await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider:'minicc',rate:0.7});expect(allowed.statusCode).toBe(200);expect(allowed.json().effectiveDate>today()).toBe(true);
+    const allowed=await api(cookie,'PUT',`/api/team/${a.id}/rates`,{provider,rate:0.7});expect(allowed.statusCode).toBe(200);expect(allowed.json().effectiveDate>today()).toBe(true);
     await observe(binding.id,'100',true);
     expect((await db.query('SELECT sum(profit_usd) AS profit FROM earnings WHERE user_id=$1',[a.id]))[0].profit).toBe('55.00000000');
-    const usage=(await api(cookie,'GET',`/api/usage?provider=minicc&from=${prior()}&to=${prior()}`)).json();
+    const usage=(await api(cookie,'GET',`/api/usage?provider=${provider}&from=${prior()}&to=${prior()}`)).json();
     expect(usage.total).toBe(1);expect(usage.totals.raw_usd).toBe('100.00000000');
   });
 
-  it('allows Mini CC onboarding and history jobs by capability without exposing credentials',async()=>{
+  it.each(['minicc','maxchat'])('allows %s onboarding and history jobs by capability without exposing credentials',async provider=>{
     const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'");
-    const created=await api(cookie,'POST','/api/connections',{provider:'minicc',name:'Mini CC',username:'private-username',password:'private-password',payoutRate:0.5});
+    const created=await api(cookie,'POST','/api/connections',{provider,name:'Public platform',username:'private-username',password:'private-password',payoutRate:0.5});
     expect(created.statusCode).toBe(200);const cid=created.json().id;
     const connections=(await api(cookie,'GET','/api/connections')).json();
     expect(connections.connections[0].capabilities.refreshTokenImport).toBe(true);

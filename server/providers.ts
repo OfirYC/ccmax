@@ -12,9 +12,11 @@ export const PROVIDERS = {
   gatelink: { name:platformNames.gatelink, url:'https://cc.gatelink.dev', oauth:true, refreshTokenImport:false, historicalUsage:true,statusRequiresAdmin:true },
   ai008: { name:platformNames.ai008, url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
   minicc: { name:platformNames.minicc, url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  maxchat: { name:platformNames.maxchat, url:'https://cldgtw.maxchatapi.com', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
 } as const;
 export type ProviderKey=keyof typeof PROVIDERS;
 export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey[]];
+export const usesAdminOAuth=(provider:ProviderKey)=>provider==='ai008'||provider==='maxchat';
 export type Credentials={username:string;password:string};
 export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string|null;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
 export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string;existingExternalId?:string};
@@ -117,7 +119,7 @@ export class ProviderClient {
       this.user=data.user;
     } else {
       const data=await this.call('/api/auth/admin-login','POST',{identifier:this.credentials.username,email:this.credentials.username,password:this.credentials.password});
-      assert(data.accessToken && data.user,'AI008 登录响应缺少会话信息',502);
+      assert(data.accessToken && data.user,`${PROVIDERS[this.provider].name} 登录响应缺少会话信息`,502);
       this.token=data.accessToken;this.user=data.user;
     }
     return {role:this.user.role,username:this.user.username};
@@ -262,7 +264,7 @@ export class ProviderClient {
         }catch{/* Keep the safe account-list snapshot and its unavailable marker. */}
       }
     }));
-    if(this.provider!=='ai008')return;
+    if(!usesAdminOAuth(this.provider))return;
     for(let start=0;start<accounts.length&&Date.now()<deadline;start+=50) {
       const batch=accounts.slice(start,start+50);
       try {

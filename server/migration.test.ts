@@ -40,7 +40,7 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect(flags.find(a=>a.id===assigned)?.ownership_verified).toBe(true);
   await expect(db.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[sealed,other])).rejects.toThrow('immutable');
   await db.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[sealed]);
-  expect(await db.query('SELECT * FROM migrations')).toHaveLength(14);
+  expect(await db.query('SELECT * FROM migrations')).toHaveLength(15);
   expect(await db.query('SELECT * FROM invitations')).toEqual([]);
   expect(await db.query('SELECT * FROM oauth_code_claims')).toEqual([]);
 
@@ -51,9 +51,41 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect((await db.query('SELECT proxy_id FROM bindings')).every(b=>b.proxy_id===null)).toBe(true);
   await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'minicc','Mini CC','encrypted',0.4)",[id()]);
   await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'minicc',0.15,'2020-01-01',$3)",[id(),other,owner.id]);
+  await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'maxchat','MaxChat Gateway','encrypted',0.4)",[id()]);
+  expect(await db.query("SELECT * FROM rates WHERE provider='maxchat'")).toEqual([]);
+  await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'maxchat',0.1,'2020-01-01',$3)",[id(),other,owner.id]);
   expect((await db.query('SELECT payout_rate FROM connections WHERE id=$1',[connection]))[0].payout_rate).toBe('0.5000');
   expect((await db.query('SELECT raw_usd FROM usage_days'))[0].raw_usd).toBe('100.00000000');
   expect((await db.query('SELECT amount_usd,reference_id FROM ledger'))[0]).toEqual({amount_usd:'12.34567890',reference_id:'legacy-reference'});
   await expect(db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',1,'new-orphan')",[id(),owner.id])).rejects.toThrow('source mismatch');
+ }finally{await db.close();}
+});
+
+it('upgrades an existing version 14 deployment for MaxChat without assigning prices or changing old records',async()=>{
+ const db=await openTestDB();
+ try {
+  await migrate(db);await bootstrap(db,{ADMIN_EMAIL:'migration@example.com',ADMIN_PASSWORD:'migration-password'});
+  const [owner]=await db.query("SELECT id FROM users WHERE role='owner'");
+  const cid=id();await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'ai008','private-label','encrypted',0.5)",[cid]);
+  for(const table of ['connections','rates','invitation_rates']) {
+   await db.query(`ALTER TABLE ${table} DROP CONSTRAINT ${table}_provider_check`);
+   await db.query(`ALTER TABLE ${table} ADD CONSTRAINT ${table}_provider_check CHECK(provider IN ('gatelink','ai008','minicc'))`);
+  }
+  await db.query('DELETE FROM migrations WHERE version=15');
+  const invitation=id();
+  await db.query("INSERT INTO invitations(id,inviter_id,name,token_hash,token_secret) VALUES($1,$2,'existing invite','hash','encrypted')",[invitation,owner.id]);
+  await db.query("INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,'ai008',0.25)",[invitation]);
+  const oldInvitations=await db.query('SELECT * FROM invitation_rates');
+  const old=await db.query('SELECT * FROM connections');
+  await migrate(db);await migrate(db);
+  expect(await db.query('SELECT * FROM connections')).toEqual(old);
+  expect(await db.query('SELECT * FROM invitation_rates')).toEqual(oldInvitations);
+  expect(await db.query("SELECT * FROM rates WHERE provider='maxchat'")).toEqual([]);
+  await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'maxchat','MaxChat Gateway','encrypted',0.6)",[id()]);
+  await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'maxchat',0.2,'2026-10-22',$2)",[id(),owner.id]);
+  await db.query("INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,'maxchat',0)",[invitation]);
+  expect(await db.query("SELECT rate FROM invitation_rates WHERE provider='maxchat'")).toEqual([{rate:'0.0000'}]);
+  expect(await db.query('SELECT * FROM ledger')).toEqual([]);
+  await expect(db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'unknown','Unknown','encrypted',0.5)",[id()])).rejects.toThrow();
  }finally{await db.close();}
 });
