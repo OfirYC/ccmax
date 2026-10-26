@@ -112,11 +112,9 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
       const [invite] = await tx.query('SELECT id,revoked_at FROM invitations WHERE id=$1 AND inviter_id=$2 FOR UPDATE', [target, req.user.id]);
       assert(invite, '邀请链接不存在', 404);
       assert(!invite.revoked_at, '邀请链接已停用', 409);
-      const existing = await tx.query<{ provider: string; rate: string }>('SELECT provider,rate FROM invitation_rates WHERE invitation_id=$1', [target]);
-      const existingProviders = new Set(existing.map(row => row.provider));
-      assert(Object.keys(changes).every(provider => existingProviders.has(provider)), '邀请链接尚未设置该平台价格', 409);
       for (const [provider, value] of Object.entries(changes)) {
-        await tx.query('UPDATE invitation_rates SET rate=$3 WHERE invitation_id=$1 AND provider=$2', [target, provider, value]);
+        await tx.query(`INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,$2,$3)
+          ON CONFLICT(invitation_id,provider) DO UPDATE SET rate=EXCLUDED.rate`, [target, provider, value]);
       }
       await audit(tx, req.user.id, 'invitation.rate.update', target, { rates: changes });
       const [row] = await tx.query(`SELECT ${fields},token_secret FROM invitations WHERE id=$1`, [target]);

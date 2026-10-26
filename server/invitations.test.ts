@@ -61,21 +61,22 @@ describe('priced team invitations', () => {
 
   it('lets only the creator edit invitation rates for future registrations', async () => {
     const parent = await agent('rate-editor'), other = await agent('other-editor'), invitation = await invite(parent.cookie);
-    const put = await request('PUT', `/api/team/invitations/${invitation.id}/rates`, { rates: { ai008: 0.4321 } }, parent.cookie);
+    const put = await request('PUT', `/api/team/invitations/${invitation.id}/rates`, { rates: { B: 0.4321 } }, parent.cookie);
     expect(put.statusCode, put.body).toBe(200);
     expect(put.json().invitation.rates).toMatchObject({ B: '0.4321', C: '0.0000' });
     const patch = await request('PATCH', `/api/team/invitations/${invitation.id}`, { provider: 'C', rate: 0.2222 }, parent.cookie);
     expect(patch.statusCode, patch.body).toBe(200);
+    expect((await request('PATCH', `/api/team/invitations/${invitation.id}`, { rates: { A: 0.29, D: 0.11 } }, parent.cookie)).statusCode).toBe(200);
     for (const cookie of [other.cookie, ownerCookie]) {
       expect((await request('PUT', `/api/team/invitations/${invitation.id}/rates`, { rates: { ai008: 0.1 } }, cookie)).statusCode).toBe(404);
     }
     const token = tokenOf(invitation), preview = await request('GET', `/api/invitations/${token}`);
-    expect(preview.json().rates).toMatchObject({ B: '0.4321', C: '0.2222' });
+    expect(preview.json().rates).toMatchObject({ A: '0.2900', B: '0.4321', C: '0.2222', D: '0.1100' });
     expect((await request('POST', `/api/invitations/${token}/register`, registration('edited-rate@example.com'))).statusCode).toBe(200);
     expect(await db.query("SELECT provider,rate FROM rates r JOIN users u ON u.id=r.user_id WHERE u.email='edited-rate@example.com' ORDER BY provider")).toEqual([
-      { provider: 'ai008', rate: '0.4321' }, { provider: 'minicc', rate: '0.2222' },
+      { provider: 'ai008', rate: '0.4321' }, { provider: 'gatelink', rate: '0.2900' }, { provider: 'maxchat', rate: '0.1100' }, { provider: 'minicc', rate: '0.2222' },
     ]);
-    expect(await db.query("SELECT action FROM audits WHERE action='invitation.rate.update' AND target_id=$1", [invitation.id])).toHaveLength(2);
+    expect(await db.query("SELECT action FROM audits WHERE action='invitation.rate.update' AND target_id=$1", [invitation.id])).toHaveLength(3);
   });
 
   it('allows only one concurrent registration for a single-use link', async () => {

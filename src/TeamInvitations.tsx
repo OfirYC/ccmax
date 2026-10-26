@@ -13,6 +13,7 @@ export default function TeamInvitations({ providers, pricing }: { providers: [st
   const [creating, setCreating] = useState(false), [selected, setSelected] = useState<string[]>([]), [editing, setEditing] = useState<any>(null), [revoking, setRevoking] = useState<any>(null), [page, setPage] = useState(1);
   const invitations = data?.invitations || [];
   const weeklyRecord = useData<WeeklyRecordReport>('/api/marketing/weekly-record', 60000);
+  const editableProviders = (invite: any) => providers.filter(([provider]) => invite.rates[provider] !== undefined || pricing?.prices.some((price: any) => price.provider === provider && (price.currentRate != null || price.nextRate != null)));
   async function copy(url: string) {
     try { await navigator.clipboard.writeText(url); toast(t('已复制')); }
     catch { toast(t('无法自动复制，请手动选择并复制'), 'error'); }
@@ -40,10 +41,10 @@ export default function TeamInvitations({ providers, pricing }: { providers: [st
       <div className="modal-actions"><Submit busy={!selected.length}>{t('生成邀请链接')}</Submit></div>
     </Form></Modal>}
     {editing && <Modal title={t('编辑邀请折扣')} subtitle={t('修改只影响之后注册的新成员，已注册成员价格保持不变。')} onClose={() => setEditing(null)}><Form onSubmit={async form => {
-      const rates = Object.fromEntries(Object.keys(editing.rates).map(provider => [provider, Number(form.get(provider))]));
+      const rates = Object.fromEntries(editableProviders(editing).map(([provider]) => [provider, Number(form.get(provider))]));
       await api(`/api/team/invitations/${editing.id}/rates`, { method: 'PUT', body: JSON.stringify({ rates }) });
       setEditing(null); toast(t('邀请折扣已更新')); await refresh();
-    }}><div className="invitation-platforms">{providers.filter(([p]) => editing.rates[p] !== undefined).map(([p, v]) => <div key={p}><RateField name={p} label={t('{0} 结算折扣', [v.name])} recipient="downstream" ceiling={pricing?.prices.find((price: any) => price.provider === p)?.nextRate} defaultValue={editing.rates[p]}/></div>)}</div><p className="form-hint">{t('修改只影响之后注册的新成员，已注册成员价格保持不变。')}</p><div className="modal-actions"><Submit>{t('保存折扣')}</Submit></div></Form></Modal>}
+    }}><div className="invitation-platforms">{editableProviders(editing).map(([p, v]) => <div key={p}><RateField name={p} label={t('{0} 结算折扣', [v.name])} recipient="downstream" ceiling={pricing?.prices.find((price: any) => price.provider === p)?.nextRate} defaultValue={editing.rates[p]}/></div>)}</div><p className="form-hint">{t('修改只影响之后注册的新成员，已注册成员价格保持不变。')}</p><div className="modal-actions"><Submit>{t('保存折扣')}</Submit></div></Form></Modal>}
     {revoking && <Modal title={t('停用邀请链接')} subtitle={revoking.name} onClose={() => setRevoking(null)}><p>{t('停用后无法继续注册，已注册成员的归属和价格保持不变。')}</p><Form onSubmit={async () => { await api(`/api/team/invitations/${revoking.id}`, { method: 'DELETE' }); setRevoking(null); toast(t('邀请链接已停用')); await refresh(); }}><div className="modal-actions"><Submit>{t('确认停用')}</Submit></div></Form></Modal>}
   </section>;
 }

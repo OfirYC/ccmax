@@ -11,6 +11,7 @@ test('agents create different priced links and invitees register themselves into
   const parentResponse = await page.request.post('/api/team', { headers, data: { name: '邀请人', email: 'invite-parent@example.com', password, rates: { A: 0.4, B: 0.4, C: 0.4 } } });
   expect(parentResponse.ok()).toBe(true);
   const parent = (await parentResponse.json()).user;
+  expect((await page.request.put(`/api/team/${parent.id}/rates`, { headers, data: { provider: 'D', rate: 0.4 } })).ok()).toBe(true);
   await page.request.post('/api/auth/login', { headers, data: { email: parent.email, password } });
   await page.goto('/team');
   const section = page.locator('.team-invitations');
@@ -21,6 +22,7 @@ test('agents create different priced links and invitees register themselves into
     await dialog.getByLabel('平台 A 结算折扣', { exact: true }).fill('0.2');
     await dialog.getByLabel('平台 B 结算折扣', { exact: true }).fill(B);
     await dialog.getByLabel('平台 C 结算折扣', { exact: true }).fill('0');
+    await dialog.getByLabel('平台 D 结算折扣', { exact: true }).fill('0.1');
     await dialog.getByLabel('注册人数上限').fill(maxUses);
     await dialog.getByRole('button', { name: '生成邀请链接' }).click();
     await expect(dialog).toHaveCount(0);
@@ -38,6 +40,16 @@ test('agents create different priced links and invitees register themselves into
   await editDialog.getByRole('button', { name: '保存折扣' }).click();
   await expect(editDialog).toHaveCount(0);
   await expect(partner.row).toContainText('× 0.4321');
+  const legacyResponse = await page.request.post('/api/team/invitations', { headers, data: { name: '旧三平台邀请', rates: { A: 0.29, B: 0.27, C: 0.25 } } });
+  expect(legacyResponse.ok()).toBe(true);
+  await page.reload();
+  const legacyRow = section.getByRole('row').filter({ hasText: '旧三平台邀请' });
+  await legacyRow.getByRole('button', { name: '编辑折扣' }).click();
+  const legacyEditDialog = page.getByRole('dialog', { name: '编辑邀请折扣' });
+  await expect(legacyEditDialog.getByLabel('平台 D 结算折扣', { exact: true })).toBeVisible();
+  await legacyEditDialog.getByLabel('平台 D 结算折扣', { exact: true }).fill('0.23');
+  await legacyEditDialog.getByRole('button', { name: '保存折扣' }).click();
+  await expect(legacyRow).toContainText('× 0.2300');
   expect(await section.locator('.table-scroll').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await standard.row.getByRole('button', { name: '复制链接' }).click();
