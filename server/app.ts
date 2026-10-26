@@ -381,6 +381,30 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const [account]=await db.query('INSERT INTO accounts(id,owner_id,submitted_by,email,label) VALUES($1,$2,$2,$3,$4) RETURNING *',[id(),req.user.id,d.email,d.label]);
     await audit(db,req.user.id,'account.create',account.id);return {account};
   });
+  app.delete('/api/accounts/:id',async req=>{
+    const accountId=identifier.parse((req.params as Row).id);
+    return db.transaction(async tx=>{
+      const [account]=await tx.query('SELECT id,owner_id,email,ownership_verified FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
+      assert(account,'账号不存在',404);
+      assert(account.owner_id===req.user.id,'只能删除自己名下的账号',403);
+      assert(!account.ownership_verified,'已核实归属的账号不能删除',409);
+      const [binding]=await tx.query('SELECT id FROM bindings WHERE account_id=$1 LIMIT 1',[accountId]);
+      assert(!binding,'已有平台绑定的账号不能删除',409);
+      const [attempt]=await tx.query(`SELECT id FROM oauth_attempts
+        WHERE account_id=$1 AND state IN ('pending','exchanging') AND expires_at>now() LIMIT 1`,[accountId]);
+      assert(!attempt,'账号授权流程正在进行，请完成或等待授权失效后再删除',409);
+      const [job]=await tx.query(`SELECT id FROM jobs WHERE subject_id=$1 AND state IN ('queued','running') LIMIT 1`,[accountId]);
+      assert(!job,'账号仍有进行中的任务，请等待任务完成后再删除',409);
+      const attempts=await tx.query('SELECT id FROM oauth_attempts WHERE account_id=$1',[accountId]);
+      if(attempts.length){
+        await tx.query('DELETE FROM oauth_code_claims WHERE attempt_id=ANY($1::text[])',[attempts.map(row=>row.id)]);
+        await tx.query('DELETE FROM oauth_attempts WHERE account_id=$1',[accountId]);
+      }
+      await tx.query('DELETE FROM accounts WHERE id=$1',[accountId]);
+      await audit(tx,req.user.id,'account.delete',accountId,{email:account.email});
+      return {ok:true};
+    });
+  });
   app.post('/api/accounts/:id/assign',async req=>{
     await requireOwner(req.user);const target=identifier.parse((req.params as Row).id),d=z.object({userId:identifier}).parse(req.body);
     await db.transaction(async tx=>{

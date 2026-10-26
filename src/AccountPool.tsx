@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, ArrowUpRight, Clock3, LayoutGrid, List, RefreshCw, Search, Server, ShieldCheck, UserRound, Zap } from 'lucide-react';
+import { Activity, ArrowUpRight, Clock3, LayoutGrid, List, RefreshCw, Search, Server, ShieldCheck, Trash2, UserRound, Zap } from 'lucide-react';
 import { platformName } from './platforms';
 import { dateTime, number } from './api';
 import { Badge, Empty, Loading, Paginator, Table, useSession } from './components';
@@ -12,7 +12,7 @@ import { useLocale } from './LanguageSwitcher';
 import './account-pool.css';
 
 type Props={data:any;loading:boolean;onRefresh:()=>Promise<void>;unassigned:boolean;onUnassigned:(value:boolean)=>void;
-  onProxy:(account:any)=>void;onAssign:(account:any)=>void;onOnboard:(account:any)=>void;onManage:(account:any)=>void};
+  onProxy:(account:any)=>void;onAssign:(account:any)=>void;onOnboard:(account:any)=>void;onManage:(account:any)=>void;onDelete:(account:any)=>void};
 const coverage=(metric:PoolMetric)=>t('覆盖 {0}/{1} 个平台账号',[metric.covered,metric.total]);
 const count=(value:unknown)=>value===null||value===undefined?'—':number(value);
 
@@ -114,7 +114,7 @@ function ProxyLabel({account:a}:{account:any}){
   const bound=a.proxy_bound??!!a.proxy_id;
   return <span title={a.proxy_endpoint||undefined}>{a.proxy_name||(bound?t('已绑定'):t('未绑定代理'))}{bound&&(!a.proxy_enabled?<small className="pool-stale"> · {t('禁止上号')}</small>:<small> · {t('所有平台自动沿用')}</small>)}</span>;
 }
-function AccountActions({account:a,original,onProxy,onAssign,onOnboard,onManage}:Props&{account:any;original:(account:any)=>any}){
+function AccountActions({account:a,original,onProxy,onAssign,onOnboard,onManage,onDelete}:Props&{account:any;original:(account:any)=>any}){
   const {user}=useSession(),account=original(a);
-  return <div className="row-actions">{account.owner_id===user.id&&<button onClick={()=>onProxy(account)}>{t('代理')}</button>}{!account.ownership_verified&&user.role==='owner'&&(!account.owner_id||account.bindings.length>0)&&<button onClick={()=>onAssign(account)}>{account.owner_id?t('核实归属'):t('分配归属')}</button>}{account.owner_id===user.id&&<button onClick={()=>onOnboard(account)}><Zap size={12}/>{t('上号')}</button>}{account.bindings.length>0&&(account.owner_id===user.id||user.role==='owner')&&<button onClick={()=>onManage(account)}>{t('平台管理')}</button>}</div>;
+  return <div className="row-actions">{account.owner_id===user.id&&<button onClick={()=>onProxy(account)}>{t('代理')}</button>}{!account.ownership_verified&&user.role==='owner'&&(!account.owner_id||account.bindings.length>0)&&<button onClick={()=>onAssign(account)}>{account.owner_id?t('核实归属'):t('分配归属')}</button>}{account.owner_id===user.id&&<button onClick={()=>onOnboard(account)}><Zap size={12}/>{t('上号')}</button>}{account.bindings.length>0&&(account.owner_id===user.id||user.role==='owner')&&<button onClick={()=>onManage(account)}>{t('平台管理')}</button>}{account.owner_id===user.id&&!account.ownership_verified&&!account.bindings.length&&<button className="danger" onClick={()=>onDelete(account)}><Trash2 size={12}/>{t('删除账号')}</button>}</div>;
 }
