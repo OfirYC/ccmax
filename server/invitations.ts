@@ -92,6 +92,43 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
     });
   });
 
+  const updateRates = async (req: any) => {
+    const target = z.string().uuid().parse((req.params as Row).id);
+    const body = z.object({
+      rates: z.partialRecord(z.enum(PROVIDER_KEYS), z.coerce.number().min(0).max(1).multipleOf(0.0001)).optional(),
+      provider: z.enum(PROVIDER_KEYS).optional(),
+      rate: z.coerce.number().min(0).max(1).multipleOf(0.0001).optional(),
+    }).strict().superRefine((value, ctx) => {
+      if ((!value.rates || Object.keys(value.rates).length === 0) && (!value.provider || value.rate === undefined)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '请至少设置一个平台价格' });
+      }
+      if (value.rates !== undefined && (value.provider || value.rate !== undefined)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '折扣格式无效' });
+      }
+    }).parse(req.body);
+    const changes: Record<string, number> = body.rates ? { ...body.rates } : { [body.provider!]: body.rate! };
+    return db.transaction(async tx => {
+      await lockPricing(tx);
+      const [invite] = await tx.query('SELECT id,revoked_at FROM invitations WHERE id=$1 AND inviter_id=$2 FOR UPDATE', [target, req.user.id]);
+      assert(invite, '邀请链接不存在', 404);
+      assert(!invite.revoked_at, '邀请链接已停用', 409);
+      const existing = await tx.query<{ provider: string; rate: string }>('SELECT provider,rate FROM invitation_rates WHERE invitation_id=$1', [target]);
+      const existingProviders = new Set(existing.map(row => row.provider));
+      assert(Object.keys(changes).every(provider => existingProviders.has(provider)), '邀请链接尚未设置该平台价格', 409);
+      for (const [provider, value] of Object.entries(changes)) {
+        await tx.query('UPDATE invitation_rates SET rate=$3 WHERE invitation_id=$1 AND provider=$2', [target, provider, value]);
+      }
+      await audit(tx, req.user.id, 'invitation.rate.update', target, { rates: changes });
+      const [row] = await tx.query(`SELECT ${fields},token_secret FROM invitations WHERE id=$1`, [target]);
+      const updated = await tx.query<{ provider: string; rate: string }>('SELECT provider,rate FROM invitation_rates WHERE invitation_id=$1', [target]);
+      return { invitation: { ...publicFields(row), url: link(row), rates: Object.fromEntries(updated.map(item => [item.provider, item.rate])) } };
+    });
+  };
+
+  app.put('/api/team/invitations/:id/rates', updateRates);
+  // Keep the resource-style form available to clients that edit the invitation itself.
+  app.patch('/api/team/invitations/:id', updateRates);
+
   app.delete('/api/team/invitations/:id', async req => {
     const target = z.string().uuid().parse((req.params as Row).id);
     await db.transaction(async tx => {

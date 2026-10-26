@@ -32,6 +32,12 @@ test('agents create different priced links and invitees register themselves into
   const standard = await create('标准客户邀请', '0.1234', '1'), partner = await create('合作客户邀请', '0.05', '');
   await expect(standard.row).toContainText('× 0.1234');
   await expect(partner.row).toContainText('× 0.0500');
+  await partner.row.getByRole('button', { name: '编辑折扣' }).click();
+  const editDialog = page.getByRole('dialog', { name: '编辑邀请折扣' });
+  await editDialog.getByLabel('平台 B 结算折扣', { exact: true }).fill('0.4321');
+  await editDialog.getByRole('button', { name: '保存折扣' }).click();
+  await expect(editDialog).toHaveCount(0);
+  await expect(partner.row).toContainText('× 0.4321');
   expect(await section.locator('.table-scroll').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await standard.row.getByRole('button', { name: '复制链接' }).click();
