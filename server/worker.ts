@@ -1,7 +1,7 @@
 import type { DB, Row } from './db.js';
 import { createHash } from 'node:crypto';
 import { ancestry, assert, audit, id, today, type SecretBox } from './core.js';
-import { ingestUsage } from './billing.js';
+import { ingestUsage, recordUsageObservation } from './billing.js';
 import { ProviderClient, UpstreamError, usesAdminOAuth, type ProviderKey, type UpstreamAccount } from './providers.js';
 import { privateAuthorizationUrl } from './platform-privacy.js';
 import { accountProxy } from './proxies.js';
@@ -132,19 +132,37 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         if(typeof client.enrichTelemetry==='function')await client.enrichTelemetry(accounts);
         assert(today()===day,'同步跨越北京时间零点，请重新同步');
         let skippedDaily=0;
+        const billingIssues:{externalId:string;message:string}[]=[];
+        // Inventory, telemetry and snapshots are independent of downstream
+        // pricing. Commit them first so a single missing agent quote cannot
+        // hide every account on an otherwise healthy upstream platform.
         await db.transaction(async tx=>{
           for(const remote of accounts) {
-            const bound=await saveBinding(tx,connection,remote);
-            // Gatelink caches may still contain yesterday's daily counter.
-            // Keep the source snapshot for inspection without booking it today.
-            if(remote.dailyUsd===null || remote.telemetry&&(remote.telemetry.day!==day||!remote.telemetry.sourceAt)) {skippedDaily++;continue;}
-            await ingestUsage(tx,{bindingId:bound.id,day,rawUsd:remote.dailyUsd,final:false,source:'live_snapshot',sourceAt:remote.telemetry?.sourceAt??undefined});
+            await saveBinding(tx,connection,remote);
           }
           await tx.query(`UPDATE bindings SET status='missing' WHERE connection_id=$1 AND NOT(external_id=ANY($2::text[]))`,[connection.id,accounts.map(a=>a.id)]);
-          await tx.query(`UPDATE connections SET status='connected',last_error=NULL,last_sync_at=now() WHERE id=$1`,[connection.id]);
+          await tx.query(`UPDATE connections SET status='connected',last_sync_at=now() WHERE id=$1`,[connection.id]);
           await tx.query(`DELETE FROM telemetry_samples WHERE bucket_at<now()-interval '48 hours'`);
         });
-        result={accounts:accounts.length,skippedDaily};
+        for(const remote of accounts) {
+          // Gatelink caches may still contain yesterday's daily counter.
+          // Keep the source snapshot for inspection without booking it today.
+          if(remote.dailyUsd===null || remote.telemetry&&(remote.telemetry.day!==day||!remote.telemetry.sourceAt)) {skippedDaily++;continue;}
+          const [binding]=await db.query('SELECT id FROM bindings WHERE connection_id=$1 AND external_id=$2',[connection.id,remote.id]);
+          if(!binding) {billingIssues.push({externalId:remote.id,message:'同步后找不到平台账号绑定'});continue;}
+          const usage={bindingId:binding.id,day,rawUsd:remote.dailyUsd,final:false as const,source:'live_snapshot',sourceAt:remote.telemetry?.sourceAt??undefined};
+          try {
+            // Keep the raw observation visible even when attribution cannot be
+            // completed because a member has no contract price yet.
+            await db.transaction(tx=>recordUsageObservation(tx,usage));
+            await db.transaction(tx=>ingestUsage(tx,usage));
+          } catch(error) {
+            billingIssues.push({externalId:remote.id,message:error instanceof Error?error.message:'账单暂未入账'});
+          }
+        }
+        const warning=billingIssues.length?`上游同步成功；${billingIssues.length} 个账号暂未完成计费，请补齐结算折扣后重试` : null;
+        await db.query('UPDATE connections SET status=\'connected\',last_error=$2 WHERE id=$1',[connection.id,warning]);
+        result={accounts:accounts.length,skippedDaily,billingIssues,state:billingIssues.length?'needs_attention':'succeeded'};
       } else if(job.kind==='oauth_start') {
         const [account]=await db.query('SELECT * FROM accounts WHERE id=$1 AND owner_id=$2',[payload.accountId,recovery?.owner_id??actor.id]);
         assert(account,'账号归属不匹配');

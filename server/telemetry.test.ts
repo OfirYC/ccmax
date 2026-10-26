@@ -157,4 +157,22 @@ describe('telemetry ownership, retention and accounting separation',()=>{
     const [usage]=await db.query('SELECT raw_usd,state,day FROM usage_days');expect(usage).toMatchObject({raw_usd:'0.12500000',state:'provisional',day:today()});
     expect((await db.query('SELECT count(*)::int AS count FROM ledger'))[0].count).toBe(0);
   });
+
+  it('keeps platform data visible when an owned account has no downstream price',async()=>{
+    const box=secretBox(encryptionKey),email='missing-price@example.com';
+    await db.query('INSERT INTO accounts(id,owner_id,email,ownership_verified) VALUES($1,$2,$3,true)',[id(),agent,email]);
+    const remote={id:'missing-price',email,name:email,status:'active',dailyUsd:'0.125',cost7d:null,cost30d:null,utilization:null,
+      telemetry:normalizeTelemetry('ai008',{...upstream('missing-price'),email})};
+    const client={login:async()=>{},listAccounts:async()=>[remote]};
+    await enqueue(db,box,owner.id,connection,'sync',{},'missing-downstream-price');
+    await createWorker(db,box,()=>client as any).runOne();
+    const [job]=await db.query('SELECT state,result,error FROM jobs');
+    expect(job.state).toBe('needs_attention');expect(job.error).toBeNull();expect(job.result).toMatchObject({accounts:1,state:'needs_attention'});
+    const [binding]=await db.query('SELECT id FROM bindings WHERE external_id=$1',[remote.id]);
+    expect(binding).toBeTruthy();expect(await db.query('SELECT binding_id FROM binding_telemetry WHERE binding_id=$1',[binding.id])).toHaveLength(1);
+    expect((await db.query('SELECT raw_usd,state FROM usage_days WHERE binding_id=$1',[binding.id]))[0]).toEqual({raw_usd:'0.12500000',state:'provisional'});
+    expect(await db.query('SELECT * FROM earnings')).toHaveLength(0);
+    const [connectionRow]=await db.query('SELECT status,last_error FROM connections WHERE id=$1',[connection]);
+    expect(connectionRow.status).toBe('connected');expect(connectionRow.last_error).toContain('暂未完成计费');
+  });
 });

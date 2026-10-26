@@ -6,6 +6,40 @@ import { invoiceItems, invoicePreviewToken } from './invoice-preview.js';
 
 export type UsageInput = { bindingId: string; day: string; rawUsd: string; final: boolean; source: string; evidence?: string; sourceAt?: string };
 
+/**
+ * Persist a provisional usage observation before attribution is attempted.
+ *
+ * Operational syncs must keep showing upstream data even when a downstream
+ * agent has not configured a price yet. The observation is deliberately kept
+ * provisional and has no earnings until ingestUsage can resolve every price
+ * in the ownership chain. A later sync (or an explicit price change) can run
+ * ingestUsage again and allocate the same row without changing its root rate.
+ */
+export async function recordUsageObservation(tx: DB, input: UsageInput) {
+  const observed = new Decimal(input.rawUsd);
+  assert(observed.isFinite() && observed.gte(0) && observed.lte(MAX_USD), '用量金额超出范围');
+  const raw = new Decimal(usd(observed));
+  assert(input.day <= today(), '不能导入未来用量');
+  const [binding] = await tx.query(`SELECT b.*,c.id AS connection_id FROM bindings b
+    JOIN connections c ON c.id=b.connection_id WHERE b.id=$1 FOR UPDATE OF b`, [input.bindingId]);
+  assert(binding, '找不到平台账号', 404);
+  const [connectionRate] = await tx.query(`SELECT rate FROM connection_rates
+    WHERE connection_id=$1 AND effective_date<=$2 ORDER BY effective_date DESC LIMIT 1`, [binding.connection_id, input.day]);
+  assert(connectionRate, '该平台在所选日期没有已备案的结算折扣，无法安全入账');
+  const [existing] = await tx.query('SELECT * FROM usage_days WHERE binding_id=$1 AND day=$2 FOR UPDATE', [input.bindingId, input.day]);
+  if (existing?.state === 'final') {
+    assert(new Decimal(existing.raw_usd).eq(raw), '该账号此日用量已封账；金额冲突，请对账处理', 409);
+    return existing.id;
+  }
+  const usageId = existing?.id ?? id();
+  await tx.query(`INSERT INTO usage_days(id,binding_id,day,raw_usd,state,source,evidence,root_rate,source_at)
+    VALUES($1,$2,$3,$4,'provisional',$5,$6,$7,$8)
+    ON CONFLICT(binding_id,day) DO UPDATE SET raw_usd=EXCLUDED.raw_usd,source=EXCLUDED.source,
+    evidence=EXCLUDED.evidence,source_at=EXCLUDED.source_at,updated_at=now()`,
+    [usageId, input.bindingId, input.day, usd(raw), input.source, input.evidence ?? null, connectionRate.rate, input.sourceAt ?? null]);
+  return usageId;
+}
+
 // Daily source values replace provisional observations; they are NEVER added to
 // each other. A finalized account/day is immutable and has exactly one charge.
 export async function ingestUsage(tx: DB, input: UsageInput) {
