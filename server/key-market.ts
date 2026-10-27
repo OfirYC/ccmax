@@ -117,10 +117,37 @@ function connectionClient(box: SecretBox, connection: Row): MarketClient {
 async function persistKeyManSession(db: DB, box: SecretBox, connection: Row, client: MarketClient) {
   if (!isKeyMan(connection)) return;
   const credentials = (client as KeyManClient).sessionCredentials();
-  await db.query('UPDATE new_api_connections SET credentials=$2 WHERE id=$1', [connection.id, box.encrypt(credentials)]);
+  await db.query('UPDATE new_api_connections SET credentials=$2 WHERE id=$1', [connection.connection_id || connection.id, box.encrypt(credentials)]);
 }
 
 function isKeyMan(connection: Row | undefined) { return (connection?.adapter_type || 'standard_new_api') === 'keyman_newapi'; }
+
+function assertConnected(connection: Row) {
+  assert(connection.status === 'connected', '平台连接未验证或已停用，请先在设置中编辑并验证连接', 409);
+}
+
+async function connectionGateways(db: DB, box: SecretBox, connection: Row) {
+  assertConnected(connection);
+  if (!isKeyMan(connection)) return [];
+  try {
+    const client = connectionClient(box, connection) as KeyManClient;
+    await client.authenticate();
+    const gateways = await client.listGateways();
+    await persistKeyManSession(db, box, connection, client);
+    return gateways;
+  } catch (error) {
+    await db.query("UPDATE new_api_connections SET status='error',last_error=$2 WHERE id=$1", [connection.id, error instanceof Error ? error.message : '网关加载失败']);
+    throw error;
+  }
+}
+
+async function assertTaskConnection(db: DB, box: SecretBox, connection: Row, gatewayId?: string | null) {
+  assertConnected(connection);
+  if (!isKeyMan(connection)) return;
+  assert(gatewayId, 'KeyMan 任务必须选择网关', 400);
+  const gateways = await connectionGateways(db, box, connection);
+  assert(gateways.some(gateway => gateway.id === gatewayId), '所选 KeyMan 网关不可用，请重新加载并选择网关', 409);
+}
 
 function parseJsonText(value: unknown, label: string, fallback: any = {}) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -159,9 +186,10 @@ async function taskSummary(db: DB, task: Row, user: Row) {
 }
 
 export async function syncKeyTask(db: DB, box: SecretBox, taskId: string) {
-  const [task] = await db.query(`SELECT t.*,c.base_url,c.credentials,c.adapter_type,c.tenant_id,c.quota_per_unit AS connection_quota,c.id AS connection_id FROM key_tasks t
+  const [task] = await db.query(`SELECT t.*,c.base_url,c.credentials,c.adapter_type,c.tenant_id,c.status AS connection_status,c.quota_per_unit AS connection_quota,c.id AS connection_id FROM key_tasks t
     JOIN new_api_connections c ON c.id=t.new_api_connection_id WHERE t.id=$1 AND t.state IN ('published','paused')`, [taskId]);
   assert(task, 'Key 任务不存在或未发布', 404);
+  assert(task.connection_status !== 'disabled', '平台连接已停用，请先验证并启用连接', 409);
   const client = connectionClient(box, task);
   let status: { quotaPerUnit: number; raw: any }, remoteChannels: Awaited<ReturnType<NewApiClient['listChannels']>>;
   try {
@@ -261,7 +289,7 @@ export async function syncKeyTask(db: DB, box: SecretBox, taskId: string) {
 }
 
 export async function syncPublishedKeyTasks(db: DB, box: SecretBox) {
-  const tasks = await db.query("SELECT id FROM key_tasks WHERE state IN ('published','paused') ORDER BY created_at");
+  const tasks = await db.query("SELECT t.id FROM key_tasks t JOIN new_api_connections c ON c.id=t.new_api_connection_id WHERE t.state IN ('published','paused') AND c.status<>'disabled' ORDER BY t.created_at");
   const results = [];
   for (const task of tasks) {
     try { results.push(await syncKeyTask(db, box, task.id)); }
@@ -280,16 +308,12 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
   app.get('/api/new-api-connections', async req => {
     const { workspace } = await assertMember(db, req.user);
     const rows = (await db.query('SELECT * FROM new_api_connections WHERE workspace_id=$1 ORDER BY created_at DESC', [workspace.id])).map(normalizeConnection);
-    return { connections: req.user.role === 'owner' ? rows : rows.map(({ id, name, status, quota_per_unit, last_sync_at, last_error }) => ({ id, name, status, quota_per_unit, last_sync_at, last_error })) };
+    return { connections: req.user.role === 'owner' ? rows : rows.map(({ id, name, status, adapter_type, quota_per_unit, last_sync_at, last_error }) => ({ id, name, status, adapter_type, quota_per_unit, last_sync_at, last_error })) };
   });
   app.get('/api/new-api-connections/:id/gateways', async req => {
-    const { workspace } = await assertMember(db, req.user);
+    await requireOwner(req.user); const { workspace } = await assertMember(db, req.user);
     const connection = await getConnection(db, identifier.parse((req.params as Row).id), workspace.id);
-    const client = connectionClient(box, connection);
-    await client.authenticate();
-    await persistKeyManSession(db, box, connection, client);
-    if (!isKeyMan(connection)) return { gateways: [] };
-    return { gateways: await (client as KeyManClient).listGateways() };
+    return { gateways: await connectionGateways(db, box, connection) };
   });
   app.post('/api/new-api-connections', async req => {
     await requireOwner(req.user); const { workspace } = await assertMember(db, req.user);
@@ -321,8 +345,8 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
       ? (client as KeyManClient).sessionCredentials()
       : credentials;
     const connectionStatus = verificationError ? 'error' : 'connected';
-    const [connection] = await db.query(`INSERT INTO new_api_connections(id,workspace_id,name,base_url,auth_type,credentials,adapter_type,tenant_id,status,quota_per_unit,last_error,created_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    const [connection] = await db.query(`INSERT INTO new_api_connections(id,workspace_id,name,base_url,auth_type,credentials,adapter_type,tenant_id,status,quota_per_unit,last_error,created_by,last_sync_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $9='connected' THEN now() ELSE NULL END)
       ON CONFLICT(workspace_id,base_url) DO UPDATE SET name=EXCLUDED.name,auth_type=EXCLUDED.auth_type,credentials=EXCLUDED.credentials,
         adapter_type=EXCLUDED.adapter_type,tenant_id=EXCLUDED.tenant_id,status=EXCLUDED.status,quota_per_unit=EXCLUDED.quota_per_unit,
         last_sync_at=CASE WHEN EXCLUDED.status='connected' THEN now() ELSE NULL END,last_error=EXCLUDED.last_error,created_by=EXCLUDED.created_by RETURNING *`, [connectionId, workspace.id, body.name, baseUrl, body.authType, box.encrypt(storedCredentials), body.adapterType, body.tenantId, connectionStatus, status?.quotaPerUnit ?? body.quotaPerUnit ?? null, verificationError, req.user.id]);
@@ -348,27 +372,47 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
     const connection = await getConnection(db, identifier.parse((req.params as Row).id), workspace.id);
     const body = z.object({ name: z.string().trim().min(1).max(100).optional(), baseUrl: z.string().url().max(500).optional(), authType: authType.optional(), adapterType: adapterType.optional(), tenantId: z.string().regex(/^\d+$/).optional(), quotaPerUnit: z.coerce.number().positive().optional(), captchaVerification: z.string().max(2000).optional(), username: z.string().max(200).optional(), password: z.string().max(500).optional(), accessToken: z.string().max(500).optional(), status: z.enum(['connected', 'disabled']).optional() }).strict().parse(req.body);
     assert(Object.keys(body).length > 0, '请至少填写一项修改内容', 400);
-    const nextBaseUrl = body.baseUrl?.trim().replace(/\/+$/, '') || connection.base_url;
+    let nextBaseUrl = body.baseUrl?.trim().replace(/\/+$/, '') || connection.base_url;
     let credentials: NewApiCredentials | KeyManCredentials = isKeyMan(connection) ? decryptKeyManCredentials(box, connection.credentials) : decryptNewApiCredentials(box, connection.credentials);
     const nextAuth = body.authType || connection.auth_type;
     const nextAdapter = body.adapterType || connection.adapter_type || 'standard_new_api';
     const nextTenant = body.tenantId || connection.tenant_id || '1';
+    if (nextAdapter !== connection.adapter_type) {
+      const [linked] = await db.query('SELECT id FROM key_tasks WHERE new_api_connection_id=$1 LIMIT 1', [connection.id]);
+      assert(!linked, '连接已有任务，不能更换任务模板，请新增连接', 409);
+    }
     if (body.authType || body.username !== undefined || body.password !== undefined || body.accessToken !== undefined || body.captchaVerification !== undefined) {
       credentials = nextAdapter === 'keyman_newapi'
         ? parseKeyManCredentials({ ...body, authType: nextAuth, tenantId: nextTenant, username: body.username ?? (credentials.kind === 'password' ? credentials.username : undefined), password: body.password ?? (credentials.kind === 'password' ? credentials.password : undefined), accessToken: body.accessToken ?? (credentials.kind === 'access_token' ? credentials.token : undefined), captchaVerification: body.captchaVerification ?? (credentials.kind === 'password' && 'captchaVerification' in credentials ? credentials.captchaVerification : undefined) }, nextTenant)
         : parseCredentials({ ...body, authType: nextAuth, username: body.username ?? (credentials.kind === 'password' ? credentials.username : undefined), password: body.password ?? (credentials.kind === 'password' ? credentials.password : undefined), accessToken: body.accessToken ?? (credentials.kind === 'access_token' ? credentials.token : undefined) });
     }
     let nextStatus = body.status || connection.status, quota = body.quotaPerUnit ?? connection.quota_per_unit;
-    if (body.baseUrl || body.authType || body.adapterType || body.tenantId || body.username !== undefined || body.password !== undefined || body.accessToken !== undefined || body.captchaVerification !== undefined || body.quotaPerUnit !== undefined) {
-      const client = nextAdapter === 'keyman_newapi' ? new KeyManClient(nextBaseUrl, credentials as KeyManCredentials) : new NewApiClient(nextBaseUrl, credentials as NewApiCredentials);
-      await client.authenticate();
-      const current = nextAdapter === 'keyman_newapi' ? await (client as KeyManClient).status(quota ? Number(quota) : undefined) : await (client as NewApiClient).status();
-      if (nextAdapter === 'keyman_newapi') credentials = (client as KeyManClient).sessionCredentials();
-      quota = current.quotaPerUnit; nextStatus = 'connected';
+    let verificationError: string | null = null;
+    const verify = body.status === 'connected' || body.baseUrl !== undefined || body.authType !== undefined || body.adapterType !== undefined || body.tenantId !== undefined || body.username !== undefined || body.password !== undefined || body.accessToken !== undefined || body.captchaVerification !== undefined || body.quotaPerUnit !== undefined;
+    if (verify) {
+      const client = nextAdapter === 'keyman_newapi' ? new KeyManClient(nextBaseUrl, { ...credentials, tenantId: nextTenant } as KeyManCredentials) : new NewApiClient(nextBaseUrl, credentials as NewApiCredentials);
+      nextBaseUrl = client.baseUrl;
+      const [duplicate] = await db.query('SELECT id FROM new_api_connections WHERE workspace_id=$1 AND base_url=$2 AND id<>$3', [workspace.id, nextBaseUrl, connection.id]);
+      assert(!duplicate, '该平台地址已有连接，请编辑已有连接', 409);
+      try {
+        await client.authenticate();
+        // Persist a successful login even when quota validation needs repair,
+        // so a consumed captcha is never required again for the same session.
+        if (nextAdapter === 'keyman_newapi') credentials = (client as KeyManClient).sessionCredentials();
+        const current = nextAdapter === 'keyman_newapi' ? await (client as KeyManClient).status(quota ? Number(quota) : undefined) : await (client as NewApiClient).status();
+        if (nextAdapter === 'keyman_newapi') credentials = (client as KeyManClient).sessionCredentials();
+        quota = current.quotaPerUnit; nextStatus = body.status === 'disabled' ? 'disabled' : 'connected';
+      } catch (error) {
+        if (nextAdapter !== 'keyman_newapi') throw error;
+        verificationError = error instanceof Error ? error.message : '连接验证失败';
+        nextStatus = 'error';
+      }
     }
-    const [updated] = await db.query(`UPDATE new_api_connections SET name=COALESCE($2,name),base_url=$3,auth_type=$4,credentials=$5,adapter_type=$6,tenant_id=$7,status=$8,quota_per_unit=$9,last_error=NULL WHERE id=$1 RETURNING *`, [connection.id, body.name ?? null, nextBaseUrl, nextAuth, box.encrypt(credentials), nextAdapter, nextTenant, nextStatus, quota]);
+    const [updated] = await db.query(`UPDATE new_api_connections SET name=COALESCE($2,name),base_url=$3,auth_type=$4,credentials=$5,adapter_type=$6,tenant_id=$7,status=$8,quota_per_unit=$9,
+      last_error=CASE WHEN $10 THEN $11 ELSE last_error END,
+      last_sync_at=CASE WHEN $10 AND $11::text IS NULL THEN now() ELSE last_sync_at END WHERE id=$1 RETURNING *`, [connection.id, body.name ?? null, nextBaseUrl, nextAuth, box.encrypt(credentials), nextAdapter, nextTenant, nextStatus, quota, verify, verificationError]);
     await audit(db, req.user.id, 'key.new_api_connection.update', connection.id, { name: body.name, baseUrl: nextBaseUrl, authType: nextAuth, adapterType: nextAdapter, status: nextStatus });
-    return { connection: normalizeConnection(updated) };
+    return { connection: normalizeConnection(updated), ...(verify ? { verified: !verificationError, warning: verificationError } : {}) };
   });
 
   app.get('/api/key-tasks', async req => {
@@ -382,7 +426,7 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
     const connection = await getConnection(db, body.connectionId, workspace.id);
     const selectedTemplate = body.templateType || connection.adapter_type || 'standard_new_api';
     assert(selectedTemplate === (connection.adapter_type || 'standard_new_api'), '任务模板与连接适配器不匹配', 409);
-    if (selectedTemplate === 'keyman_newapi') assert(body.gatewayId, 'KeyMan 任务必须选择网关', 400);
+    await assertTaskConnection(db, box, connection, body.gatewayId);
     const taskId = id(); const [task] = await db.query(`INSERT INTO key_tasks(id,workspace_id,new_api_connection_id,name,resource_type,provider,models,description,root_rate,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [taskId, workspace.id, body.connectionId, body.name, body.resourceType, body.provider, body.models, body.description, body.rootRate, req.user.id]);
     await db.query('UPDATE key_tasks SET template_type=$2,gateway_id=$3,template_config=$4 WHERE id=$1', [taskId, selectedTemplate, body.gatewayId ?? null, JSON.stringify(body.templateConfig)]);
@@ -393,6 +437,11 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
     await requireOwner(req.user); const { workspace } = await assertMember(db, req.user); const task = await getTask(db, identifier.parse((req.params as Row).id), workspace.id);
     const body = z.object({ state: taskState.optional(), name: z.string().trim().min(1).max(120).optional(), description: z.string().max(2000).optional(), rootRate: rate.optional() }).strict().parse(req.body);
     const next = body.state ?? task.state;
+    assert(task.state !== 'closed' || next === 'closed', '已关闭任务不能重新发布，请创建新任务', 409);
+    if (next === 'published' && task.state !== 'published') {
+      const connection = await getConnection(db, task.new_api_connection_id, workspace.id);
+      await assertTaskConnection(db, box, connection, task.gateway_id);
+    }
     assert(body.rootRate === undefined || task.state === 'draft', '任务发布后管理员价格按任务价格记录冻结', 409);
     if (next === 'closed' && task.state !== 'closed' && ['published', 'paused'].includes(task.state)) await syncKeyTask(db, box, task.id);
     const [updated] = await db.query(`UPDATE key_tasks SET state=$2,name=COALESCE($3,name),description=COALESCE($4,description),root_rate=COALESCE($5,root_rate),
@@ -461,7 +510,9 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
     const submitted = [body.secret, ...(body.secrets || []), ...(body.keys || [])].filter((value): value is string => !!value);
     assert(submitted.length > 0, '请至少填写一个 API Key', 400);
     assert(submitted.length <= 100, '单次最多提交 100 个 API Key', 400);
-    const connection = await getConnection(db, task.new_api_connection_id, workspace.id); const client = connectionClient(box, connection);
+    const connection = await getConnection(db, task.new_api_connection_id, workspace.id);
+    assertConnected(connection);
+    const client = connectionClient(box, connection);
     await client.authenticate();
     await persistKeyManSession(db, box, connection, client);
     const keyman = isKeyMan(connection);

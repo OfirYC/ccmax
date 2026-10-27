@@ -45,14 +45,73 @@ function KeyTasks() {
   useLocale();
   const { user } = useSession(); const toast = useToast();
   const { data, error, loading, refresh } = useData<{ tasks: RecordData[] }>('/api/key-tasks', 15000);
-  const { data: connections } = useData<{ connections: RecordData[] }>('/api/new-api-connections');
   const [modal, setModal] = useState<RecordData | null>(null);
   const owner = user.role === 'owner'; const tasks = data?.tasks || [];
   async function changeState(task: RecordData) { const state = task.state === 'published' ? 'paused' : task.state === 'paused' ? 'published' : 'published'; try { await mutate(`/api/key-tasks/${task.id}`, 'PATCH', { state }); toast(state === 'published' ? '任务已发布' : '任务已暂停'); await refresh(); } catch (e) { toast((e as Error).message, 'error'); } }
-  return <><PageHead eyebrow="Key Supply" title="我的任务" description="查看供货需求、完成履约，并管理任务价格和发布状态。" actions={owner ? <button className="button primary" onClick={() => setModal({ type: 'create-task' })}><Plus size={16} />创建任务</button> : undefined} /><ErrorBox error={error} />{loading ? <Loading /> : tasks.length ? <section className="panel"><div className="panel-head"><div><h2>供货任务 <span>{tasks.length}</span></h2><p>按任务绑定的 New API 连接同步额度，收益同步后自动进入统一钱包。</p></div><button className="button" onClick={() => refresh()}><RefreshCw size={14} />刷新</button></div><Table headers={['ID / 任务', '站点 / 资源', '模型', '总额度', '已结算', '渠道数', '状态', '操作']}>{tasks.map(task => <tr key={task.id}><td><strong className="mono">{task.id.slice(0, 12)}</strong><small>{task.name}</small></td><td><strong>{task.site || 'New API'}</strong><small>{task.provider} · {task.resource_type}</small></td><td><span className="key-models">{(task.models || []).slice(0, 4).join('、')}</span></td><td className="amount-cell"><Amount value={task.used_usd} /></td><td className="amount-cell"><Amount value={task.profit_usd} tone="profit" /></td><td>{task.channels || 0}</td><td><Badge state={task.state} />{task.rate === null && <small className="warning-text">未定价</small>}</td><td><div className="row-actions">{task.state === 'published' && task.rate !== null && <button onClick={() => setModal({ type: 'submit-key', task })}>提交 Key</button>}{owner && task.state !== 'closed' && <button onClick={() => changeState(task)}>{task.state === 'published' ? '暂停' : '发布'}</button>}{owner && <button onClick={() => setModal({ type: 'rate', task })}>任务价格</button>}</div></td></tr>)}</Table></section> : <Empty title="暂无任务" detail={owner ? '创建一个 New API 任务并发布给供货成员。' : '等待管理员发布并为你配置价格的任务。'} />}{modal?.type === 'create-task' && <CreateTaskModal connections={connections?.connections || []} onClose={() => setModal(null)} onDone={async () => { setModal(null); await refresh(); }} />}{modal?.type === 'submit-key' && <SubmitKeyModal task={modal.task} onClose={() => setModal(null)} onDone={async () => { setModal(null); await refresh(); }} />}{modal?.type === 'rate' && <RateModal task={modal.task} onClose={() => setModal(null)} />}</>;
+  return <><PageHead eyebrow="Key Supply" title="我的任务" description="查看供货需求、完成履约，并管理任务价格和发布状态。" actions={owner ? <button className="button primary" onClick={() => setModal({ type: 'create-task' })}><Plus size={16} />创建任务</button> : undefined} /><ErrorBox error={error} />{loading ? <Loading /> : tasks.length ? <section className="panel"><div className="panel-head"><div><h2>供货任务 <span>{tasks.length}</span></h2><p>按任务绑定的 New API 连接同步额度，收益同步后自动进入统一钱包。</p></div><button className="button" onClick={() => refresh()}><RefreshCw size={14} />刷新</button></div><Table headers={['ID / 任务', '站点 / 资源', '模型', '总额度', '已结算', '渠道数', '状态', '操作']}>{tasks.map(task => <tr key={task.id}><td><strong className="mono">{task.id.slice(0, 12)}</strong><small>{task.name}</small></td><td><strong>{task.site || 'New API'}</strong><small>{task.provider} · {task.resource_type}</small></td><td><span className="key-models">{(task.models || []).slice(0, 4).join('、')}</span></td><td className="amount-cell"><Amount value={task.used_usd} /></td><td className="amount-cell"><Amount value={task.profit_usd} tone="profit" /></td><td>{task.channels || 0}</td><td><Badge state={task.state} />{task.rate === null && <small className="warning-text">未定价</small>}</td><td><div className="row-actions">{task.state === 'published' && task.rate !== null && <button onClick={() => setModal({ type: 'submit-key', task })}>提交 Key</button>}{owner && task.state !== 'closed' && <button onClick={() => changeState(task)}>{task.state === 'published' ? '暂停' : '发布'}</button>}{owner && <button onClick={() => setModal({ type: 'rate', task })}>任务价格</button>}</div></td></tr>)}</Table></section> : <Empty title="暂无任务" detail={owner ? '创建一个 New API 任务并发布给供货成员。' : '等待管理员发布并为你配置价格的任务。'} />}{modal?.type === 'create-task' && <CreateTaskModal onClose={() => setModal(null)} onDone={async () => { setModal(null); await refresh(); }} />}{modal?.type === 'submit-key' && <SubmitKeyModal task={modal.task} onClose={() => setModal(null)} onDone={async () => { setModal(null); await refresh(); }} />}{modal?.type === 'rate' && <RateModal task={modal.task} onClose={() => setModal(null)} />}</>;
 }
 
-function CreateTaskModal({ connections, onClose, onDone }: { connections: RecordData[]; onClose: () => void; onDone: () => Promise<void> }) { const toast = useToast(); const [selected, setSelected] = useState<RecordData | null>(null); const [gateways, setGateways] = useState<RecordData[]>([]); const [gatewayId, setGatewayId] = useState(''); useEffect(() => { setGateways([]); setGatewayId(''); if (!selected || selected.adapter_type !== 'keyman_newapi') return; void api<{ gateways: RecordData[] }>(`/api/new-api-connections/${selected.id}/gateways`).then(result => { setGateways(result.gateways || []); setGatewayId(result.gateways?.[0]?.id || ''); }).catch(() => setGateways([])); }, [selected]); return <Modal title="创建 Key 任务" subtitle="选择平台模板；KeyMan 的网关渠道表单会作为供货成员的提交表单" onClose={onClose}><Form onSubmit={async f => { const connection = connections.find(c => c.id === f.get('connectionId')); await post('/api/key-tasks', { connectionId: f.get('connectionId'), templateType: connection?.adapter_type || 'standard_new_api', gatewayId: gatewayId || undefined, name: f.get('name'), resourceType: f.get('resourceType'), provider: f.get('provider'), models: String(f.get('models') || '').split(/[,，\n]/).map(v => v.trim()).filter(Boolean), rootRate: Number(f.get('rootRate') || 1) }); toast('任务已创建'); await onDone(); }}><Field label="任务名称"><input name="name" required maxLength={120} placeholder="Anthropic 新任务" /></Field><div className="form-grid"><Field label="平台 / 任务模板"><select name="connectionId" required defaultValue="" onChange={e => setSelected(connections.find(c => c.id === e.target.value) || null)}><option value="" disabled>选择平台连接</option>{connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.adapter_type === 'keyman_newapi' ? 'KeyMan 定制' : '标准 New API'}</option>)}</select></Field><Field label="资源类型"><input name="resourceType" required defaultValue="Anthropic" /></Field><Field label="供应商"><input name="provider" required defaultValue="Anthropic" /></Field><Field label="管理员折扣"><input name="rootRate" type="number" min="0" max="1" step="0.0001" defaultValue="1" /></Field></div>{selected?.adapter_type === 'keyman_newapi' && <Field label="KeyMan 网关"><select required value={gatewayId} onChange={e => setGatewayId(e.target.value)}><option value="" disabled>{gateways.length ? '选择网关' : '正在加载网关…'}</option>{gateways.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>}<Field label="模型（可换行或逗号分隔）"><textarea name="models" required rows={3} placeholder="claude-opus-5-5, claude-opus-5" /></Field><div className="modal-actions"><Submit>创建任务</Submit></div></Form></Modal>; }
+function CreateTaskModal({ onClose, onDone }: { onClose: () => void; onDone: () => Promise<void> }) {
+  const toast = useToast();
+  const { data, error, loading, refresh } = useData<{ connections: RecordData[] }>('/api/new-api-connections', 15000);
+  const connections = data?.connections || [];
+  const [connectionId, setConnectionId] = useState('');
+  const selected = connections.find(connection => connection.id === connectionId);
+  const keyman = selected?.adapter_type === 'keyman_newapi';
+  const [gateways, setGateways] = useState<RecordData[]>([]);
+  const [gatewayId, setGatewayId] = useState('');
+  const [gatewayError, setGatewayError] = useState('');
+  const [gatewayLoading, setGatewayLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setGateways([]); setGatewayId(''); setGatewayError(''); setGatewayLoading(false);
+    if (!keyman || selected?.status !== 'connected') return;
+    setGatewayLoading(true);
+    void api<{ gateways: RecordData[] }>(`/api/new-api-connections/${connectionId}/gateways`).then(result => {
+      if (!active) return;
+      setGateways(result.gateways || []);
+      setGatewayId(String(result.gateways?.[0]?.id || ''));
+      if (!result.gateways?.length) setGatewayError('此连接没有可用网关，请先在 KeyMan 平台配置网关。');
+    }).catch(error => { if (active) setGatewayError((error as Error).message); })
+      .finally(() => { if (active) setGatewayLoading(false); });
+    return () => { active = false; };
+  }, [connectionId, keyman, selected?.status, attempt]);
+  const ready = selected?.status === 'connected' && (!keyman || (!gatewayLoading && !gatewayError && !!gatewayId));
+  return <Modal title="创建 Key 任务" subtitle="选择平台模板；KeyMan 的网关渠道表单会作为供货成员的提交表单" onClose={onClose}>
+    <ErrorBox error={error} />
+    {loading ? <Loading /> : <>
+      {!connections.some(connection => connection.status === 'connected') && <div className="notice">请先<Link to="/key/settings">配置并验证平台连接</Link>，验证通过后才能创建和发布任务。</div>}
+      <Form onSubmit={async f => {
+        if (!ready || !selected) throw new Error('请先验证平台连接并选择可用网关');
+        await post('/api/key-tasks', { connectionId, templateType: selected.adapter_type || 'standard_new_api', gatewayId: keyman ? gatewayId : undefined, name: f.get('name'), resourceType: f.get('resourceType'), provider: f.get('provider'), models: String(f.get('models') || '').split(/[,，\n]/).map(v => v.trim()).filter(Boolean), rootRate: Number(f.get('rootRate') || 1) });
+        toast('任务已创建'); await onDone();
+      }}>
+        <Field label="任务名称"><input name="name" required maxLength={120} placeholder="Anthropic 新任务" /></Field>
+        <div className="form-grid">
+          <Field label="平台 / 任务模板"><select name="connectionId" required value={connectionId} onChange={e => setConnectionId(e.target.value)}>
+            <option value="" disabled>选择已验证的平台连接</option>
+            {connections.map(connection => <option key={connection.id} value={connection.id} disabled={connection.status !== 'connected'}>{connection.name} · {connection.adapter_type === 'keyman_newapi' ? 'KeyMan 定制' : '标准 New API'}{connection.status !== 'connected' ? ' · 未验证或已停用' : ''}</option>)}
+          </select></Field>
+          <Field label="资源类型"><input name="resourceType" required defaultValue="Anthropic" /></Field>
+          <Field label="供应商"><input name="provider" required defaultValue="Anthropic" /></Field>
+          <Field label="管理员折扣"><input name="rootRate" type="number" min="0" max="1" step="0.0001" defaultValue="1" /></Field>
+        </div>
+        {selected && selected.status !== 'connected' && <ErrorBox error="平台连接未验证或已停用，请先在设置中编辑并验证连接" />}
+        {keyman && <>
+          <Field label="KeyMan 网关"><select required value={gatewayId} disabled={gatewayLoading || !gateways.length} onChange={e => setGatewayId(e.target.value)}>
+            <option value="" disabled>{gatewayLoading ? '正在加载网关…' : '选择可用网关'}</option>
+            {gateways.map(gateway => <option key={gateway.id} value={gateway.id}>{gateway.name}</option>)}
+          </select></Field>
+          <ErrorBox error={gatewayError} />
+          <button type="button" className="button" disabled={gatewayLoading} onClick={async () => { await refresh(); setAttempt(value => value + 1); }}><RefreshCw size={14} />重新加载网关</button>
+        </>}
+        <Field label="模型（可换行或逗号分隔）"><textarea name="models" required rows={3} placeholder="claude-opus-5-5, claude-opus-5" /></Field>
+        <div className="modal-actions"><button type="submit" className="button primary" disabled={!ready}>创建任务</button></div>
+      </Form>
+    </>}
+  </Modal>;
+}
 
 function SubmitKeyModal({ task, onClose, onDone }: { task: RecordData; onClose: () => void; onDone: () => Promise<void> }) { const toast = useToast(); const keyman = task.template_type === 'keyman_newapi'; const [modelText, setModelText] = useState((task.models || []).join(', ')); const [secretText, setSecretText] = useState(''); async function fetchModels() { try { const first = secretText.split(/\n/).map((v: string) => v.trim()).find(Boolean); if (!first) throw new Error('请先填写一个密钥'); const result = await post<{ models: string[] }>(`/api/key-tasks/${task.id}/models`, { secret: first, channelType: 1 }); setModelText((result.models || []).join(', ')); toast(`已从上游拉取 ${result.models?.length || 0} 个模型`); } catch (e) { toast((e as Error).message, 'error'); } } return <Modal title={keyman ? '提交 KeyMan 渠道' : '提交上游 Key'} subtitle={`${task.name} · 密钥仅服务端加密保存，前端始终显示掩码`} wide onClose={onClose}><Form onSubmit={async f => { const models = modelText.split(/[,，\n]/).map((v: string) => v.trim()).filter(Boolean); const secrets = secretText.split(/\n/).map((v: string) => v.trim()).filter(Boolean); let modelMapping: Record<string, string> = {}; const mapping = String(f.get('modelMapping') || '').trim(); if (mapping) { try { modelMapping = JSON.parse(mapping); } catch { throw new Error('模型重定向必须是合法 JSON'); } } const payload: RecordData = { name: f.get('name'), site: f.get('site'), models, idempotencyKey: key(), ...(keyman ? { secrets, channelType: Number(f.get('channelType') || 1), baseUrl: f.get('baseUrl'), groups: String(f.get('groups') || 'default').split(/[,，\n]/).map((v: string) => v.trim()).filter(Boolean), modelMapping, openaiOrganization: f.get('openaiOrganization'), testModel: f.get('testModel'), remark: f.get('remark'), socks5ProxyLevel: f.get('socks5ProxyLevel') || 'medium', autoBan: f.get('autoBan') !== 'false', settings: f.get('settings') || '', setting: f.get('setting') || '', paramOverride: f.get('paramOverride') || '', other: f.get('other') || '', statusCodeMapping: f.get('statusCodeMapping') || '' } : { secret: f.get('secret') }) }; await post(`/api/key-tasks/${task.id}/channels`, payload); toast(keyman && secrets.length > 1 ? `已提交 ${secrets.length} 个渠道` : 'Key 已加密保存并创建渠道'); await onDone(); }}>
       {keyman ? <><div className="form-grid"><Field label="类型"><select name="channelType" defaultValue="1"><option value="1">OpenAI</option><option value="14">Anthropic Claude</option><option value="24">Google Gemini</option><option value="3">Azure OpenAI</option><option value="8">自定义渠道</option></select></Field><Field label="渠道名称"><input name="name" placeholder={`${task.name} · 我的渠道`} /></Field></div><Field label="密钥（批量添加，每行一个）" hint="每个 Key 会在 KeyMan 中创建独立渠道，指纹用于防止重复提交。"><textarea name="secrets" required minLength={8} rows={5} value={secretText} onChange={e => setSecretText(e.target.value)} placeholder="sk-...\nsk-..." /></Field><div className="form-grid"><Field label="组织"><input name="openaiOrganization" placeholder="可选" /></Field><Field label="API 地址"><input name="baseUrl" placeholder="https://api.openai.com/v1" /></Field></div><Field label="模型（选择或输入，回车添加）"><textarea name="models" required rows={3} value={modelText} onChange={e => setModelText(e.target.value)} placeholder={(task.models || []).join(', ')} /><div className="form-actions"><button type="button" className="text-button" onClick={() => setModelText((task.models || []).join(', '))}>填入该类型常用模型</button><button type="button" className="text-button" onClick={() => setModelText('')}>清除所有模型</button><button type="button" className="text-button" onClick={() => void fetchModels()}>从上游拉取模型</button></div></Field><div className="form-grid"><Field label="分组"><input name="groups" defaultValue="default" /></Field><Field label="模型重定向" hint={'JSON，例如 {"gpt-4":"gpt-4o"}'}><input name="modelMapping" placeholder="{}" /></Field></div><details className="advanced-panel"><summary>高级设置（代理 / 测试模型 / 备注 / 参数覆盖等，透传网关）</summary><div className="form-grid"><Field label="代理等级"><select name="socks5ProxyLevel" defaultValue="medium"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></Field><Field label="测试模型"><input name="testModel" placeholder="可选" /></Field><Field label="备注"><input name="remark" placeholder="可选" /></Field></div><Field label="参数覆盖"><textarea name="paramOverride" rows={2} placeholder="JSON，可空" /></Field><Field label="渠道额外设置"><textarea name="setting" rows={2} placeholder="JSON，可空" /></Field><Field label="渠道其他设置"><textarea name="settings" rows={2} placeholder="JSON，可空" /></Field><Field label="状态码复写"><textarea name="statusCodeMapping" rows={2} placeholder="JSON，可空" /></Field><Field label="其他配置"><textarea name="other" rows={2} placeholder="可空" /></Field></details></> : <><Field label="上游 API Key" hint="提交后无法在前端查看完整 Key；同一任务不可重复提交。"><input name="secret" required minLength={8} maxLength={1000} type="password" autoComplete="off" /><input type="hidden" name="models" value={modelText} /></Field><div className="form-grid"><Field label="渠道名称"><input name="name" placeholder={`${task.name} · 我的 Key`} /></Field><Field label="站点备注"><input name="site" placeholder="可选" /></Field></div><Field label="模型覆盖（可选）"><input value={modelText} onChange={e => setModelText(e.target.value)} placeholder={(task.models || []).join(', ')} /></Field></>}<div className="modal-actions"><button type="button" className="button" onClick={onClose}>Cancel</button><Submit>Confirm</Submit></div></Form></Modal>; }
@@ -67,8 +126,87 @@ function RotateChannelModal({ channel, onClose, onDone }: { channel: RecordData;
 
 function KeySettlements() { useLocale(); const { data, error, loading } = useData<{ rows: RecordData[]; total: string }>('/api/key-settlements', 15000); const { data: finance } = useData<RecordData>('/api/finance', 15000); return <><PageHead eyebrow="Key Supply" title="我的结算" description="Key 任务用量同步后立即生成流水，与账号收益共用一个钱包。" actions={<Link className="button primary" to="/withdrawals"><Wallet size={16} />统一提现</Link>} /><ErrorBox error={error} /><div className="finance-summary key-finance-summary"><div className="finance-balance"><span>统一可提现余额</span><strong><Amount value={finance?.balance?.available} tone="settlement" /></strong><small>包含账号收益和 Key 任务收益</small></div><div><span>Key 任务收益</span><strong><Amount value={data?.total} tone="profit" /></strong><small>已生成的任务结算流水</small></div><div><span>冻结中</span><strong><Amount value={finance?.balance?.pending} tone="pending" /></strong><small>来自统一提现入口</small></div></div>{loading ? <Loading /> : <section className="panel"><div className="panel-head"><div><h2>任务结算流水 <span>{data?.rows?.length || 0}</span></h2><p>价格按同步时的任务报价冻结，调整流水会保留原始快照。</p></div></div><Table headers={['时间', '任务 / 渠道', '价格快照', '折前应收', '下级应付', '本层利润', '来源']}>{(data?.rows || []).map(row => <tr key={row.id}><td>{dateTime(row.observed_at)}</td><td><strong>{row.task_name}</strong><small>{row.token_masked}</small></td><td><span className="rate-value">{Number(row.rate).toFixed(4)}</span><small>下级 {Number(row.downstream_rate).toFixed(4)}</small></td><td className="amount-cell"><Amount value={row.gross_usd} /></td><td className="amount-cell"><Amount value={row.downstream_usd} /></td><td className="amount-cell"><Amount value={row.profit_usd} tone="profit" signed /></td><td><Badge state={row.kind === 'task_adjustment' ? 'error' : 'confirmed'} label={row.kind === 'task_adjustment' ? '负向调整' : '任务结算'} /></td></tr>)}</Table>{!data?.rows?.length && <Empty title="暂无任务结算" detail="渠道产生用量并完成同步后，流水会自动生成。" />}</section>}</>; }
 
-function KeySettings() { useLocale(); const { user } = useSession(); const toast = useToast(); const { data, error, loading, refresh } = useData<{ connections: RecordData[] }>('/api/new-api-connections', 15000); const [open, setOpen] = useState(false); if (user.role !== 'owner') return <><PageHead eyebrow="Key Supply" title="设置" description="平台连接凭据仅由管理员维护。" /><div className="notice"><ShieldCheck size={18} />你可以查看连接健康状态、模板类型、额度换算单位和最近同步时间，凭据对代理成员不可见。</div>{loading ? <Loading /> : <section className="connections-grid key-connections">{(data?.connections || []).map(c => <article className="panel connection-card" key={c.id}><div className="panel-head"><div><h2>{c.name}</h2><p>{c.adapter_type === 'keyman_newapi' ? 'KeyMan NewAPI 定制任务' : '标准 New API 任务'}</p></div><Badge state={c.status} /></div><div className="connection-facts"><div><span>quota_per_unit</span><strong>{c.quota_per_unit || '—'}</strong></div><div><span>最近同步</span><strong>{dateTime(c.last_sync_at)}</strong></div></div>{c.last_error && <div className="error-box">{c.last_error}</div>}</article>)}</section>}</>; return <><PageHead eyebrow="Key Supply" title="平台连接与设置" description="管理员维护标准 New API 或 KeyMan 定制模板连接，任务按连接同步渠道额度。" actions={<button className="button primary" onClick={() => setOpen(true)}><Plus size={16} />新增连接</button>} /><ErrorBox error={error} />{loading ? <Loading /> : <section className="connections-grid key-connections">{(data?.connections || []).map(c => <article className="panel connection-card" key={c.id}><div className="panel-head"><div><h2>{c.name}</h2><p className="mono break-word">{c.base_url}</p><small>{c.adapter_type === 'keyman_newapi' ? 'KeyMan NewAPI 定制模板' : '标准 New API 模板'}</small></div><Badge state={c.status} /></div><div className="connection-facts"><div><span>认证方式</span><strong>{c.auth_type === 'access_token' ? '管理访问令牌' : '管理员账号密码'}</strong></div><div><span>quota_per_unit</span><strong>{c.quota_per_unit || '—'}</strong></div><div><span>租户 ID</span><strong>{c.tenant_id || '—'}</strong></div><div><span>最近同步</span><strong>{dateTime(c.last_sync_at)}</strong></div></div>{c.last_error && <div className="error-box">{c.last_error}</div>}<div className="connection-actions"><button className="button" onClick={async () => { try { await post(`/api/new-api-connections/${c.id}/test`, {}); toast('连接测试通过'); await refresh(); } catch (e) { toast((e as Error).message, 'error'); } }}><RefreshCw size={14} />测试连接</button></div></article>)}{!data?.connections?.length && <Empty title="还没有平台连接" detail="新增连接后才能创建和发布 Key 供货任务。" />}</section>}{open && <NewConnectionModal onClose={() => setOpen(false)} onDone={async () => { setOpen(false); await refresh(); }} />}</>; }
+function KeySettings() {
+  useLocale();
+  const { user } = useSession(); const toast = useToast();
+  const { data, error, loading, refresh } = useData<{ connections: RecordData[] }>('/api/new-api-connections', 15000);
+  const [editing, setEditing] = useState<RecordData | null | undefined>(undefined);
+  const [testing, setTesting] = useState('');
+  const owner = user.role === 'owner';
+  async function testConnection(connection: RecordData) {
+    setTesting(connection.id);
+    try { await post(`/api/new-api-connections/${connection.id}/test`, {}); toast('连接测试通过'); }
+    catch (error) { toast((error as Error).message, 'error'); }
+    finally { await refresh(); setTesting(''); }
+  }
+  return <>
+    <PageHead eyebrow="Key Supply" title={owner ? '平台连接与设置' : '设置'} description={owner ? '管理员维护标准 New API 或 KeyMan 定制模板连接，任务按连接同步渠道额度。' : '平台连接凭据仅由管理员维护。'} actions={owner ? <button className="button primary" onClick={() => setEditing(null)}><Plus size={16} />新增连接</button> : undefined} />
+    <ErrorBox error={error} />
+    {!owner && <div className="notice"><ShieldCheck size={18} />你可以查看连接健康状态、模板类型、额度换算单位和最近同步时间，凭据对代理成员不可见。</div>}
+    {loading ? <Loading /> : <section className="connections-grid key-connections">
+      {(data?.connections || []).map(connection => <article className="panel connection-card" key={connection.id}>
+        <div className="panel-head"><div><h2>{connection.name}</h2>{owner && <p className="mono break-word">{connection.base_url}</p>}<small>{connection.adapter_type === 'keyman_newapi' ? 'KeyMan NewAPI 定制模板' : '标准 New API 模板'}</small></div><Badge state={connection.status} /></div>
+        <div className="connection-facts">
+          {owner && <div><span>认证方式</span><strong>{connection.auth_type === 'access_token' ? '管理访问令牌' : '管理员账号密码'}</strong></div>}
+          <div><span>quota_per_unit</span><strong>{connection.quota_per_unit || '—'}</strong></div>
+          {owner && <div><span>租户 ID</span><strong>{connection.tenant_id || '—'}</strong></div>}
+          <div><span>最近验证 / 同步</span><strong>{dateTime(connection.last_sync_at)}</strong></div>
+        </div>
+        <ErrorBox error={connection.last_error} />
+        {owner && <>
+          {connection.status === 'error' && <p>连接已保存，验证通过后才能创建和发布任务。请编辑凭据后重新验证。</p>}
+          <div className="connection-actions">
+            <button className="button" onClick={() => setEditing(connection)}><Settings2 size={14} />编辑并验证</button>
+            <button className="button" disabled={!!testing} onClick={() => testConnection(connection)}><RefreshCw size={14} />{testing === connection.id ? '正在测试…' : '测试连接'}</button>
+            {connection.status === 'connected' && <Link className="button" to="/key/tasks">前往创建任务</Link>}
+          </div>
+        </>}
+      </article>)}
+      {!error && !data?.connections?.length && <Empty title="还没有平台连接" detail="新增并验证连接后即可创建和发布 Key 供货任务。" />}
+    </section>}
+    {owner && editing !== undefined && <ConnectionModal connection={editing} onClose={() => setEditing(undefined)} onDone={async () => { setEditing(undefined); await refresh(); }} />}
+  </>;
+}
 
-function NewConnectionModal({ onClose, onDone }: { onClose: () => void; onDone: () => Promise<void> }) { const toast = useToast(); const [auth, setAuth] = useState('password'); const [adapter, setAdapter] = useState('standard_new_api'); return <Modal title="新增供货平台连接" subtitle="凭据会在服务端加密保存，KeyMan 是定制任务模板" onClose={onClose}><Form onSubmit={async f => { const result = await post<{ verified?: boolean; warning?: string }>('/api/new-api-connections', { name: f.get('name'), baseUrl: f.get('baseUrl'), adapterType: adapter, tenantId: f.get('tenantId') || '1', quotaPerUnit: f.get('quotaPerUnit') ? Number(f.get('quotaPerUnit')) : undefined, authType: auth, ...(auth === 'password' ? { username: f.get('username'), password: f.get('password'), captchaVerification: f.get('captchaVerification') || undefined } : { accessToken: f.get('accessToken') }) }); if (result.verified === false) toast(`连接已保存，但验证失败：${result.warning || '请补充验证码或管理访问令牌'}`, 'error'); else toast('平台连接已验证'); await onDone(); }}><Field label="连接名称"><input name="name" required placeholder={adapter === 'keyman_newapi' ? 'KeyMan 生产网关' : '生产 New API'} /></Field><Field label="管理 API 地址"><input name="baseUrl" type="url" required placeholder={adapter === 'keyman_newapi' ? 'https://kapi.xkk.io/admin-api' : 'https://new-api.example.com'} /></Field><Field label="任务模板"><select value={adapter} onChange={e => setAdapter(e.target.value)}><option value="standard_new_api">标准 New API</option><option value="keyman_newapi">KeyMan NewAPI 定制模板</option></select></Field>{adapter === 'keyman_newapi' && <div className="form-grid"><Field label="租户 ID"><input name="tenantId" defaultValue="1" inputMode="numeric" /></Field><Field label="quota_per_unit" hint="KeyMan 未提供统一 status 时，请按上游平台填写，用于把 usedQuota 换算 USD"><input name="quotaPerUnit" type="number" min="1" step="1" required /></Field></div>}<div className="tabs key-auth-tabs"><button type="button" className={auth === 'password' ? 'active' : ''} onClick={() => setAuth('password')}>管理员账号密码</button><button type="button" className={auth === 'access_token' ? 'active' : ''} onClick={() => setAuth('access_token')}>管理访问令牌</button></div>{auth === 'password' ? <div className="form-grid"><Field label="管理员账号"><input name="username" required /></Field><Field label="管理员密码"><input name="password" required type="password" /></Field>{adapter === 'keyman_newapi' && <Field label="验证码串（KeyMan 开启时必填）" hint="请在 KeyMan 登录页完成滑块验证后粘贴 captchaVerification；验证成功后系统会加密保存会话令牌"><input name="captchaVerification" autoComplete="off" /></Field>}</div> : <Field label="管理访问令牌"><input name="accessToken" required type="password" /></Field>}<div className="modal-actions"><Submit>验证并保存</Submit></div></Form></Modal>; }
+function ConnectionModal({ connection, onClose, onDone }: { connection: RecordData | null; onClose: () => void; onDone: () => Promise<void> }) {
+  const toast = useToast();
+  const [auth, setAuth] = useState(connection?.auth_type || 'password');
+  const [adapter, setAdapter] = useState(connection?.adapter_type || 'standard_new_api');
+  const editing = !!connection;
+  return <Modal title={editing ? '编辑供货平台连接' : '新增供货平台连接'} subtitle="凭据会在服务端加密保存，KeyMan 是定制任务模板" onClose={onClose}>
+    <Form onSubmit={async f => {
+      const username = String(f.get('username') || '').trim();
+      const password = String(f.get('password') || '');
+      const accessToken = String(f.get('accessToken') || '').trim();
+      const captchaVerification = String(f.get('captchaVerification') || '').trim();
+      const replaceCredentials = !editing || auth !== connection.auth_type || !!(username || password || accessToken || captchaVerification);
+      const payload = { name: f.get('name'), baseUrl: f.get('baseUrl'), adapterType: adapter, tenantId: f.get('tenantId') || '1', quotaPerUnit: f.get('quotaPerUnit') ? Number(f.get('quotaPerUnit')) : undefined,
+        ...(replaceCredentials ? { authType: auth, ...(auth === 'password' ? { username: username || undefined, password: password || undefined, captchaVerification: captchaVerification || undefined } : { accessToken }) } : {}) };
+      const result = editing
+        ? await mutate(`/api/new-api-connections/${connection.id}`, 'PATCH', payload)
+        : await post('/api/new-api-connections', payload);
+      if (result.verified === false) toast(`连接已保存，但验证失败：${result.warning || '请补充验证码或管理访问令牌'}`, 'error');
+      else toast('平台连接已验证');
+      await onDone();
+    }}>
+      <Field label="连接名称"><input name="name" required maxLength={100} defaultValue={connection?.name} placeholder={adapter === 'keyman_newapi' ? 'KeyMan 生产网关' : '生产 New API'} /></Field>
+      <Field label="管理 API 地址"><input name="baseUrl" type="url" required defaultValue={connection?.base_url} placeholder={adapter === 'keyman_newapi' ? 'https://kapi.xkk.io/admin-api' : 'https://new-api.example.com'} /></Field>
+      <Field label="任务模板"><select value={adapter} disabled={editing} onChange={e => setAdapter(e.target.value)}><option value="standard_new_api">标准 New API</option><option value="keyman_newapi">KeyMan NewAPI 定制模板</option></select></Field>
+      {adapter === 'keyman_newapi' && <div className="form-grid">
+        <Field label="租户 ID"><input name="tenantId" required defaultValue={connection?.tenant_id || '1'} inputMode="numeric" pattern="[0-9]+" /></Field>
+        <Field label="quota_per_unit" hint="按上游平台填写，用于把 usedQuota 换算 USD"><input name="quotaPerUnit" type="number" min="1" step="any" required defaultValue={connection?.quota_per_unit || ''} /></Field>
+      </div>}
+      {editing && <div className="notice">凭据留空会使用已加密保存的凭据或会话。重新使用账号登录时，请同时填写账号和密码。</div>}
+      {adapter === 'keyman_newapi' && <div className="notice">KeyMan 开启滑块验证码时，账号密码还需提供登录页生成的一次性 captchaVerification；也可切换到管理访问令牌完成验证。</div>}
+      <div className="tabs key-auth-tabs"><button type="button" className={auth === 'password' ? 'active' : ''} onClick={() => setAuth('password')}>管理员账号密码</button><button type="button" className={auth === 'access_token' ? 'active' : ''} onClick={() => setAuth('access_token')}>管理访问令牌</button></div>
+      {auth === 'password' ? <div className="form-grid">
+        <Field label="管理员账号"><input name="username" required={!editing || auth !== connection.auth_type} maxLength={200} autoComplete="off" /></Field>
+        <Field label="管理员密码"><input name="password" required={!editing || auth !== connection.auth_type} maxLength={500} type="password" autoComplete="new-password" /></Field>
+        {adapter === 'keyman_newapi' && <Field label="验证码串（KeyMan 开启时必填）" hint="在 KeyMan 登录页完成滑块验证后粘贴 captchaVerification；登录成功后系统会加密保存会话令牌"><input name="captchaVerification" maxLength={2000} autoComplete="off" /></Field>}
+      </div> : <Field label="管理访问令牌"><input name="accessToken" required={!editing || auth !== connection.auth_type} maxLength={500} type="password" autoComplete="new-password" /></Field>}
+      <div className="modal-actions"><Submit>验证并保存</Submit></div>
+    </Form>
+  </Modal>;
+}
 
 export default function KeyWorkspace({ user, reload, onLogout }: { user: RecordData; reload: () => Promise<void>; onLogout: () => Promise<void> }) { return <KeyShell user={user} reload={reload} onLogout={onLogout} />; }

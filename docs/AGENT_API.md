@@ -100,6 +100,10 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 
 管理员通过 `POST /api/new-api-connections` 创建连接，`adapterType` 可取 `standard_new_api` 或 `keyman_newapi`；KeyMan 连接可用 `GET /api/new-api-connections/:id/gateways` 查询网关。KeyMan 租户若开启验证码，连接凭据需带浏览器取得的 `captchaVerification`，也可以直接使用管理访问令牌。创建任务时把 `templateType` 和 `gatewayId` 绑定到 `POST /api/key-tasks`。KeyMan 的 `POST /api/key-tasks/:id/models` 可在不落库的情况下从上游拉取模型；批量提交使用 `POST /api/key-tasks/:id/channels` 的 `secrets` 数组，服务端逐条创建渠道并保留每个 Key 的指纹和幂等记录。
 
+KeyMan 验证失败时仍会加密保存连接，创建或编辑响应包含 `verified:false` 和 `warning`，连接列表保留 `status:error` 和错误原因。管理员可在设置中「编辑并验证」，对应 `PATCH /api/new-api-connections/:id`；不传凭据字段会复用加密保存的凭据或会话，更换认证方式时需填写新凭据。KeyMan 登录得到的访问令牌及刷新令牌会加密保存，后台同步刷新令牌时更新原连接。修改连接名称不会清除验证错误，手工设置 `status:connected` 也必须重新通过上游验证。
+
+创建、发布和恢复发布任务要求连接处于 `connected`，KeyMan 同时验证所选网关仍对该连接可用；异常或停用连接不能接受新 Key。网关列表仅管理员可读取，界面在加载失败时显示原因并提供重试。已关闭任务不能重新发布。
+
 带 `read` 权限的密钥可以读取 `/api/workspaces`、`/api/key-tasks`、`/api/key-tasks/:id/rates`、`/api/key-tasks/:id/channels`、`/api/key-usage` 和 `/api/key-settlements`。需要额外开启 `key:write` 才能调用 `POST /api/key-tasks/:id/channels` 提交 Key，以及 `PATCH /api/key-channels/:id` 轮换、暂停、恢复或删除自己的渠道、`POST /api/key-channels/:id/test` 测试渠道。管理员的 New API 凭据、连接管理、任务创建/发布/定价和后台同步仍然只支持网页登录。
 
 标准 New API 渠道每 5 分钟同步一次 `used_quota`，并按 `/api/status` 返回的 `quota_per_unit` 换算 USD；KeyMan 渠道读取 `/newapi/channel/page`、`/newapi/channel/stat`，优先使用连接或网关返回的额度换算单位。同步产生的任务流水直接进入统一钱包；重复快照不会重复入账，计数回退会生成 `task_adjustment` 负向流水。`GET /api/finance?source=key` 可单独读取 Key 任务来源的统一账本流水。
