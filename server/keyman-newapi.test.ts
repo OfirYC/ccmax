@@ -80,4 +80,32 @@ describe('KeyMan NewAPI adapter', () => {
       await db.close();
     }
   });
+
+  it('keeps a KeyMan connection visible when password login requires a captcha', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/system/auth/login')) return Response.json({ code: 400, msg: '验证码不能为空', data: null });
+      return Response.json({ code: 0, data: [] });
+    }) as typeof fetch;
+    const db = await openTestDB();
+    try {
+      await migrate(db);
+      await bootstrap(db, { ADMIN_EMAIL: 'keyman-captcha@example.com', ADMIN_PASSWORD: 'keyman-captcha-password' });
+      const { app } = await createApp(db, { encryptionKey: 'ef'.repeat(32), appUrl: 'http://localhost:3000' });
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'keyman-captcha@example.com', password: 'keyman-captcha-password' }, headers: { 'x-ccmax-request': '1' } });
+      const cookie = String(login.headers['set-cookie']).split(';')[0];
+      const request = (method: string, url: string, payload?: unknown) => app.inject({ method: method as any, url, payload: payload as any, headers: { cookie, 'x-ccmax-request': '1' } });
+      const saved = await request('POST', '/api/new-api-connections', { name: 'KeyMan captcha fixture', baseUrl: 'https://keyman.xkk.io/#/newapi/channel', adapterType: 'keyman_newapi', authType: 'password', tenantId: '1', username: 'fixture', password: 'fixture', quotaPerUnit: 500000 });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json().verified).toBe(false);
+      expect(saved.json().connection.status).toBe('error');
+      expect(saved.json().connection.base_url).toBe('https://kapi.xkk.io/admin-api');
+      expect((await request('GET', '/api/new-api-connections')).json().connections).toHaveLength(1);
+      await app.close();
+    } finally {
+      globalThis.fetch = originalFetch;
+      await db.close();
+    }
+  });
 });

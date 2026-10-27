@@ -5,7 +5,7 @@ import type { NewApiChannel } from './new-api.js';
  * the account boundary, so it is sent on every request and never exposed to
  * supplier members. */
 export type KeyManCredentials =
-  | { kind: 'access_token'; token: string; tenantId?: string }
+  | { kind: 'access_token'; token: string; refreshToken?: string; tenantId?: string }
   | { kind: 'password'; username: string; password: string; tenantId?: string; captchaVerification?: string };
 
 export type KeyManGateway = { id: string; name: string; status?: number; raw: any };
@@ -37,7 +37,8 @@ const timeoutMs = 20000;
 const trimUrl = (url: string) => url.trim().replace(/\/+$/, '');
 
 function apiError(status: number, message: string) {
-  return new AppError(status >= 500 ? 502 : status, `KeyMan：${message}`, 'KEYMAN_API_ERROR');
+  const safeStatus = status >= 400 ? status : 400;
+  return new AppError(safeStatus >= 500 ? 502 : safeStatus, `KeyMan：${message}`, 'KEYMAN_API_ERROR');
 }
 
 function dataOf(value: any): any {
@@ -130,8 +131,13 @@ export class KeyManClient {
       if (this.refreshToken) {
         try {
           const refreshed = await this.request(`/system/auth/refresh-token?refreshToken=${encodeURIComponent(this.refreshToken)}`, { method: 'POST' }, false);
-          const token = dataOf(refreshed)?.accessToken;
-          if (token) { this.accessToken = String(token); return this.request(path, options, false); }
+          const refreshedData = dataOf(refreshed) || {};
+          const token = refreshedData.accessToken;
+          if (token) {
+            this.accessToken = String(token);
+            if (refreshedData.refreshToken) this.refreshToken = String(refreshedData.refreshToken);
+            return this.request(path, options, false);
+          }
         } catch { /* fall through to the original auth error */ }
       }
       this.authenticated = false;
@@ -159,9 +165,23 @@ export class KeyManClient {
       this.refreshToken = data.refreshToken ? String(data.refreshToken) : '';
     } else {
       this.accessToken = this.credentials.token;
+      this.refreshToken = this.credentials.refreshToken || '';
     }
     await this.listGateways();
     this.authenticated = true;
+  }
+
+  /** Return the current server-side session so callers can persist a token
+   * obtained from a password login (and any refreshed token) instead of
+   * forcing the tenant's captcha challenge on every sync. */
+  sessionCredentials(): KeyManCredentials {
+    assert(this.accessToken, 'KeyMan 尚未完成登录', 401);
+    return {
+      kind: 'access_token',
+      token: this.accessToken,
+      ...(this.refreshToken ? { refreshToken: this.refreshToken } : {}),
+      tenantId: this.tenantId,
+    };
   }
 
   async listGateways(): Promise<KeyManGateway[]> {
