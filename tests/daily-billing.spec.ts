@@ -20,11 +20,11 @@ test('an administrator sees automatic bill updates without collection or import 
   }],total:1,page:1}}));
   await page.getByRole('link',{name:'用量明细',exact:true}).click();
   const panel=page.locator('.daily-billing-panel');await expect(panel.getByRole('heading',{name:'账单更新记录',exact:true})).toBeVisible();
-  await expect(panel).not.toContainText('private-upstream-');await expect(panel).toContainText('账单已生成');await expect(panel.getByText('快照预估',{exact:true})).toBeVisible();await expect(panel).toContainText('4 / 5');
+  await expect(panel).not.toContainText('private-upstream-');await expect(panel).toContainText('需要核对');await expect(panel).not.toContainText('账单已生成');await expect(panel.getByText('快照预估',{exact:true})).toBeVisible();await expect(panel).toContainText('4 / 5');
   await expect(panel.getByRole('link',{name:'原始日账单'})).toHaveAttribute('href','/api/billing/statements/snapshot-fixture');
   await panel.getByRole('button',{name:'详情',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'账单详情'});
-  await expect(dialog).toContainText('快照预估');await expect(dialog).toContainText('missing-snapshot');
+  await expect(dialog).toContainText('快照预估');await expect(dialog).toContainText('来源账单已存档');await expect(dialog).toContainText('需要核对');await expect(dialog).toContainText('missing-snapshot');
   await expect(dialog).toContainText('当日用量数据待补齐');await page.getByRole('button',{name:'关闭弹窗'}).click();
   await page.screenshot({path:'test-results/daily-billing-desktop.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});await expect(panel.getByText('快照预估',{exact:true})).toBeVisible();
@@ -32,7 +32,7 @@ test('an administrator sees automatic bill updates without collection or import 
   await page.screenshot({path:'test-results/daily-billing-mobile.png',fullPage:true});
   for(const name of ['补采历史账单','读取历史账单','核实日账单','刷新'])await expect(page.getByRole('button',{name,exact:true})).toHaveCount(0);
   await expect(page.getByText('每天北京时间 02:00 后自动更新昨日账单。',{exact:true})).toBeVisible();
-  updated=true;await page.clock.fastForward(10000);await expect(panel).toContainText('5 / 5');
+  updated=true;await page.clock.fastForward(10000);await expect(panel).toContainText('5 / 5');await expect(panel).toContainText('账单已生成');
   await page.setViewportSize({width:1440,height:900});
   await page.getByRole('link',{name:'平台管理',exact:true}).click();const card=page.locator('.connection-card').filter({has:page.locator('.platform-mark.A')});
   await expect(card).toContainText('每天 02:00 后（北京时间）');await card.getByRole('button',{name:'配置连接',exact:true}).click();
@@ -40,6 +40,33 @@ test('an administrator sees automatic bill updates without collection or import 
   await expect(page.getByRole('dialog')).not.toContainText('23:55');
   expect(billingWrites).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test('the settlement page explains the next bill before 02:00 and reveals blocked settlement progress',async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
+  await page.clock.install({time:new Date('2026-10-28T01:59:00+08:00')});
+  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');
+  await page.getByRole('button',{name:'进入工作空间'}).click();
+  await expect(page.getByRole('heading',{name:'你好，平台管理员',exact:true})).toBeVisible();
+  const finance=await(await page.request.get('/api/finance')).json();
+  let waiting=true;
+  await page.route('**/api/finance?**',route=>route.fulfill({json:{...finance,billing:{day:'2026-10-27',scheduledAt:'2026-10-27T18:00:00Z',waiting}}}));
+  await page.route('**/api/billing/days?**',route=>route.fulfill({json:{rows:[{
+    connection_id:'blocked-fixture',provider:'A',day:'2026-10-26',basis:'snapshot',state:'needs_attention',statement_id:'saved-fixture',
+    account_count:2,finalized_count:1,issue_count:1,raw_usd:'100',issues:[{externalId:'unpriced',message:'账号归属待确认，账单已保留'}],
+  }],total:1}}));
+  await page.getByRole('link',{name:'账单结算',exact:true}).click();
+  const schedule=page.locator('.billing-schedule');
+  await expect(schedule).toContainText('2026-10-27');await expect(schedule).toContainText('02:00');await expect(schedule).toContainText('北京时间');
+  const panel=page.locator('.daily-billing-panel');await expect(panel).toContainText('需要核对');await expect(panel).toContainText('1 / 2');
+  await panel.getByRole('button',{name:'详情',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('账号归属待确认');
+  await page.getByRole('button',{name:'关闭弹窗'}).click();
+  await page.screenshot({path:'test-results/finance-billing-schedule-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await expect(schedule).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.screenshot({path:'test-results/finance-billing-schedule-mobile.png',fullPage:true});
+  waiting=false;await page.clock.fastForward(60000);await expect(schedule).toHaveCount(0);
+  await expect(panel).toContainText('需要核对');
 });
 
 test('agents see the estimate label on their automatic invoice without access to the admin archive',async({page})=>{

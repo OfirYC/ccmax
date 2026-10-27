@@ -16,6 +16,7 @@ import { auditFinance } from './finance-audit.js';
 import { previewInvoice } from './invoice-preview.js';
 import { registerTelemetry } from './telemetry-routes.js';
 import { registerBilling } from './billing-routes.js';
+import { billingSchedule } from './billing-scheduler.js';
 import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
 import { authorizationState } from '../shared/oauth.js';
@@ -599,7 +600,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const withdrawals=accountSource?await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
       WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
     const ledger=await db.query(`SELECT * FROM ledger WHERE user_id=$1 AND ($2='all' OR ($2='account' AND kind='settlement') OR ($2='key' AND kind IN ('task_settlement','task_adjustment'))) ORDER BY created_at DESC LIMIT 20`,[req.user.id,q.source]);
-    return {balance:await balance(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger,source:q.source};
+    return {balance:await balance(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger,source:q.source,billing:billingSchedule()};
   });
   app.get('/api/ledger/export',async(req,reply)=>{
     const [total]=await db.query('SELECT count(*) AS count FROM ledger WHERE user_id=$1',[req.user.id]);

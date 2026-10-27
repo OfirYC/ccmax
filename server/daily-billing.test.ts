@@ -3,7 +3,7 @@ import { migrate, type DB, type Row } from './db.js';
 import { openTestDB } from './test-db.js';
 import { bootstrap, id, secretBox, today } from './core.js';
 import { createDailyInvoices, recordDailyStatement } from './daily-billing.js';
-import { billingThrough, queueBillingRange, scheduleBillingSnapshots, scheduleDailyBilling, shiftBillingDay } from './billing-scheduler.js';
+import { billingSchedule, billingThrough, queueBillingRange, scheduleBillingSnapshots, scheduleDailyBilling, shiftBillingDay } from './billing-scheduler.js';
 import { saveBillingSnapshot, snapshotDay } from './billing-snapshots.js';
 import { createWorker, enqueue } from './worker.js';
 import { ProviderClient, UpstreamError, type UpstreamAccount } from './providers.js';
@@ -252,6 +252,40 @@ describe('automatic daily billing',()=>{
     expect(await scheduleBillingSnapshots(db,box,new Date(today()+'T12:31:00+08:00'))).toHaveLength(0);
   });
 
+  it('settles the next Beijing day after the cutoff while preserving confirmed invoices and avoiding duplicate payments',async()=>{
+    const previous=shiftBillingDay(day,-1);
+    await db.query('UPDATE connection_rates SET effective_date=$1',[previous]);
+    await db.query('UPDATE rates SET effective_date=$1',[previous]);
+    await db.query('INSERT INTO billing_days(connection_id,day) VALUES($1,$2)',[connection.id,previous]);
+    await recordDailyStatement(db,connection,owner,previous,[{externalId:'real',rawUsd:'50'}]);
+    const paid=await db.query('SELECT * FROM invoices');
+    for(const user of [owner,agent,leaf])await confirmInvoice(db,user.id===leaf.id?agent:owner,paid.find(invoice=>invoice.user_id===user.id)!.id,'previous day receipt');
+    const confirmed=await db.query('SELECT * FROM invoices ORDER BY id');
+    const ledger=await db.query('SELECT * FROM ledger ORDER BY id');
+    await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
+    await db.query('UPDATE billing_days SET next_attempt_at=$3 WHERE connection_id=$1 AND day=$2',[connection.id,day,today()+'T00:00:00+08:00']);
+    await saveAt('23:59:00','100');
+
+    const before=new Date(today()+'T01:59:59+08:00'),after=new Date(today()+'T02:00:00+08:00');
+    expect(billingSchedule(before)).toEqual({day,scheduledAt:after.toISOString(),waiting:true,through:previous,timezone:'Asia/Shanghai'});
+    expect(await scheduleDailyBilling(db,box,before)).toHaveLength(0);
+    expect(billingSchedule(after)).toMatchObject({day,waiting:false,through:day});
+    expect(await scheduleDailyBilling(db,box,after)).toHaveLength(1);
+    const factory=()=>({login:async()=>{},historicalDay:async()=>{throw new UpstreamError(403,'history HTTP 403');}} as unknown as ProviderClient);
+    await createWorker(db,box,factory,['daily_billing']).tick();
+
+    expect(await db.query("SELECT * FROM invoices WHERE state='confirmed' ORDER BY id")).toEqual(confirmed);
+    const pending=await db.query("SELECT * FROM invoices WHERE state='pending' ORDER BY user_id");
+    expect(pending).toHaveLength(3);
+    expect(pending.map(invoice=>invoice.user_id).sort()).toEqual([owner.id,agent.id,leaf.id].sort());
+    expect(pending.every(invoice=>invoice.date_from===day&&invoice.date_to===day&&invoice.estimated)).toBe(true);
+    expect(await db.query('SELECT * FROM ledger ORDER BY id')).toEqual(ledger);
+    await queueBillingRange(db,box,owner,[connection.id],day,day);
+    await createWorker(db,box,factory,['daily_billing']).tick();
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(6);
+    expect(await db.query('SELECT * FROM ledger ORDER BY id')).toEqual(ledger);
+  });
+
   it('automatically recovers an obsolete history-permission failure written by an older worker during deployment',async()=>{
     await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
     const message='Gatelink 读取历史日账单失败（HTTP 403）；当前主账号无此权限；没有当天有效快照，无法补建历史金额';
@@ -270,6 +304,7 @@ describe('automatic daily billing',()=>{
     try {
       const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'billing-test-password'}});
       const cookie=String(login.headers['set-cookie']).split(';')[0],headers={cookie,'x-ccmax-request':'1'};
+      expect((await app.inject({url:'/api/finance',headers})).json().billing).toEqual(billingSchedule());
       const [session]=await db.query('SELECT * FROM sessions');
       await saveAt('23:59:00','100');const snapshot=await snapshotDay(db,connection,day);
       const result=await recordDailyStatement(db,connection,owner,day,snapshot.rows,{basis:'snapshot',sourceError:'history HTTP 403'});
@@ -278,6 +313,7 @@ describe('automatic daily billing',()=>{
       const [invoice]=await db.query('SELECT * FROM invoices WHERE user_id=$1',[owner.id]);
       const exported=await app.inject({url:'/api/invoices/'+invoice.id+'/export',headers});expect(exported.body).toContain('快照预估');
       await db.query('UPDATE sessions SET user_id=$2 WHERE id=$1',[session.id,agent.id]);
+      expect((await app.inject({url:'/api/finance',headers})).json().billing).toEqual(billingSchedule());
       expect((await app.inject({url:'/api/billing/days',headers})).statusCode).toBe(403);
       expect((await app.inject({url:'/api/billing/statements/'+result.statementId,headers})).statusCode).toBe(403);
       expect((await app.inject({method:'POST',url:'/api/billing/collect',headers,payload:{connectionIds:[connection.id],from:day,to:day}})).statusCode).toBe(403);

@@ -7,6 +7,15 @@ export const shiftBillingDay = (day: string, delta: number) => new Date(Date.par
 // Leave two hours for upstream daily counters to settle. No server-local dates.
 export const billingThrough = (now = new Date()) => shiftBillingDay(billingDayAt(new Date(now.getTime()-2*3600000)), -1);
 
+export function billingSchedule(now = new Date()) {
+  const current = billingDayAt(now);
+  const scheduledAt = new Date(current+'T02:00:00+08:00');
+  return {
+    day: shiftBillingDay(current,-1), scheduledAt: scheduledAt.toISOString(),
+    waiting: now < scheduledAt, through: billingThrough(now), timezone: 'Asia/Shanghai',
+  };
+}
+
 async function queueDay(tx: DB, box: SecretBox, owner: Row, connectionId: string, day: string) {
   const [active] = await tx.query(`SELECT id,state FROM jobs WHERE connection_id=$1 AND kind='daily_billing'
     AND subject_id=$2 AND state IN ('queued','running')`, [connectionId, day]);
