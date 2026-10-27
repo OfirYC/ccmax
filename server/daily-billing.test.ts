@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate, type DB, type Row } from './db.js';
 import { openTestDB } from './test-db.js';
 import { bootstrap, id, secretBox, today } from './core.js';
@@ -8,7 +8,7 @@ import { saveBillingSnapshot, snapshotDay } from './billing-snapshots.js';
 import { createWorker, enqueue } from './worker.js';
 import { ProviderClient, UpstreamError, type UpstreamAccount } from './providers.js';
 import { normalizeTelemetry } from './telemetry.js';
-import { balance, confirmInvoice, ingestUsage } from './billing.js';
+import { balance, confirmInvoice, createInvoice, ingestUsage } from './billing.js';
 import { createApp } from './app.js';
 
 const box=secretBox('bd'.repeat(32));
@@ -131,6 +131,90 @@ describe('automatic daily billing',()=>{
     const live=await enqueue(db,box,owner.id,connection.id,'billing_snapshot',{},id());
     await db.query("UPDATE jobs SET state='running',started_at=now()-interval '5 minutes',heartbeat_at=now() WHERE id=$1",[live.id]);
     await worker.recover();expect((await db.query('SELECT state FROM jobs WHERE id=$1',[live.id]))[0].state).toBe('running');
+  });
+
+  it('retries an expired daily billing lease promptly and finishes a partially invoiced day exactly once',async()=>{
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day,rawUsd:'100',final:true,source:'upstream_daily'}));
+    const invoice=await createInvoice(db,owner,owner.id,day,day);
+    await confirmInvoice(db,owner,invoice.id,'receipt before interruption');
+    const existing=await db.query('SELECT * FROM invoices ORDER BY id');
+    const ledger=await db.query('SELECT * FROM ledger ORDER BY id');
+    const job=(await queueBillingRange(db,box,owner,[connection.id],day,day))[0];
+    await db.query("UPDATE jobs SET state='running',started_at=now()-interval '2 minutes',heartbeat_at=now()-interval '2 minutes' WHERE id=$1",[job.id]);
+    await db.query("UPDATE billing_days SET state='running',attempts=1,next_attempt_at=now()+interval '1 hour' WHERE connection_id=$1",[connection.id]);
+    const worker=createWorker(db,box,()=>({login:async()=>{},historicalDay:async()=>[{externalId:'real',rawUsd:'100'}]} as unknown as ProviderClient),['daily_billing']);
+    await worker.recover();
+    expect((await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state).toBe('failed');
+    expect((await db.query('SELECT state,next_attempt_at<=now() AS retry_due FROM billing_days'))[0]).toEqual({state:'failed',retry_due:true});
+    const now=new Date(Math.max(Date.now(),Date.parse(today()+'T02:00:00+08:00')));
+    expect(await scheduleDailyBilling(db,box,now)).toHaveLength(1);
+    expect(await scheduleDailyBilling(db,box,now)).toHaveLength(0);
+    await worker.tick();
+    expect((await db.query('SELECT state FROM billing_days'))[0].state).toBe('succeeded');
+    expect(await db.query("SELECT * FROM invoices WHERE state='confirmed' ORDER BY id")).toEqual(existing);
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(3);
+    expect(await db.query('SELECT * FROM ledger ORDER BY id')).toEqual(ledger);
+  });
+
+  it.each(['daily_billing','billing_snapshot'])('keeps a %s job with a live heartbeat even after thirty minutes',async kind=>{
+    const job=await enqueue(db,box,owner.id,connection.id,kind,kind==='daily_billing'?{day}:{},id());
+    await db.query("UPDATE jobs SET state='running',started_at=now()-interval '31 minutes',heartbeat_at=now() WHERE id=$1",[job.id]);
+    await createWorker(db,box).recover();
+    expect((await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state).toBe('running');
+  });
+
+  it.each(['queued','running'])('repairs an orphaned %s billing day left by an older worker without waiting for its queue backoff',async state=>{
+    const job=(await queueBillingRange(db,box,owner,[connection.id],day,day))[0];
+    await db.query("UPDATE jobs SET state='needs_attention',completed_at=now() WHERE id=$1",[job.id]);
+    await db.query("UPDATE billing_days SET state=$2,next_attempt_at=now()+interval '1 hour' WHERE connection_id=$1",[connection.id,state]);
+    const now=new Date(Math.max(Date.now(),Date.parse(today()+'T02:00:00+08:00')));
+    expect(await scheduleDailyBilling(db,box,now)).toHaveLength(1);
+    expect((await db.query('SELECT job_id FROM billing_days'))[0].job_id).not.toBe(job.id);
+    expect(await scheduleDailyBilling(db,box,now)).toHaveLength(0);
+  });
+
+  it('renews a live daily lease during a slow history read so recovery cannot start a duplicate settlement',async()=>{
+    let ready!:()=>void,release!:(rows:{externalId:string;rawUsd:string}[])=>void;
+    const started=new Promise<void>(resolve=>{ready=resolve;}),history=new Promise<{externalId:string;rawUsd:string}[]>(resolve=>{release=resolve;});
+    const job=(await queueBillingRange(db,box,owner,[connection.id],day,day))[0];
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']});
+    const worker=createWorker(db,box,()=>({login:async()=>{},historicalDay:async()=>{ready();return history;}} as unknown as ProviderClient));
+    const running=worker.runOne();
+    try {
+      await started;
+      await db.query("UPDATE jobs SET started_at=now()-interval '31 minutes',heartbeat_at=now()-interval '89 seconds' WHERE id=$1",[job.id]);
+      await vi.advanceTimersByTimeAsync(10000);
+      await expect.poll(async()=>(await db.query("SELECT heartbeat_at>now()-interval '5 seconds' AS fresh FROM jobs WHERE id=$1",[job.id]))[0].fresh).toBe(true);
+      await createWorker(db,box).recover();
+      expect((await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state).toBe('running');
+      release([{externalId:'real',rawUsd:'100'}]);await running;
+      expect(await db.query('SELECT * FROM invoices')).toHaveLength(3);
+    } finally {release([{externalId:'real',rawUsd:'100'}]);await running;vi.useRealTimers();}
+  });
+
+  it('keeps an active replacement and real request-failure backoff while automatically retrying a timed out query',async()=>{
+    const job=(await queueBillingRange(db,box,owner,[connection.id],day,day))[0];
+    await db.query("UPDATE jobs SET state='needs_attention' WHERE id=$1",[job.id]);
+    const replacement=await enqueue(db,box,owner.id,connection.id,'daily_billing',{day},id());
+    const now=new Date(Math.max(Date.now(),Date.parse(today()+'T02:00:00+08:00')));
+    expect(await scheduleDailyBilling(db,box,now)).toHaveLength(0);
+    expect((await db.query('SELECT state,job_id FROM billing_days'))[0]).toEqual({state:'queued',job_id:job.id});
+    await db.query('UPDATE billing_days SET job_id=$1',[replacement.id]);
+    let attempts=0;
+    const worker=createWorker(db,box,()=>({login:async()=>{},historicalDay:async()=>{
+      if(++attempts===1)throw new UpstreamError(0,'平台请求超时（25 秒）');
+      return [{externalId:'real',rawUsd:'100'}];
+    }} as unknown as ProviderClient),['daily_billing']);
+    await worker.tick();
+    const [failed]=await db.query('SELECT state,error,next_attempt_at>now() AS backed_off FROM billing_days');
+    expect(failed).toEqual({state:'failed',error:'平台请求超时（25 秒）',backed_off:true});
+    expect(await scheduleDailyBilling(db,box,new Date(Math.max(Date.now(),now.getTime())))).toHaveLength(0);
+    await db.query("UPDATE billing_days SET next_attempt_at=now()-interval '1 second'");
+    expect(await scheduleDailyBilling(db,box,new Date(Math.max(Date.now(),now.getTime())))).toHaveLength(1);
+    await worker.tick();
+    expect((await db.query('SELECT state FROM billing_days'))[0].state).toBe('succeeded');
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(3);
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
   });
   it('keeps snapshot writes for other accounts when an upstream ID changes email',async()=>{
     const other=await account('other',leaf.id),valid=observation(day),changed={...observation(day),email:'someone-else@claude.test'};

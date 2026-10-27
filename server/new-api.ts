@@ -80,17 +80,16 @@ export class NewApiClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
+    let text: string;
     try {
       response = await fetch(`${this.baseUrl}${path}`, { ...options, headers, signal: controller.signal });
+      text = await response.text();
     } catch (error) {
-      clearTimeout(timer);
-      const message = error instanceof Error && error.name === 'AbortError' ? '请求超时' : '连接失败';
+      const message = controller.signal.aborted || error instanceof Error && error.name === 'AbortError' ? '请求超时' : '连接失败';
       throw apiError(502, message);
-    }
-    clearTimeout(timer);
+    } finally { clearTimeout(timer); }
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) this.cookie = setCookie.split(',').map(v => v.split(';')[0]).join('; ');
-    const text = await response.text();
     let body: any = null;
     try { body = text ? JSON.parse(text) : null; } catch { body = { message: text.slice(0, 500) }; }
     if (!response.ok) {

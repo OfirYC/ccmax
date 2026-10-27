@@ -116,14 +116,13 @@ export class KeyManClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
+    let text: string;
     try {
       response = await fetch(`${this.baseUrl}${path}`, { ...options, headers: this.headers(options), signal: controller.signal });
+      text = await response.text();
     } catch (error) {
-      clearTimeout(timer);
-      throw apiError(502, error instanceof Error && error.name === 'AbortError' ? '请求超时' : '连接失败');
-    }
-    clearTimeout(timer);
-    const text = await response.text();
+      throw apiError(502, controller.signal.aborted || error instanceof Error && error.name === 'AbortError' ? '请求超时' : '连接失败');
+    } finally { clearTimeout(timer); }
     let body: any = null;
     try { body = text ? JSON.parse(text) : null; } catch { body = { msg: text.slice(0, 500) }; }
     const code = Number(body?.code);

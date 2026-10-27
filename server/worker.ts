@@ -81,9 +81,9 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
     if(!job) return false;
     let recoveryStarted=false;
 
-    // Snapshot leases expire quickly after a process stops. A live collector
-    // renews its lease even while an upstream page request is in flight.
-    const heartbeat=job.kind==='billing_snapshot'?setInterval(()=>{
+    // Billing leases expire quickly after a process stops. Live collection or
+    // settlement renews its lease while requests and account processing run.
+    const heartbeat=['billing_snapshot','daily_billing'].includes(job.kind)?setInterval(()=>{
       db.query("UPDATE jobs SET heartbeat_at=now() WHERE id=$1 AND state='running'",[job.id]).catch(()=>{});
     },10000):undefined;
     try {
@@ -327,8 +327,15 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       // Only stale leases are recovered: another replica may be doing live work.
       await db.query(`UPDATE jobs SET state='failed',error='快照任务执行中断，下一轮自动重试',payload=$1,completed_at=now()
         WHERE kind='billing_snapshot' AND state='running' AND COALESCE(heartbeat_at,started_at)<now()-interval '90 seconds'`,[box.encrypt({})]);
+      await db.query(`WITH expired AS (
+        UPDATE jobs SET state='failed',error='日账单任务执行中断，将自动重试',payload=$1,completed_at=now()
+        WHERE kind='daily_billing' AND state='running' AND COALESCE(heartbeat_at,started_at)<now()-interval '90 seconds'
+        RETURNING id,connection_id,subject_id,error
+      ) UPDATE billing_days d SET state='failed',error=e.error,completed_at=now(),next_attempt_at=now()
+        FROM expired e WHERE d.connection_id=e.connection_id AND d.day=e.subject_id::date
+        AND d.job_id=e.id AND d.state IN ('queued','running')`,[box.encrypt({})]);
       await db.query(`UPDATE jobs SET state='needs_attention',error='任务执行中断，请同步上游账号核对后重新提交',payload=$1,completed_at=now()
-        WHERE state='running' AND started_at<now()-interval '30 minutes'`,[box.encrypt({})]);
+        WHERE state='running' AND kind NOT IN ('daily_billing','billing_snapshot') AND started_at<now()-interval '30 minutes'`,[box.encrypt({})]);
       await db.query(`DELETE FROM sessions WHERE expires_at<now()`);
       await db.query(`UPDATE oauth_attempts SET secret=$1,authorization_url='',state='needs_attention' WHERE state IN ('pending','exchanging') AND expires_at<now()`,[box.encrypt({})]);
     },

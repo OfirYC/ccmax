@@ -141,8 +141,11 @@ describe('independent account, platform and recursive team reconciliation',()=>{
 
   it('never books a cached prior-day daily amount into today during a successful inventory sync',async()=>{
     // Freeze Date only; database and network scheduling retain real timers.
-    vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-18T16:02:00Z'));
-    const t=normalizeTelemetry('gatelink',{upstreamSyncedAt:'2026-10-18T15:59:00Z',upstreamDailyCost:'987',upstreamSnapshot:{stats:{daily_req:321}}});
+    // Keep the fixture near the database clock so login sessions remain valid
+    // on PostgreSQL, whose clock is independent of JavaScript's fake Date.
+    const midnight=new Date(today()+'T00:02:00+08:00');
+    vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(midnight);
+    const t=normalizeTelemetry('gatelink',{upstreamSyncedAt:new Date(midnight.getTime()-3*60000).toISOString(),upstreamDailyCost:'987',upstreamSnapshot:{stats:{daily_req:321}}});
     const box=secretBox(encryptionKey),client={login:async()=>{},listAccounts:async()=>[{id:'cached',email:'cached@example.com',name:'cached',status:'active',dailyUsd:'987',cost7d:null,cost30d:null,utilization:null,telemetry:t}]};
     await enqueue(db,box,root.id,gate,'sync',{},'cached-midnight');await createWorker(db,box,()=>client as any).runOne();
     const [job]=await db.query('SELECT state,result,error FROM jobs');expect(job.state,job.error).toBe('succeeded');expect(job.result.skippedDaily).toBe(1);expect(await db.query('SELECT * FROM usage_days')).toHaveLength(0);

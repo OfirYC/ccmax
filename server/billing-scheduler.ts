@@ -54,6 +54,13 @@ export async function scheduleDailyBilling(db: DB, box: SecretBox, now = new Dat
       AND d.state='failed' AND d.basis='snapshot'
       AND d.error ~ '读取历史日账单失败（HTTP (403|404)'`);
     const through = billingThrough(now), current = billingDayAt(now);
+    // Older workers could retire an interrupted job without releasing its day.
+    // An active replacement protects the day even if job_id still points back.
+    await tx.query(`UPDATE billing_days d SET state='failed',error='日账单任务执行中断，将自动重试',
+      completed_at=now(),next_attempt_at=now()
+      WHERE d.day<=$1 AND d.state IN ('queued','running') AND d.job_id IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.connection_id=d.connection_id AND j.kind='daily_billing'
+        AND j.subject_id=d.day::text AND j.state IN ('queued','running'))`,[through]);
     const connections = await tx.query(`SELECT c.id,LEAST((c.created_at AT TIME ZONE 'Asia/Shanghai')::date,
       (SELECT min(r.effective_date) FROM connection_rates r WHERE r.connection_id=c.id),
       (SELECT min(d.day) FROM usage_days d JOIN bindings b ON b.id=d.binding_id WHERE b.connection_id=c.id))::text AS first_day
