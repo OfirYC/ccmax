@@ -7,6 +7,7 @@ import { openDB, migrate } from './db.js';
 import { createApp } from './app.js';
 import { createWorker, enqueue } from './worker.js';
 import { scheduleDailyBilling, scheduleBillingSnapshots } from './billing-scheduler.js';
+import { syncPublishedKeyTasks } from './key-market.js';
 
 const prod=process.env.NODE_ENV==='production';
 const appUrl=process.env.APP_URL||(process.env.RAILWAY_PUBLIC_DOMAIN?`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`:undefined);
@@ -36,6 +37,16 @@ if(!prod) {
 const workTimer=setInterval(()=>{worker.tick().catch(e=>app.log.error(e));},1000);
 const billingWorkTimer=setInterval(()=>{billingWorker.tick().catch(e=>app.log.error(e));},1000);
 const snapshotWorkTimer=setInterval(()=>{for(const sampler of snapshotWorkers)sampler.tick().catch(e=>app.log.error(e));},1000);
+let keyScheduling=false;
+async function scheduleKeySync() {
+  if(keyScheduling)return;
+  keyScheduling=true;
+  try {
+    const results=await syncPublishedKeyTasks(db,box);
+    if(results.some(result => 'issues' in result || 'error' in result)) app.log.warn({results},'Key task sync completed with issues');
+  } finally {keyScheduling=false;}
+}
+const keySyncTimer=setInterval(()=>{scheduleKeySync().catch(e=>app.log.error(e));},Math.max(60,Number(process.env.KEY_SYNC_INTERVAL_SECONDS)||300)*1000);
 let scheduling=false;
 async function scheduleSync() {
   if(scheduling)return;scheduling=true;
@@ -49,6 +60,7 @@ async function scheduleSync() {
 const syncTimer=setInterval(()=>{scheduleSync().catch(e=>app.log.error(e));},Math.max(60,Number(process.env.SYNC_INTERVAL_SECONDS)||300)*1000);
 await app.listen({host:process.env.HOST||'0.0.0.0',port:Number(process.env.PORT)||3000});
 await scheduleSync();
+await scheduleKeySync();
 let billingScheduling=false;
 let lastBillingMinute=-1;
 async function scheduleBilling() {
@@ -61,7 +73,7 @@ await scheduleBilling();
 let shuttingDown=false;
 async function shutdown() {
   if(shuttingDown)return;shuttingDown=true;
-  for(const timer of [workTimer,syncTimer,billingTimer,billingWorkTimer,snapshotWorkTimer])clearInterval(timer);
+  for(const timer of [workTimer,syncTimer,keySyncTimer,billingTimer,billingWorkTimer,snapshotWorkTimer])clearInterval(timer);
   worker.stop();billingWorker.stop();for(const sampler of snapshotWorkers)sampler.stop();
   await app.close();
   // Give an in-flight external mutation time to finish and commit its result.

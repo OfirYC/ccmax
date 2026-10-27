@@ -1,5 +1,5 @@
 import { platformNames } from './platforms.js';
-export const apiScopes = ['read', 'team:write', 'accounts:write', 'finance:write'] as const;
+export const apiScopes = ['read', 'team:write', 'accounts:write', 'finance:write', 'key:write'] as const;
 export type ApiScope = typeof apiScopes[number];
 type Schema = Record<string, unknown>;
 export type ApiEndpoint = {
@@ -12,6 +12,7 @@ const email = { type: 'string', format: 'email', maxLength: 200 };
 const password = { type: 'string', minLength: 12, maxLength: 200 };
 const provider = { type: 'string', enum: Object.keys(platformNames) };
 const key = { type: 'string', minLength: 8, maxLength: 100, description: 'Client-generated idempotency key. Reuse only for the identical request.' };
+const upstreamKey = { type: 'string', minLength: 8, maxLength: 1000, writeOnly: true, description: 'Upstream API key. Accepted only over HTTPS and never returned.' };
 const rate = { type: 'number', minimum: 0, maximum: 1, multipleOf: 0.0001 };
 const money = { type: 'string', pattern: '^(0|[1-9]\\d{0,15})(\\.\\d{1,8})?$', example: '10.00000000' };
 const object = (properties: Record<string, Schema>, required = Object.keys(properties)): Schema => ({ type: 'object', properties, required, additionalProperties: false });
@@ -53,7 +54,16 @@ export const apiEndpoints: ApiEndpoint[] = [
   { method: 'GET', path: '/api/jobs', scope: 'read', summary: 'Last 100 visible jobs or one job by id', query: { id: uuid } },
   { method: 'GET', path: '/api/usage', scope: 'read', summary: 'Paginated team usage (12 rows per page), totals and personal earnings', query: { ...period, provider, search: { ...text, maxLength: 200 }, page: { type: 'integer', minimum: 1, default: 1, maximum: 1000000 } } },
   { method: 'GET', path: '/api/usage/export', scope: 'read', summary: 'Export up to 100,000 matching usage rows as CSV', query: { ...period, provider, search: text }, csv: true },
-  { method: 'GET', path: '/api/finance', scope: 'read', summary: 'Balances, invoices, withdrawals and latest ledger entries (12 rows per page)', query: { tab: { type: 'string', enum: ['all', 'mine', 'children'], default: 'all' }, page: { type: 'integer', minimum: 1, default: 1, maximum: 1000000 } } },
+  { method: 'GET', path: '/api/workspaces', scope: 'read', summary: 'Workspaces available to the calling user' },
+  { method: 'GET', path: '/api/key-tasks', scope: 'read', summary: 'Visible Key supply tasks and frozen prices' },
+  { method: 'GET', path: '/api/key-tasks/:id/rates', scope: 'read', summary: 'Task prices visible to the calling user' },
+  { method: 'GET', path: '/api/key-tasks/:id/channels', scope: 'read', summary: 'Visible masked channels for a Key task' },
+  { method: 'POST', path: '/api/key-tasks/:id/channels', scope: 'key:write', summary: 'Submit an encrypted upstream API key to a published task', body: object({ secret: upstreamKey, name: { ...text, maxLength: 120 }, site: { ...text, maxLength: 120 }, models: { type: 'array', items: text, maxItems: 100 }, idempotencyKey: { ...uuid, description: 'Reuse after a transport failure only with the identical submission.' } }, ['secret']) },
+  { method: 'PATCH', path: '/api/key-channels/:id', scope: 'key:write', summary: 'Rotate, pause, resume or delete an owned Key channel', body: object({ state: { type: 'string', enum: ['active', 'paused', 'deleted'] }, secret: upstreamKey }, []) },
+  { method: 'POST', path: '/api/key-channels/:id/test', scope: 'key:write', summary: 'Test an owned New API channel' },
+  { method: 'GET', path: '/api/key-usage', scope: 'read', summary: 'Current masked channel usage and New API sync freshness', query: { taskId: uuid, page: { type: 'integer', minimum: 1, default: 1 } } },
+  { method: 'GET', path: '/api/key-settlements', scope: 'read', summary: 'Key task settlement entries and price snapshots' },
+  { method: 'GET', path: '/api/finance', scope: 'read', summary: 'Balances, invoices, withdrawals and latest ledger entries (12 rows per page)', query: { tab: { type: 'string', enum: ['all', 'mine', 'children'], default: 'all' }, source: { type: 'string', enum: ['all', 'account', 'key'], default: 'all' }, page: { type: 'integer', minimum: 1, default: 1, maximum: 1000000 } } },
   { method: 'GET', path: '/api/ledger/export', scope: 'read', summary: 'Export the calling agent’s ledger as CSV', csv: true },
   { method: 'GET', path: '/api/finance/check', scope: 'read', summary: 'Reconcile own ledger sources, frozen usage chains and withdrawals; 409 if any inconsistency exists' },
   { method: 'GET', path: '/api/invoices/preview', scope: 'read', summary: 'Read-only frozen invoice preview for self or a direct child; excludes unassigned, unverified and already invoiced usage', query: { userId: uuid, ...period } },

@@ -78,11 +78,44 @@ export async function assertFundingAccounting(db: DB, usageIds: string[], userId
   for (const invoice of new Map(parents.map(invoice => [invoice.id, invoice])).values()) await assertInvoiceAccounting(db, invoice);
 }
 
+// Key supply usage is settled directly from an append-only New API snapshot.
+// Keep the same source-of-truth checks as legacy invoices: every credited
+// entry must have one matching ledger row, and its frozen arithmetic must be
+// internally consistent even when the remote counter moves backwards.
+export async function assertTaskSettlementAccounting(db: DB, userId: string) {
+  const entries = await db.query(`SELECT e.*,s.used_quota,s.quota_per_unit,s.used_usd,s.delta_quota,s.delta_usd,
+      c.task_id,c.supplier_user_id,t.root_rate
+    FROM task_settlement_entries e
+    JOIN task_usage_snapshots s ON s.id=e.snapshot_id
+    JOIN task_channels c ON c.id=s.channel_id
+    JOIN key_tasks t ON t.id=c.task_id
+    WHERE e.user_id=$1`, [userId]);
+  if (!entries.length) return;
+  const ledger = await db.query(`SELECT reference_id,kind,amount_usd FROM ledger
+    WHERE user_id=$1 AND kind IN ('task_settlement','task_adjustment')`, [userId]);
+  const byReference = new Map(ledger.map(row => [`${row.kind}:${row.reference_id}`, row]));
+  for (const entry of entries) {
+    const key = `${entry.kind}:${entry.id}`;
+    const source = byReference.get(key);
+    if (!source || !sameMoney(source.amount_usd, entry.profit_usd)) walletConflict();
+    const rate = new Decimal(entry.rate), downstream = new Decimal(entry.downstream_rate);
+    const gross = new Decimal(entry.gross_usd), payable = new Decimal(entry.downstream_usd), profit = new Decimal(entry.profit_usd);
+    const usedQuota = new Decimal(entry.used_quota), deltaQuota = new Decimal(entry.delta_quota), delta = new Decimal(entry.delta_usd);
+    if (!rate.gte(0) || !rate.lte(1) || !downstream.gte(0) || !downstream.lte(1)
+      || !gross.minus(payable).eq(profit) || new Decimal(entry.quota_per_unit).lte(0)
+      || !usedQuota.isFinite() || !deltaQuota.isFinite() || !delta.isFinite() || usedQuota.lt(0) || usedQuota.minus(deltaQuota).lt(0)
+      || !sameMoney(entry.used_usd, usd(usedQuota.div(entry.quota_per_unit)))
+      || !sameMoney(entry.delta_usd, usd(deltaQuota.div(entry.quota_per_unit)))
+      || !sameMoney(gross, usd(delta.mul(rate))) || !sameMoney(payable, usd(delta.mul(downstream)))) walletConflict();
+  }
+}
+
 // One SQL snapshot checks all wallet sources, including legacy entries written
 // before source guards existed. The user lock serializes balance-changing writes.
 export async function assertWalletAccounting(db: DB, userId: string) {
   const [invalid] = await db.query(`SELECT 1 FROM (
     SELECT l.id FROM ledger l LEFT JOIN invoices i ON i.id=l.reference_id LEFT JOIN withdrawals w ON w.id=l.reference_id
+      LEFT JOIN task_settlement_entries te ON te.id=l.reference_id
     WHERE l.user_id=$1 AND (
       (l.kind='settlement' AND (i.id IS NULL OR i.state<>'confirmed' OR i.user_id<>l.user_id OR i.profit_usd<>l.amount_usd
         OR NOT EXISTS(SELECT 1 FROM invoice_items x WHERE x.invoice_id=i.id)
@@ -91,7 +124,8 @@ export async function assertWalletAccounting(db: DB, userId: string) {
         OR (i.gross_usd,i.downstream_usd,i.profit_usd) IS DISTINCT FROM
           (SELECT ROW(sum(e.gross_usd),sum(e.downstream_usd),sum(e.profit_usd)) FROM invoice_items x JOIN earnings e ON e.id=x.earning_id WHERE x.invoice_id=i.id)))
       OR (l.kind='withdrawal_hold' AND (w.id IS NULL OR w.user_id<>l.user_id OR l.amount_usd<>-w.amount_usd))
-      OR (l.kind='withdrawal_release' AND (w.id IS NULL OR w.user_id<>l.user_id OR w.state<>'rejected' OR l.amount_usd<>w.amount_usd)))
+      OR (l.kind='withdrawal_release' AND (w.id IS NULL OR w.user_id<>l.user_id OR w.state<>'rejected' OR l.amount_usd<>w.amount_usd))
+      OR (l.kind IN ('task_settlement','task_adjustment') AND (te.id IS NULL OR te.user_id<>l.user_id OR te.kind<>l.kind OR te.profit_usd<>l.amount_usd)))
     UNION ALL
     SELECT i.id FROM invoices i WHERE i.user_id=$1 AND i.state='confirmed'
       AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind='settlement' AND l.reference_id=i.id AND l.user_id=i.user_id AND l.amount_usd=i.profit_usd)
@@ -101,10 +135,14 @@ export async function assertWalletAccounting(db: DB, userId: string) {
       OR NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind='withdrawal_hold' AND l.reference_id=w.id AND l.user_id=w.user_id AND l.amount_usd=-w.amount_usd)
       OR ((w.state='rejected') IS DISTINCT FROM EXISTS(SELECT 1 FROM ledger l WHERE l.kind='withdrawal_release' AND l.reference_id=w.id AND l.user_id=w.user_id AND l.amount_usd=w.amount_usd)))
 
+    UNION ALL
+    SELECT e.id FROM task_settlement_entries e WHERE e.user_id=$1
+      AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind=e.kind AND l.reference_id=e.id AND l.user_id=e.user_id AND l.amount_usd=e.profit_usd)
   ) problems LIMIT 1`, [userId]);
   if (invalid) walletConflict();
   const usages = await db.query(`SELECT DISTINCT e.usage_id FROM ledger l JOIN invoices i ON i.id=l.reference_id
     JOIN invoice_items x ON x.invoice_id=i.id JOIN earnings e ON e.id=x.earning_id WHERE l.user_id=$1 AND l.kind='settlement'`, [userId]);
   await assertUsageAccounting(db, usages.map(row => row.usage_id));
   await assertFundingAccounting(db, usages.map(row => row.usage_id), userId);
+  await assertTaskSettlementAccounting(db, userId);
 }

@@ -230,3 +230,163 @@ export async function signedSettlementSources(tx: DB) {
       RETURN NEW;
     END $$`);
 }
+
+// Key supply workspace: task-scoped New API connections, encrypted supplier
+// keys and append-only usage/settlement observations. This is deliberately
+// separate from the Claude account tables so existing financial history keeps
+// its original meaning and constraints.
+export async function keyMarket(tx: DB) {
+  await tx.query('ALTER TABLE ledger DROP CONSTRAINT IF EXISTS ledger_kind_check');
+  await tx.query(`ALTER TABLE ledger ADD CONSTRAINT ledger_kind_check CHECK(kind IN ('settlement','task_settlement','task_adjustment','withdrawal_hold','withdrawal_release'))`);
+  await tx.query('ALTER TABLE ledger DROP CONSTRAINT IF EXISTS ledger_direction');
+  await tx.query(`ALTER TABLE ledger ADD CONSTRAINT ledger_direction CHECK(
+    kind IN ('settlement','task_settlement','task_adjustment') OR
+    (kind='withdrawal_hold' AND amount_usd<0) OR (kind='withdrawal_release' AND amount_usd>0))`);
+  await tx.query(`CREATE TABLE workspaces (
+    id text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('earnings','key_market')),
+    name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(kind)
+  )`);
+  await tx.query(`CREATE TABLE workspace_members (
+    workspace_id text NOT NULL REFERENCES workspaces(id), user_id text NOT NULL REFERENCES users(id),
+    role text NOT NULL CHECK(role IN ('owner','agent','supplier','viewer')),
+    active boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(workspace_id,user_id)
+  )`);
+  await tx.query('CREATE INDEX workspace_members_user ON workspace_members(user_id,active)');
+  await tx.query(`CREATE TABLE new_api_connections (
+    id text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces(id), name text NOT NULL,
+    base_url text NOT NULL, auth_type text NOT NULL CHECK(auth_type IN ('password','access_token')),
+    credentials text NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','connected','error','disabled')),
+    quota_per_unit numeric(24,8), last_sync_at timestamptz, last_error text,
+    created_by text NOT NULL REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(workspace_id,base_url)
+  )`);
+  await tx.query(`CREATE TABLE key_tasks (
+    id text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces(id),
+    new_api_connection_id text NOT NULL REFERENCES new_api_connections(id),
+    name text NOT NULL, resource_type text NOT NULL, provider text NOT NULL, models text[] NOT NULL DEFAULT '{}',
+    description text NOT NULL DEFAULT '', root_rate numeric(5,4) NOT NULL DEFAULT 1 CHECK(root_rate>=0 AND root_rate<=1),
+    state text NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','published','paused','closed')),
+    published_at timestamptz, closed_at timestamptz, created_by text NOT NULL REFERENCES users(id),
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await tx.query(`CREATE TABLE task_rates (
+    id text PRIMARY KEY, task_id text NOT NULL REFERENCES key_tasks(id), user_id text NOT NULL REFERENCES users(id),
+    rate numeric(5,4) NOT NULL CHECK(rate>=0 AND rate<=1), effective_date date NOT NULL,
+    created_by text NOT NULL REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(task_id,user_id,effective_date)
+  )`);
+  await tx.query('CREATE INDEX task_rates_lookup ON task_rates(task_id,user_id,effective_date DESC)');
+  await tx.query(`CREATE TABLE task_channels (
+    id text PRIMARY KEY, task_id text NOT NULL REFERENCES key_tasks(id), supplier_user_id text NOT NULL REFERENCES users(id),
+    secret text NOT NULL, fingerprint text NOT NULL, token_masked text NOT NULL, external_channel_id text,
+    name text NOT NULL DEFAULT '', site text NOT NULL DEFAULT '', resource_type text NOT NULL DEFAULT '',
+    models text[] NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'pending'
+      CHECK(status IN ('pending','testing','active','paused','auto_disabled','rejected','deleted','error')),
+    used_quota bigint NOT NULL DEFAULT 0, used_usd numeric(24,8) NOT NULL DEFAULT 0,
+    last_sync_at timestamptz, last_error text, created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(task_id,fingerprint), UNIQUE(task_id,external_channel_id)
+  )`);
+  await tx.query('CREATE INDEX task_channels_supplier ON task_channels(supplier_user_id,status)');
+  await tx.query(`CREATE TABLE task_usage_snapshots (
+    id text PRIMARY KEY, channel_id text NOT NULL REFERENCES task_channels(id), external_channel_id text NOT NULL,
+    used_quota bigint NOT NULL CHECK(used_quota>=0), quota_per_unit numeric(24,8) NOT NULL CHECK(quota_per_unit>0),
+    used_usd numeric(24,8) NOT NULL CHECK(used_usd>=0), delta_quota bigint NOT NULL DEFAULT 0,
+    delta_usd numeric(24,8) NOT NULL DEFAULT 0, observed_at timestamptz NOT NULL,
+    source_hash text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(channel_id,source_hash)
+  )`);
+  await tx.query(`CREATE TABLE task_settlement_entries (
+    id text PRIMARY KEY, snapshot_id text NOT NULL REFERENCES task_usage_snapshots(id),
+    user_id text NOT NULL REFERENCES users(id), payer_id text REFERENCES users(id), next_user_id text REFERENCES users(id),
+    rate numeric(5,4) NOT NULL, downstream_rate numeric(5,4) NOT NULL,
+    gross_usd numeric(24,8) NOT NULL, downstream_usd numeric(24,8) NOT NULL,
+    profit_usd numeric(24,8) NOT NULL, kind text NOT NULL CHECK(kind IN ('task_settlement','task_adjustment')),
+    created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(snapshot_id,user_id,kind)
+  )`);
+  await tx.query('CREATE INDEX task_settlement_user ON task_settlement_entries(user_id,created_at DESC)');
+  await tx.query(`CREATE TRIGGER task_settlement_append_only BEFORE UPDATE OR DELETE ON task_settlement_entries
+    FOR EACH ROW EXECUTE FUNCTION ccmax_reject_change()`);
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_ledger_source() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.kind='settlement' THEN
+        IF NOT EXISTS(SELECT 1 FROM invoices i WHERE i.id=NEW.reference_id AND i.user_id=NEW.user_id
+          AND i.state='confirmed' AND i.profit_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: settlement ledger source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind IN ('task_settlement','task_adjustment') THEN
+        IF NOT EXISTS(SELECT 1 FROM task_settlement_entries e WHERE e.id=NEW.reference_id
+          AND e.user_id=NEW.user_id AND e.kind=NEW.kind AND e.profit_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: task settlement ledger source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_hold' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id
+          AND w.state='pending' AND -w.amount_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal hold source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_release' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w JOIN ledger h ON h.reference_id=w.id AND h.kind='withdrawal_hold'
+          WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id AND w.state='rejected' AND w.amount_usd=NEW.amount_usd
+            AND h.user_id=w.user_id AND h.amount_usd=-w.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal release source mismatch' USING ERRCODE='23514';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END $$`);
+}
+
+// A single New API instance may host several independently priced tasks.  The
+// task owns the binding; the connection itself is reusable across tasks.
+export async function keyMarketSharedConnections(tx: DB) {
+  await tx.query('ALTER TABLE key_tasks DROP CONSTRAINT IF EXISTS key_tasks_new_api_connection_id_key');
+}
+
+// Store the observed counter increment explicitly so a financial reviewer can
+// reconcile a settlement entry without reconstructing it from later snapshots.
+export async function keyMarketSnapshotDeltas(tx: DB) {
+  await tx.query('ALTER TABLE task_usage_snapshots ADD COLUMN IF NOT EXISTS delta_quota bigint NOT NULL DEFAULT 0');
+  await tx.query('ALTER TABLE task_usage_snapshots ADD COLUMN IF NOT EXISTS delta_usd numeric(24,8) NOT NULL DEFAULT 0');
+  await tx.query(`WITH ordered AS (
+    SELECT id,used_quota,quota_per_unit,LAG(used_quota,1,0) OVER(PARTITION BY channel_id ORDER BY observed_at,created_at,id) AS previous_quota
+    FROM task_usage_snapshots
+  ) UPDATE task_usage_snapshots s SET delta_quota=o.used_quota-o.previous_quota,
+    delta_usd=ROUND((o.used_quota-o.previous_quota)::numeric/o.quota_per_unit,8) FROM ordered o WHERE s.id=o.id`);
+  await tx.query(`CREATE TRIGGER task_usage_snapshot_append_only BEFORE UPDATE OR DELETE ON task_usage_snapshots
+    FOR EACH ROW EXECUTE FUNCTION ccmax_reject_change()`);
+}
+
+export async function keyMarketSubmissionIdempotency(tx: DB) {
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS idempotency_key text');
+  await tx.query('CREATE UNIQUE INDEX IF NOT EXISTS task_channels_submission_idempotency ON task_channels(task_id,supplier_user_id,idempotency_key) WHERE idempotency_key IS NOT NULL');
+}
+
+// KeyMan is a tenant-aware NewAPI derivative. Keep its connection and form
+// settings in the same isolated key-market tables while making the adapter
+// choice explicit and preserving all existing standard New API rows.
+export async function keyManTemplate(tx: DB) {
+  await tx.query("ALTER TABLE new_api_connections ADD COLUMN IF NOT EXISTS adapter_type text NOT NULL DEFAULT 'standard_new_api'");
+  await tx.query("ALTER TABLE new_api_connections DROP CONSTRAINT IF EXISTS new_api_connections_adapter_type_check");
+  await tx.query("ALTER TABLE new_api_connections ADD CONSTRAINT new_api_connections_adapter_type_check CHECK(adapter_type IN ('standard_new_api','keyman_newapi'))");
+  await tx.query('ALTER TABLE new_api_connections ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT \'1\'');
+  await tx.query('ALTER TABLE key_tasks ADD COLUMN IF NOT EXISTS template_type text NOT NULL DEFAULT \'standard_new_api\'');
+  await tx.query("ALTER TABLE key_tasks DROP CONSTRAINT IF EXISTS key_tasks_template_type_check");
+  await tx.query("ALTER TABLE key_tasks ADD CONSTRAINT key_tasks_template_type_check CHECK(template_type IN ('standard_new_api','keyman_newapi'))");
+  await tx.query('ALTER TABLE key_tasks ADD COLUMN IF NOT EXISTS gateway_id text');
+  await tx.query('ALTER TABLE key_tasks ADD COLUMN IF NOT EXISTS template_config text NOT NULL DEFAULT \'{}\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS channel_type integer');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS base_url text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS groups text[] NOT NULL DEFAULT \'{default}\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS model_mapping text NOT NULL DEFAULT \'{}\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS openai_organization text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS test_model text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS remark text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS socks5_proxy_level text NOT NULL DEFAULT \'medium\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS auto_ban boolean NOT NULL DEFAULT true');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS settings text NOT NULL DEFAULT \'{}\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS setting text NOT NULL DEFAULT \'{}\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS param_override text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS other text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS status_code_mapping text NOT NULL DEFAULT \'\'');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS multi_key_mode text');
+  await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS key_mode text');
+  await tx.query('CREATE INDEX IF NOT EXISTS key_tasks_template ON key_tasks(template_type,state)');
+}

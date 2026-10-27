@@ -225,3 +225,19 @@ html[lang="hi"]{line-height:1.65}
 @media(max-width:520px){.historical-weekly-peak{padding:20px}.historical-weekly-peak>strong{font-size:34px}.monetization-start>.historical-weekly-peak{margin-left:16px;margin-right:16px}}
 
 .platform-mark.D{color:#7657a1;background:#f1ebf9}
+
+/* Key supply workspace */
+.key-shell .workspace-switch{color:inherit}
+.key-shell .workspace-switch:hover{border-color:#a8cfc3;background:#f5fbf8}
+.key-stats .stat-value-unit{font:500 12px 'DM Mono';color:var(--muted);margin-left:4px}
+.key-models{display:block;max-width:250px;white-space:normal;line-height:1.55;overflow-wrap:anywhere}
+.key-usage-totals{margin:0 0 17px;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden}
+.key-usage-totals>div{min-width:0}
+.key-finance-summary{margin-top:2px}
+.key-connections{align-items:start}
+.key-auth-tabs{display:flex;gap:4px;margin:6px 0 17px;border-bottom:1px solid var(--line)}
+.key-auth-tabs button{padding:8px 10px;border-bottom:2px solid transparent;font-size:11px;color:var(--muted)}
+.key-auth-tabs button.active{color:var(--teal-dark);border-bottom-color:var(--teal);font-weight:600}
+.warning-text{color:#a97429!important}
+@media(max-width:880px){.key-models{max-width:180px}}
+.form-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.advanced-panel{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:11px 13px}.advanced-panel summary{cursor:pointer;color:var(--muted);font-size:12px;margin-bottom:10px}.advanced-panel[open] summary{color:var(--ink)}

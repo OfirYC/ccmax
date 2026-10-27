@@ -1410,5 +1410,8 @@
   "平台 C": "Nền tảng C",
   "平台 D": "Nền tảng D",
   "授权链接暂不可用，请联系管理员核对平台配置": "Liên kết ủy quyền tạm thời không khả dụng. Liên hệ quản trị viên để kiểm tra cấu hình nền tảng.",
-  "平台价格不能重复设置": "Không thể đặt giá cho cùng một nền tảng nhiều lần."
+  "平台价格不能重复设置": "Không thể đặt giá cho cùng một nền tảng nhiều lần.",
+  "切换到 Key 供货": "Chuyển sang cung cấp Key",
+  "设置": "Cài đặt",
+  "提交和管理 Key 渠道": "Gửi và quản lý kênh Key"
 }

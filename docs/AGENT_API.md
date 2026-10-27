@@ -91,8 +91,18 @@ Bearer 请求不需要网页登录 Cookie 或 `x-ccmax-request` 标记；网站 
 | `GET /api/connections` | `{connections, providers, today}`，自己的结算价和平台能力 |
 | `GET /api/proxies` | `{proxies}`，仅本人添加、无认证密码的代理列表 |
 | `GET /api/usage?from=2026-10-01&to=2026-10-18&page=1` | `{rows, totals, total, page}`，每页 12 条 |
-| `GET /api/finance?tab=mine&page=1` | `{balance, pendingProfit, invoicesTotal, withdrawalsTotal, invoices, withdrawals, ledger}`，账单和提现各每页 12 条 |
+| `GET /api/finance?tab=mine&source=all&page=1` | `{balance, pendingProfit, invoicesTotal, withdrawalsTotal, invoices, withdrawals, ledger}`，`source` 可选 `all`、`account`、`key`，账单和提现各每页 12 条 |
 | `GET /api/finance/check` | `{ok:true, balance, checkedAt}`，只核对密钥所属用户的钱包、利润来源与冻结/释放流水；异常返回 409 |
+
+## Key 供货工作空间
+
+登录账号可以在主工作空间和 Key 供货工作空间之间切换。Key 任务由管理员绑定一个供货平台连接并发布；连接模板支持标准 New API 和 KeyMan NewAPI 定制适配器。KeyMan 任务还绑定一个网关，成员提交表单会透传类型、批量密钥、组织、API 地址、模型、分组、模型重定向和高级 JSON 设置。成员只有在任务存在当前价格时才能提交上游 Key。完整 Key 只在服务端加密保存，接口仅返回 `token_masked` 和渠道状态。
+
+管理员通过 `POST /api/new-api-connections` 创建连接，`adapterType` 可取 `standard_new_api` 或 `keyman_newapi`；KeyMan 连接可用 `GET /api/new-api-connections/:id/gateways` 查询网关。KeyMan 租户若开启验证码，连接凭据需带浏览器取得的 `captchaVerification`，也可以直接使用管理访问令牌。创建任务时把 `templateType` 和 `gatewayId` 绑定到 `POST /api/key-tasks`。KeyMan 的 `POST /api/key-tasks/:id/models` 可在不落库的情况下从上游拉取模型；批量提交使用 `POST /api/key-tasks/:id/channels` 的 `secrets` 数组，服务端逐条创建渠道并保留每个 Key 的指纹和幂等记录。
+
+带 `read` 权限的密钥可以读取 `/api/workspaces`、`/api/key-tasks`、`/api/key-tasks/:id/rates`、`/api/key-tasks/:id/channels`、`/api/key-usage` 和 `/api/key-settlements`。需要额外开启 `key:write` 才能调用 `POST /api/key-tasks/:id/channels` 提交 Key，以及 `PATCH /api/key-channels/:id` 轮换、暂停、恢复或删除自己的渠道、`POST /api/key-channels/:id/test` 测试渠道。管理员的 New API 凭据、连接管理、任务创建/发布/定价和后台同步仍然只支持网页登录。
+
+标准 New API 渠道每 5 分钟同步一次 `used_quota`，并按 `/api/status` 返回的 `quota_per_unit` 换算 USD；KeyMan 渠道读取 `/newapi/channel/page`、`/newapi/channel/stat`，优先使用连接或网关返回的额度换算单位。同步产生的任务流水直接进入统一钱包；重复快照不会重复入账，计数回退会生成 `task_adjustment` 负向流水。`GET /api/finance?source=key` 可单独读取 Key 任务来源的统一账本流水。
 | `GET /api/jobs?id=<UUID>` | `{jobs}`，按任务编号查状态；不传编号时最多最近 100 条可见任务 |
 | `GET /api/audits` | `{rows}`，最多最近 300 条可见审计 |
 

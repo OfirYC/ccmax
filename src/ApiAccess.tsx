@@ -8,7 +8,7 @@ import type { ApiScope } from '../shared/integration';
 
 type Key = { id: string; name: string; prefix: string; scopes: ApiScope[]; expires_at: string; revoked_at: string | null; last_used_at: string | null };
 type KeyData = { keys: Key[]; baseUrl: string; maxActiveKeys: number };
-const scopeNames: Record<ApiScope, string> = { read: '读取团队数据', 'team:write': '管理直属下级与定价', 'accounts:write': '管理账号、代理与上号', 'finance:write': '操作账单与提现' };
+const scopeNames: Record<ApiScope, string> = { read: '读取团队数据', 'team:write': '管理直属下级与定价', 'accounts:write': '管理账号、代理与上号', 'finance:write': '操作账单与提现', 'key:write': '提交和管理 Key 渠道' };
 const scopes = Object.keys(scopeNames) as ApiScope[];
 const date = (value: string) => new Date(value).toLocaleDateString(getLocale(), { timeZone: 'Asia/Shanghai' });
 

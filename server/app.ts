@@ -24,6 +24,7 @@ import { isPublicInvitation, registerInvitations } from './invitations.js';
 import { registerMonetization } from './monetization.js';
 import { isPublicWeeklyRecord } from './weekly-record.js';
 import { decodePlatformRequest, encodePlatformResponse, publicPlatformName } from './platform-privacy.js';
+import { initializeKeyMarket, registerKeyMarket } from './key-market.js';
 
 declare module 'fastify' { interface FastifyRequest { user: Row; } }
 const identifier=z.string().uuid();
@@ -118,6 +119,12 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   registerMonetization(app,db);
   registerTelemetry(app,db,connectionName);
   registerBilling(app,db,box);
+  // Key supply is a separate workspace, but it shares authentication and the
+  // existing wallet.  Initialize its membership projection before exposing
+  // any of the workspace routes so a newly bootstrapped database is ready on
+  // the first request.
+  await initializeKeyMarket(db);
+  registerKeyMarket(app,db,box);
   app.get('/health',async()=>{await db.query('SELECT 1');return {status:'ok',service:'ccmax'};});
   app.post('/api/auth/login',{config:{rateLimit:{max:8,timeWindow:'1 minute'}}},async(req,reply)=>{
     const data=z.object({email,password:z.string().min(1).max(200)}).parse(req.body);
@@ -580,18 +587,19 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:platformCatalog(req.user.role==='owner'),pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
   });
   app.get('/api/finance',async req=>{
-    const q=z.object({tab:z.enum(['all','mine','children']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);
+    const q=z.object({tab:z.enum(['all','mine','children']).default('all'),source:z.enum(['all','account','key']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);
     const filter=(alias:string)=>`(${alias}.user_id=$1 OR ${alias}.payer_id=$1) AND ($2::text='all' OR ($2='mine' AND ${alias}.user_id=$1) OR ($2='children' AND ${alias}.payer_id=$1))`;
     const params=[req.user.id,q.tab],offset=(q.page-1)*12;
-    const [ic]=await db.query(`SELECT count(*) AS count FROM invoices i WHERE ${filter('i')}`,params);
-    const [wc]=await db.query(`SELECT count(*) AS count FROM withdrawals w WHERE ${filter('w')}`,params);
-    const [pending]=await db.query(`SELECT COALESCE(sum(profit_usd),0) AS amount FROM invoices WHERE user_id=$1 AND state='pending'`,[req.user.id]);
-    const invoices=await db.query(`SELECT i.*,u.name AS user_name,p.name AS payer_name FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users p ON p.id=i.payer_id
-      WHERE ${filter('i')} ORDER BY i.created_at DESC,i.id LIMIT 12 OFFSET $3`,[...params,offset]);
-    const withdrawals=await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
-      WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]);
-    const ledger=await db.query('SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20',[req.user.id]);
-    return {balance:await balance(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger};
+    const accountSource=q.source!=='key';
+    const [ic]=accountSource?await db.query(`SELECT count(*) AS count FROM invoices i WHERE ${filter('i')}`,params):[{count:0}];
+    const [wc]=accountSource?await db.query(`SELECT count(*) AS count FROM withdrawals w WHERE ${filter('w')}`,params):[{count:0}];
+    const [pending]=accountSource?await db.query(`SELECT COALESCE(sum(profit_usd),0) AS amount FROM invoices WHERE user_id=$1 AND state='pending'`,[req.user.id]):[{amount:0}];
+    const invoices=accountSource?await db.query(`SELECT i.*,u.name AS user_name,p.name AS payer_name FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users p ON p.id=i.payer_id
+      WHERE ${filter('i')} ORDER BY i.created_at DESC,i.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
+    const withdrawals=accountSource?await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
+      WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
+    const ledger=await db.query(`SELECT * FROM ledger WHERE user_id=$1 AND ($2='all' OR ($2='account' AND kind='settlement') OR ($2='key' AND kind IN ('task_settlement','task_adjustment'))) ORDER BY created_at DESC LIMIT 20`,[req.user.id,q.source]);
+    return {balance:await balance(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger,source:q.source};
   });
   app.get('/api/ledger/export',async(req,reply)=>{
     const [total]=await db.query('SELECT count(*) AS count FROM ledger WHERE user_id=$1',[req.user.id]);

@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
-import { hardenSchema, extendProviders, accountProxies, integrationKeys, financialSources, signedSettlementSources } from './migrations.js';
+import { hardenSchema, extendProviders, accountProxies, integrationKeys, financialSources, signedSettlementSources, keyMarket, keyMarketSharedConnections, keyMarketSnapshotDeltas, keyMarketSubmissionIdempotency, keyManTemplate } from './migrations.js';
 import { telemetryMigration } from './telemetry.js';
 import { dailyBillingMigration } from './daily-billing-migration.js';
 import { snapshotRecoveryMigration } from './snapshot-recovery-migration.js';
@@ -142,6 +142,26 @@ export async function migrate(db: DB) {
     if (!done.some(row=>Number(row.version)===15)) {
       await extendProviders(tx,['connections','rates','invitation_rates']);
       await tx.query('INSERT INTO migrations(version) VALUES (15)');
+    }
+    if (!done.some(row=>Number(row.version)===16)) {
+      await keyMarket(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (16)');
+    }
+    if (!done.some(row=>Number(row.version)===17)) {
+      await keyMarketSharedConnections(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (17)');
+    }
+    if (!done.some(row=>Number(row.version)===18)) {
+      await keyMarketSnapshotDeltas(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (18)');
+    }
+    if (!done.some(row=>Number(row.version)===19)) {
+      await keyMarketSubmissionIdempotency(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (19)');
+    }
+    if (!done.some(row=>Number(row.version)===20)) {
+      await keyManTemplate(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (20)');
     }
   });
 }

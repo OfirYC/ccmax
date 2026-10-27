@@ -1410,5 +1410,8 @@
   "平台 C": "Platform C",
   "平台 D": "Platform D",
   "授权链接暂不可用，请联系管理员核对平台配置": "Authorization link is unavailable. Contact the administrator to review the platform configuration.",
-  "平台价格不能重复设置": "A platform price cannot be set more than once."
+  "平台价格不能重复设置": "A platform price cannot be set more than once.",
+  "切换到 Key 供货": "Switch to Key supply",
+  "设置": "Settings",
+  "提交和管理 Key 渠道": "Submit and manage Key channels"
 }
