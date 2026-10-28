@@ -16,6 +16,7 @@ describe('KeyMan NewAPI adapter', () => {
       const url = new URL(String(input)); calls.push({ path: url.pathname + url.search, init });
       if (url.pathname.endsWith('/system/auth/login')) return Response.json({ code: 0, data: { accessToken: 'access-token-fixture', refreshToken: 'refresh-token-fixture' } });
       if (url.pathname.endsWith('/newapi/gateway/simple-list')) return Response.json({ code: 0, data: [{ id: 7, name: 'fixture gateway' }] });
+      if (url.pathname.endsWith('/newapi/channel/groups')) return Response.json({ code: 0, data: ['default', 'vertex_gemini'] });
       if (url.pathname.endsWith('/newapi/channel/console-status')) return Response.json({ code: 0, data: { quota_per_unit: 500000 } });
       if (url.pathname.endsWith('/newapi/channel/page')) return Response.json({ code: 0, data: { list: [{ id: 11, name: 'fixture channel', status: 1, usedQuota: 100000, models: ['gpt-4o'] }], total: 1 } });
       if (url.pathname.endsWith('/newapi/channel/create')) return Response.json({ code: 0, data: { id: 12, name: 'created', status: 1, usedQuota: 0 } });
@@ -26,15 +27,18 @@ describe('KeyMan NewAPI adapter', () => {
       await client.authenticate();
       const status = await client.status();
       const channels = await client.listChannels('7');
-      const created = await client.createChannel({ gatewayId: '7', key: 'sk-fixture-secret', name: 'fixture', models: ['gpt-4o'] });
+      const groups = await client.listGroups('7');
+      const created = await client.createChannel({ gatewayId: '7', key: 'sk-fixture-secret', name: 'fixture', models: ['gpt-4o'], groups: ['vertex_gemini'], socks5ProxyLevel: 'high' });
       expect(status.quotaPerUnit).toBe(500000);
       expect(channels[0]).toMatchObject({ id: '11', usedQuota: 100000, models: ['gpt-4o'] });
+      expect(groups).toEqual(['default', 'vertex_gemini']);
       expect(created.id).toBe('12');
       const pageCall = calls.find(call => call.path.includes('/newapi/channel/page'))!;
       expect(new Headers(pageCall.init?.headers).get('Authorization')).toBe('Bearer access-token-fixture');
       expect(new Headers(pageCall.init?.headers).get('tenant-id')).toBe('1');
       const createCall = calls.find(call => call.path.endsWith('/newapi/channel/create'))!;
-      expect(JSON.parse(String(createCall.init?.body))).toMatchObject({ gatewayId: '7', keys: ['sk-fixture-secret'], groups: ['default'], autoBan: 1 });
+      expect(JSON.parse(String(createCall.init?.body))).toMatchObject({ gatewayId: '7', keys: ['sk-fixture-secret'], groups: ['vertex_gemini'], autoBan: 1, mode: 'security_gateway' });
+      expect(JSON.parse(String(createCall.init?.body)).setting).toContain('"socks5_proxy_level":"high"');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -54,6 +58,7 @@ describe('KeyMan NewAPI adapter', () => {
       }
       if (expireSession && new Headers(init?.headers).get('Authorization') === 'Bearer access-token-fixture') return Response.json({ code: 401, msg: '登录已过期' });
       if (url.pathname.endsWith('/newapi/gateway/simple-list')) return Response.json({ code: 0, data: [{ id: 7, name: 'fixture gateway' }] });
+      if (url.pathname.endsWith('/newapi/channel/groups')) return Response.json({ code: 0, data: ['default', 'supplier-east'] });
       if (url.pathname.endsWith('/newapi/channel/console-status')) return Response.json({ code: 0, data: { quota_per_unit: 500000 } });
       if (url.pathname.endsWith('/newapi/channel/page')) return Response.json({ code: 0, data: { list: [{ id: 12, name: 'fixture', status: 1, usedQuota, models: ['gpt-4o'] }], total: 1 } });
       if (url.pathname.endsWith('/newapi/channel/create')) return Response.json({ code: 0, data: { id: 12, name: 'fixture', status: 1, usedQuota: 0 } });
@@ -75,6 +80,9 @@ describe('KeyMan NewAPI adapter', () => {
       expect(task.statusCode).toBe(200);
       const taskId = task.json().task.id;
       expect((await request('PATCH', `/api/key-tasks/${taskId}`, { state: 'published' })).statusCode).toBe(200);
+      const options = await request('GET', `/api/key-tasks/${taskId}/options`);
+      expect(options.statusCode).toBe(200);
+      expect(options.json().groups).toEqual(['default', 'supplier-east']);
       const channel = await request('POST', `/api/key-tasks/${taskId}/channels`, { secrets: ['sk-keyman-fixture'], idempotencyKey: id() });
       expect(channel.statusCode).toBe(200);
       expect(channel.json().channels).toHaveLength(1);

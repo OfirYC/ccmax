@@ -13,7 +13,10 @@ const taskState = z.enum(['draft', 'published', 'paused', 'closed']);
 const authType = z.enum(['password', 'access_token']);
 const adapterType = z.enum(['standard_new_api', 'keyman_newapi']);
 const templateType = adapterType;
-const keyValue = z.string().trim().min(8).max(1000);
+// Vertex service-account JSON and other structured credentials can be larger
+// than a normal sk- token. They remain encrypted at rest and are never sent
+// back to the browser, so allow enough room for a complete credential file.
+const keyValue = z.string().trim().min(8).max(20000);
 
 function masked(value: string) {
   if (value.length <= 8) return `${value.slice(0, 2)}****${value.slice(-2)}`;
@@ -474,6 +477,25 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
     return { rates: await db.query(`SELECT r.*,u.name AS user_name FROM task_rates r JOIN users u ON u.id=r.user_id WHERE r.task_id=$1 ${ids ? 'AND r.user_id=ANY($2::text[])' : ''} ORDER BY r.effective_date DESC,u.name`, ids ? [task.id, ids] : [task.id]) };
   });
 
+  app.get('/api/key-tasks/:id/options', async req => {
+    const { workspace } = await assertMember(db, req.user);
+    const task = await getTask(db, identifier.parse((req.params as Row).id), workspace.id);
+    assert(req.user.role === 'owner' || await canSubmitTask(db, task, req.user), '请先完成此任务报价', 403);
+    const connection = await getConnection(db, task.new_api_connection_id, workspace.id);
+    if (!isKeyMan(connection)) return { groups: [] };
+    assert(task.gateway_id, 'KeyMan 任务未绑定网关', 409);
+    try {
+      const client = connectionClient(box, connection) as KeyManClient;
+      await client.authenticate();
+      const groups = await client.listGroups(String(task.gateway_id));
+      await persistKeyManSession(db, box, connection, client);
+      return { groups };
+    } catch (error) {
+      await db.query("UPDATE new_api_connections SET status='error',last_error=$2 WHERE id=$1", [connection.id, error instanceof Error ? error.message : '分组加载失败']);
+      throw error;
+    }
+  });
+
   app.get('/api/key-tasks/:id/channels', async req => {
     const { workspace } = await assertMember(db, req.user); const task = await getTask(db, identifier.parse((req.params as Row).id), workspace.id);
     assert(req.user.role === 'owner' || await canSubmitTask(db, task, req.user), '请先完成此任务报价', 403);
@@ -518,7 +540,7 @@ export function registerKeyMarket(app: FastifyInstance, db: DB, box: SecretBox) 
     const keyman = isKeyMan(connection);
     if (keyman) assert(task.gateway_id, 'KeyMan 任务未绑定网关', 409);
     const models = body.models.length ? body.models : task.models;
-    const config: KeyManChannelInput = { gatewayId: String(task.gateway_id || ''), key: '', name: '', type: body.channelType, baseUrl: body.baseUrl, models, groups: body.groups, modelMapping: body.modelMapping, openaiOrganization: body.openaiOrganization, testModel: body.testModel, remark: body.remark, autoBan: body.autoBan, settings: body.settings, setting: body.setting, paramOverride: body.paramOverride, other: body.other, statusCodeMapping: body.statusCodeMapping, multiKeyMode: body.multiKeyMode, keyMode: body.keyMode };
+    const config: KeyManChannelInput = { gatewayId: String(task.gateway_id || ''), key: '', name: '', type: body.channelType, baseUrl: body.baseUrl, models, groups: body.groups, modelMapping: body.modelMapping, openaiOrganization: body.openaiOrganization, testModel: body.testModel, remark: body.remark, autoBan: body.autoBan, socks5ProxyLevel: body.socks5ProxyLevel, settings: body.settings, setting: body.setting, paramOverride: body.paramOverride, other: body.other, statusCodeMapping: body.statusCodeMapping, multiKeyMode: body.multiKeyMode, keyMode: body.keyMode };
     const channels = [];
     for (let index = 0; index < submitted.length; index++) {
       const secret = submitted[index]; const fp = fingerprint(secret); const requestKey = body.idempotencyKey ? `${body.idempotencyKey}:${index}` : undefined;

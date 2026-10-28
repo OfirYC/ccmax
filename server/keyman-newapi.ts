@@ -23,6 +23,7 @@ export type KeyManChannelInput = {
   testModel?: string;
   remark?: string;
   autoBan?: boolean;
+  socks5ProxyLevel?: 'low' | 'medium' | 'high';
   settings?: string | Record<string, unknown>;
   setting?: string | Record<string, unknown>;
   paramOverride?: string;
@@ -50,6 +51,11 @@ function modelsOf(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   if (typeof value === 'string') return value.split(/[\n,]/).map(v => v.trim()).filter(Boolean);
   return [];
+}
+
+function groupsOf(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : (value && typeof value === 'object' ? (value as any).list ?? (value as any).items ?? (value as any).groups ?? [] : []);
+  return Array.isArray(raw) ? raw.map(item => typeof item === 'string' ? item : item?.value ?? item?.name ?? item?.label).filter((item): item is string | number => typeof item === 'string' || typeof item === 'number').map(String).map(value => value.trim()).filter(Boolean) : [];
 }
 
 function channelOf(value: any): NewApiChannel {
@@ -209,7 +215,37 @@ export class KeyManClient {
     return Array.isArray(list) ? list.map(channelOf).filter(row => row.id) : [];
   }
 
+  async listGroups(gatewayId: string): Promise<string[]> {
+    const result = await this.request(`/newapi/channel/groups?gatewayId=${encodeURIComponent(gatewayId)}`);
+    const groups = groupsOf(dataOf(result));
+    return [...new Set(groups)];
+  }
+
   async createChannel(input: KeyManChannelInput): Promise<NewApiChannel> {
+    const settingDefaults = {
+      force_format: false,
+      thinking_to_content: false,
+      socks5_proxy_level: input.socks5ProxyLevel || 'medium',
+      socks5_assignment_policy: input.socks5ProxyLevel === 'high' ? 'fixed' : 'dynamic',
+      socks5_rotation_interval_seconds: 300,
+      pass_through_body_enabled: false,
+      system_prompt: '',
+      system_prompt_override: false,
+      tls_fingerprint: '',
+      security_gateway_request_type: 'distill',
+      security_gateway_bandwidth: '',
+      security_gateway_random_egress: true,
+      security_gateway_custom_proxy_address: '',
+    };
+    let setting: Record<string, unknown> = {};
+    if (typeof input.setting === 'string' && input.setting.trim()) {
+      try { setting = JSON.parse(input.setting); } catch { setting = {}; }
+    } else if (input.setting && typeof input.setting === 'object') setting = input.setting;
+    setting = { ...settingDefaults, ...setting };
+    if (input.socks5ProxyLevel) {
+      setting.socks5_proxy_level = input.socks5ProxyLevel;
+      setting.socks5_assignment_policy = input.socks5ProxyLevel === 'high' ? 'fixed' : 'dynamic';
+    }
     const payload: Record<string, unknown> = {
       gatewayId: input.gatewayId,
       type: input.type ?? 1,
@@ -226,10 +262,11 @@ export class KeyManClient {
       remark: input.remark || undefined,
       autoBan: input.autoBan === false ? 0 : 1,
       settings: typeof input.settings === 'string' ? input.settings : JSON.stringify(input.settings || {}),
-      setting: typeof input.setting === 'string' ? input.setting : JSON.stringify(input.setting || {}),
+      setting: JSON.stringify(setting),
       paramOverride: input.paramOverride || '',
       other: input.other || '',
       statusCodeMapping: input.statusCodeMapping || '',
+      mode: 'security_gateway',
     };
     const result = await this.request('/newapi/channel/create', { method: 'POST', body: JSON.stringify(payload) });
     const data = dataOf(result);
