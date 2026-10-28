@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
-import { hardenSchema, extendProviders, accountProxies, integrationKeys, financialSources, signedSettlementSources, keyMarket, keyMarketSharedConnections, keyMarketSnapshotDeltas, keyMarketSubmissionIdempotency, keyManTemplate } from './migrations.js';
+import { hardenSchema, extendProviders, accountProxies, accountProxyRotation, bindingUsageControls, integrationKeys, financialSources, signedSettlementSources, keyMarket, keyMarketSharedConnections, keyMarketSnapshotDeltas, keyMarketSubmissionIdempotency, keyManTemplate } from './migrations.js';
 import { telemetryMigration } from './telemetry.js';
 import { dailyBillingMigration } from './daily-billing-migration.js';
 import { snapshotRecoveryMigration } from './snapshot-recovery-migration.js';
@@ -163,5 +163,10 @@ export async function migrate(db: DB) {
       await keyManTemplate(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (20)');
     }
+    // Compatibility upgrades that do not change the numbered migration
+    // contract: verified account proxy rotation and local usage pausing are
+    // safe to apply idempotently on every startup, including v20 databases.
+    await accountProxyRotation(tx);
+    await bindingUsageControls(tx);
   });
 }

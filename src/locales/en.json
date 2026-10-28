@@ -1415,5 +1415,22 @@
   "平台价格不能重复设置": "A platform price cannot be set more than once.",
   "切换到 Key 供货": "Switch to Key supply",
   "设置": "Settings",
-  "提交和管理 Key 渠道": "Submit and manage Key channels"
+  "提交和管理 Key 渠道": "Submit and manage Key channels",
+  "更换代理": "Change proxy",
+  "取消更换": "Cancel change",
+  "当前使用": "Currently used",
+  "新的账号固定代理": "New fixed account proxy",
+  "更换为所选代理": "Change to selected proxy",
+  "添加并更换代理": "Add and change proxy",
+  "账号归属核实后可更换代理，历史账单和平台绑定会保留。": "You can change the proxy after ownership is verified; billing history and platform bindings are retained.",
+  "所有平台自动沿用这条代理。": "All platforms automatically use this proxy.",
+  "账号完成归属核实后才能更换固定代理": "Verify account ownership before changing its fixed proxy",
+  "账号仍有进行中的任务，请等待任务完成后再更换代理": "This account has a task in progress. Wait for it to finish before changing the proxy.",
+  "该代理已绑定其他账号，请选择未占用的代理": "That proxy is bound to another account. Select an available proxy.",
+  "仅平台 A 支持在 CCMAX 内单独停用使用": "Only Platform A supports pausing usage inside CCMAX",
+  "仅在 CCMAX 停用": "Disable in CCMAX only",
+  "恢复 CCMAX 使用": "Resume CCMAX use",
+  "本地已停用平台使用；不会修改上游账号状态。": "Usage is paused in CCMAX; the upstream account status is unchanged.",
+  "平台 A 使用已在 CCMAX 停用": "Platform A usage is paused in CCMAX",
+  "平台 A 使用已恢复": "Platform A usage resumed"
 }

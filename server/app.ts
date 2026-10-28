@@ -329,7 +329,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       WHERE (a.owner_id=ANY($1::text[]) AND a.ownership_verified) OR $2::boolean`,[ids,root]);
     const visibleBindings=publicConnectionRows(req.user,bindings.map(({data,enabled,...b})=>{
       const {telemetry,fresh}=snapshotView({...b,data,enabled});
-      return {...b,connection_enabled:enabled,telemetry,data_fresh:fresh,snapshot_at:telemetry?.sourceAt??telemetry?.collectedAt??null,
+      return {...b,usage_enabled:b.local_enabled!==false,connection_enabled:enabled,telemetry,data_fresh:fresh,snapshot_at:telemetry?.sourceAt??telemetry?.collectedAt??null,
         today_usd:fresh&&telemetry?.day===today()?telemetry.periods.today.billedUsd:null};
     }));
     const proxyJobs=await db.query(`SELECT DISTINCT ON(subject_id,connection_id) subject_id,connection_id,state,error FROM jobs
@@ -348,12 +348,21 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const accountId=identifier.parse((req.params as Row).id),d=z.object({proxyId:identifier}).parse(req.body);
     return db.transaction(async tx=>{
       const [a]=await tx.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);assert(a?.owner_id===req.user.id,'只能为自己名下账号绑定代理',403);
-      assert(!a.proxy_id||a.proxy_id===d.proxyId,'账号已固定绑定代理，不能在平台之间切换代理',409);
+      const rotating=!!a.proxy_id&&a.proxy_id!==d.proxyId;
+      assert(!rotating||a.ownership_verified,'账号完成归属核实后才能更换固定代理',409);
+      if(rotating) {
+        const [active]=await tx.query(`SELECT j.id FROM jobs j WHERE j.state IN ('queued','running') AND
+          (j.subject_id=$1 OR EXISTS(SELECT 1 FROM bindings b WHERE b.account_id=$1 AND b.id=j.subject_id)) LIMIT 1`,[accountId]);
+        assert(!active,'账号仍有进行中的任务，请等待任务完成后再更换代理',409);
+      }
       const [p]=await tx.query('SELECT * FROM proxies WHERE id=$1 FOR UPDATE',[d.proxyId]);assert(p?.enabled && p.owner_id===req.user.id,'请选择自己添加且已启用的代理',403);
+      const [occupied]=await tx.query('SELECT id FROM accounts WHERE proxy_id=$1 AND id<>$2 FOR UPDATE',[d.proxyId,accountId]);
+      assert(!occupied,'该代理已绑定其他账号，请选择未占用的代理',409);
       await tx.query('UPDATE accounts SET proxy_id=$2 WHERE id=$1',[accountId,p.id]);
-      await audit(tx,req.user.id,'account.proxy.bind',accountId,{proxyId:p.id});
+      if(rotating) await tx.query('UPDATE bindings SET proxy_id=NULL WHERE account_id=$1',[accountId]);
+      await audit(tx,req.user.id,rotating?'account.proxy.rotate':'account.proxy.bind',accountId,{previousProxyId:a.proxy_id??null,proxyId:p.id});
       const sync=await enqueueAccountProxySync(tx,box,req.user.id,accountId,id());
-      return {account:{...a,proxy_bound:true,proxy_id:p.id,proxy_name:p.name,proxy_endpoint:p.endpoint,proxy_enabled:p.enabled},...sync};
+      return {account:{...a,proxy_bound:true,proxy_id:p.id,proxy_name:p.name,proxy_endpoint:p.endpoint,proxy_enabled:p.enabled,proxy_sync_state:sync.jobs.length||sync.reauthorizeConnectionIds.length?'pending':'succeeded'},changed:rotating,...sync};
     });
   });
   app.post('/api/accounts/:id/proxy/sync',async req=>{
@@ -532,6 +541,20 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       assert(c.provider!=='gatelink'||b.proxy_id===p.id,'请重新授权此平台，系统将自动应用账号固定代理',409);
     }
     return enqueue(db,box,req.user.id,b.connection_id,'set_enabled',{bindingId,enabled:d.enabled},d.key);
+  });
+
+  app.post('/api/bindings/:id/local-status',async req=>{
+    const bindingId=identifier.parse((req.params as Row).id),d=z.object({enabled:z.boolean(),key}).parse(req.body);
+    return db.transaction(async tx=>{
+      const [b]=await tx.query(`SELECT b.*,a.owner_id,a.ownership_verified,c.provider
+        FROM bindings b JOIN accounts a ON a.id=b.account_id JOIN connections c ON c.id=b.connection_id
+        WHERE b.id=$1 FOR UPDATE`,[bindingId]);
+      assert(b && ((b.ownership_verified&&b.owner_id===req.user.id)||req.user.role==='owner'),'不能操作该账号',403);
+      assert(b.provider==='gatelink','仅平台 A 支持在 CCMAX 内单独停用使用');
+      await tx.query('UPDATE bindings SET local_enabled=$2 WHERE id=$1',[bindingId,d.enabled]);
+      await audit(tx,req.user.id,'binding.local_status',bindingId,{enabled:d.enabled,provider:b.provider});
+      return {bindingId,enabled:d.enabled,localOnly:true};
+    });
   });
 
   app.get('/api/jobs',async req=>{

@@ -119,7 +119,7 @@ KeyMan 验证失败时仍会加密保存连接，创建或编辑响应包含 `ve
 ## 上号流程
 
 1. 查询 `/api/connections` 和 `/api/connections/:id/options`，确定平台连接、能力和可用配置。
-2. `POST /api/accounts` 创建本人账号；`POST /api/proxies` 添加本人固定出口代理；`POST /api/accounts/:id/proxy` 以 `{proxyId}` 绑定一次。该请求返回 `{account,jobs,reauthorizeConnectionIds}`，后台自动将同一账号代理同步到已接入的 平台 B / C / D；后续上号和重新授权自动沿用，不能逐个平台指定不同代理。平台 A 旧绑定如需重新授权，会列在 `reauthorizeConnectionIds`，完成 OAuth 即自动应用固定代理。
+2. `POST /api/accounts` 创建本人账号；`POST /api/proxies` 添加本人固定出口代理；`POST /api/accounts/:id/proxy` 以 `{proxyId}` 绑定或更换已核实账号的固定代理。该请求返回 `{account,jobs,reauthorizeConnectionIds}`，后台自动将同一账号代理同步到已接入的 平台 B / C / D；后续上号和重新授权自动沿用，不能逐个平台指定不同代理。平台 A 旧绑定如需重新授权，会列在 `reauthorizeConnectionIds`，完成 OAuth 即自动应用固定代理。原账号、平台绑定和财务历史保持不变。
 3. `POST /api/accounts/:id/authorize`，提交 `{targets:[{connectionId,options:{}}],key}`，获得 `{jobs}`。每次逻辑操作使用新的 UUID 作为 `key`。
 4. 轮询 `/api/jobs?id=<任务编号>`；授权链接生成后从 `/api/accounts/:id/attempts` 获取 `authorization_url`。每个平台分别授权，不能复用授权码。
 5. `POST /api/oauth/:id/exchange`，其中 `:id` 是授权流程编号，提交 `{callback,key}`。四个平台均要求完整回调 URL 或 `code#state`，不能只提交 code；state 必须匹配目标流程，同一 code 不能跨平台重复提交。校验失败时流程保留为 pending，可纠正后提交。继续轮询任务，确认实际成功。授权链接必须不包含真实来源资料；如上游生成的链接暴露来源域名或名称，代理端不返回链接并提示联系管理员核对配置，不会改写签名或回调参数。
@@ -127,7 +127,7 @@ KeyMan 验证失败时仍会加密保存连接，创建或编辑响应包含 `ve
 
 任务可能为 `queued`、`running`、`succeeded`、`failed`、`needs_attention`。只有 `succeeded` 表示完成；`needs_attention` 先人工核对上游，不能直接重复提交。代理固定绑定、每个平台配置和旧账号归属核对规则与网站完全一致，平台 C 使用服务端固定默认配置。
 
-`GET /api/proxies` 仅返回调用者本人添加的代理，不包含上级、下级、兄弟或其他成员的代理；管理员也按本人范围返回。代理修改和账号绑定只能操作本人的代理及本人账号。团队账号列表仅保留其他成员账号是否已绑定代理、是否启用及各平台是否同步的状态，不暴露其代理 ID、名称或出口。一个账号固定绑定一条代理，同一代理不能重复占用。账号返回 `proxy_bound`、`proxy_sync_state`、`proxy_sync_error`，各平台绑定返回 `proxy_verified`；可据此显示同步进度和失败原因。
+`GET /api/proxies` 仅返回调用者本人添加的代理，不包含上级、下级、兄弟或其他成员的代理；管理员也按本人范围返回。代理修改和账号绑定只能操作本人的代理及本人账号。团队账号列表仅保留其他成员账号是否已绑定代理、是否启用及各平台是否同步的状态，不暴露其代理 ID、名称或出口。一个账号固定绑定一条代理，同一代理不能重复占用。账号返回 `proxy_bound`、`proxy_sync_state`、`proxy_sync_error`，各平台绑定返回 `proxy_verified` 和 `usage_enabled`；可据此显示同步进度和失败原因。`POST /api/bindings/:id/local-status` 只允许平台管理员对平台 A 绑定暂停或恢复 CCMAX 内使用，不修改上游状态。
 
 `POST /api/accounts/:id/proxy/sync` 提交 `{key}`，可在账号层统一重试代理同步；返回 `{jobs,reauthorizeConnectionIds}`，已有执行中的任务不会重复排队。旧的逐平台同步接口保留兼容。启用 平台 B / C / D 已有账号时，如尚未同步代理，服务端会先核对账号身份、自动应用并读回固定代理，再启用；失败会保留未核实状态。平台 A 旧绑定需重新授权时不会假报同步成功。
 

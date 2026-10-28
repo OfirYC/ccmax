@@ -16,7 +16,7 @@ export function attributionTotals(rows:Row[]) {
 
 export function snapshotView(row:Row) {
   const parsed=telemetrySchema.safeParse(row.data),telemetry=parsed.success?parsed.data:null;
-  return {telemetry,fresh:!!telemetry&&isFresh(telemetry)&&row.status!=='missing'&&row.enabled===true};
+  return {telemetry,fresh:!!telemetry&&isFresh(telemetry)&&row.status!=='missing'&&row.enabled===true&&row.local_enabled!==false};
 }
 
 // Dashboard, account lists and analytics must share the same visibility and
@@ -26,7 +26,7 @@ export async function visibleTelemetry(db:DB,user:Row,q:z.infer<typeof telemetry
   assert(!q.ownerId||ids.includes(q.ownerId),'不能查看其他团队的调用数据',403);
   const scopeIds=q.ownerId?[q.ownerId]:q.scope==='self'?[user.id]:q.scope==='descendants'?ids.filter(id=>id!==user.id):ids;
   const includePending=user.role==='owner'&&q.scope==='team'&&!q.ownerId;
-  const rows=await db.query(`SELECT b.id,b.account_id,b.connection_id,b.status,c.provider,c.name AS internal_name,c.enabled,c.status AS connection_status,
+  const rows=await db.query(`SELECT b.id,b.account_id,b.connection_id,b.status,b.local_enabled,c.provider,c.name AS internal_name,c.enabled,c.status AS connection_status,
     a.email,a.label,a.owner_id,a.ownership_verified,u.name AS owner_name,t.data
     FROM bindings b JOIN accounts a ON a.id=b.account_id JOIN connections c ON c.id=b.connection_id LEFT JOIN users u ON u.id=a.owner_id
     LEFT JOIN binding_telemetry t ON t.binding_id=b.id
@@ -38,5 +38,5 @@ export async function visibleTelemetry(db:DB,user:Row,q:z.infer<typeof telemetry
   assert(rows.length<=100000,'调用数据过多，请按平台或账号筛选',400);
   return rows.map(r=>({id:r.id,account_id:r.account_id,connection_id:r.connection_id,provider:r.provider,
     connection_name:name(user,r.provider,r.connection_id,r.internal_name),email:r.email,label:r.label,owner_id:r.owner_id,owner_name:r.owner_name,ownership_verified:r.ownership_verified,
-    status:r.status,connection_status:r.connection_status,...snapshotView(r)}));
+    status:r.status,usage_enabled:r.local_enabled!==false,connection_status:r.connection_status,...snapshotView(r)}));
 }

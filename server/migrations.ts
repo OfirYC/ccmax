@@ -87,7 +87,7 @@ export async function accountProxies(tx:DB) {
   await tx.query(`CREATE FUNCTION ccmax_guard_proxy() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       IF TG_TABLE_NAME='accounts' THEN
-        IF OLD.proxy_id IS NOT NULL AND NEW.proxy_id IS DISTINCT FROM OLD.proxy_id THEN
+        IF OLD.proxy_id IS NOT NULL AND NEW.proxy_id IS DISTINCT FROM OLD.proxy_id AND NOT OLD.ownership_verified THEN
           RAISE EXCEPTION 'CCMAX: account proxy is immutable' USING ERRCODE='23514';
         END IF;
       ELSIF (NEW.id,NEW.owner_id,NEW.secret,NEW.fingerprint,NEW.endpoint) IS DISTINCT FROM (OLD.id,OLD.owner_id,OLD.secret,OLD.fingerprint,OLD.endpoint) THEN
@@ -106,6 +106,36 @@ export async function accountProxies(tx:DB) {
     END $$`);
   await tx.query('CREATE TRIGGER binding_proxy BEFORE INSERT OR UPDATE ON bindings FOR EACH ROW EXECUTE FUNCTION ccmax_guard_binding_proxy()');
   await tx.query('CREATE INDEX proxies_owner ON proxies(owner_id)');
+}
+
+// Compatibility upgrade: verified accounts can rotate their fixed proxy without deleting the
+// account. Existing proxy bindings are cleared before synchronization jobs are
+// queued, so a failed upstream write cannot leave a binding claiming the old
+// account proxy. Unverified placeholder accounts retain the original
+// immutable behavior until ownership is confirmed.
+export async function accountProxyRotation(tx:DB) {
+  await tx.query('DROP TRIGGER IF EXISTS account_proxy ON accounts');
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_proxy() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_TABLE_NAME='accounts' THEN
+        IF OLD.proxy_id IS NOT NULL AND NEW.proxy_id IS DISTINCT FROM OLD.proxy_id AND NOT OLD.ownership_verified THEN
+          RAISE EXCEPTION 'CCMAX: account proxy is immutable' USING ERRCODE='23514';
+        END IF;
+      ELSIF (NEW.id,NEW.owner_id,NEW.secret,NEW.fingerprint,NEW.endpoint) IS DISTINCT FROM (OLD.id,OLD.owner_id,OLD.secret,OLD.fingerprint,OLD.endpoint) THEN
+        RAISE EXCEPTION 'CCMAX: proxy identity is immutable' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END
+  $$`);
+  await tx.query('CREATE TRIGGER account_proxy BEFORE UPDATE ON accounts FOR EACH ROW EXECUTE FUNCTION ccmax_guard_proxy()');
+}
+
+// Compatibility upgrade: upstream status and local CCMAX usage are independent. This lets a
+// CCMAX owner pause Platform A usage when the upstream account credentials do
+// not have permission to change the upstream account itself.
+export async function bindingUsageControls(tx:DB) {
+  await tx.query('ALTER TABLE bindings ADD COLUMN IF NOT EXISTS local_enabled boolean NOT NULL DEFAULT true');
+  await tx.query('CREATE INDEX IF NOT EXISTS bindings_local_enabled ON bindings(local_enabled)');
 }
 
 export async function extendProviders(tx: DB, tables:('connections'|'rates'|'invitation_rates')[]=['connections','rates']) {

@@ -1415,5 +1415,22 @@
   "平台价格不能重复设置": "Không thể đặt giá cho cùng một nền tảng nhiều lần.",
   "切换到 Key 供货": "Chuyển sang cung cấp Key",
   "设置": "Cài đặt",
-  "提交和管理 Key 渠道": "Gửi và quản lý kênh Key"
+  "提交和管理 Key 渠道": "Gửi và quản lý kênh Key",
+  "更换代理": "Đổi proxy",
+  "取消更换": "Hủy thay đổi",
+  "当前使用": "Đang dùng",
+  "新的账号固定代理": "Proxy cố định mới cho tài khoản",
+  "更换为所选代理": "Đổi sang proxy đã chọn",
+  "添加并更换代理": "Thêm và đổi proxy",
+  "账号归属核实后可更换代理，历史账单和平台绑定会保留。": "Có thể đổi proxy sau khi xác minh quyền sở hữu; lịch sử thanh toán và liên kết nền tảng được giữ lại.",
+  "所有平台自动沿用这条代理。": "Mọi nền tảng tự động dùng proxy này.",
+  "账号完成归属核实后才能更换固定代理": "Hãy xác minh quyền sở hữu tài khoản trước khi đổi proxy cố định",
+  "账号仍有进行中的任务，请等待任务完成后再更换代理": "Tài khoản đang có tác vụ. Hãy chờ hoàn tất trước khi đổi proxy.",
+  "该代理已绑定其他账号，请选择未占用的代理": "Proxy này đã gắn với tài khoản khác. Hãy chọn proxy chưa dùng.",
+  "仅平台 A 支持在 CCMAX 内单独停用使用": "Chỉ Nền tảng A hỗ trợ tạm dừng sử dụng trong CCMAX",
+  "仅在 CCMAX 停用": "Chỉ tắt trong CCMAX",
+  "恢复 CCMAX 使用": "Bật lại trong CCMAX",
+  "本地已停用平台使用；不会修改上游账号状态。": "Đã tạm dừng sử dụng trong CCMAX; trạng thái tài khoản trên nền tảng không đổi.",
+  "平台 A 使用已在 CCMAX 停用": "Đã tạm dừng sử dụng Nền tảng A trong CCMAX",
+  "平台 A 使用已恢复": "Đã bật lại sử dụng Nền tảng A"
 }

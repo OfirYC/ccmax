@@ -33,7 +33,7 @@ export default function AccountPool(props:Props){
     const av=poolBill(a.bindings,day,'today').value,bv=poolBill(b.bindings,day,'today').value;
     return comparePoolBills(av,bv)||a.email.localeCompare(b.email);
   });
-  const bindings=accounts.flatMap(a=>a.bindings),fresh=bindings.filter(b=>b.data_fresh).length;
+  const bindings=accounts.flatMap(a=>a.bindings),fresh=bindings.filter(b=>b.usage_enabled!==false&&b.data_fresh).length;
   const members=[...new Map(all.filter(a=>a.owner_id).map(a=>[a.owner_id,{id:a.owner_id,name:a.owner_name}])).values()];
   const visible=accounts.slice((page-1)*size,page*size);
   const actionProps={...props,original:(account:any)=>all.find(a=>a.id===account.id)||account};
@@ -64,7 +64,7 @@ export default function AccountPool(props:Props){
       <div className="pool-viewbar"><span>{t('筛选 {0} / 全部 {1} 个账号',[accounts.length,all.length])}</span><div className="actions"><select aria-label={t('每页条数')} value={size} onChange={e=>setSize(Number(e.target.value))}>{[12,24,48].map(n=><option key={n} value={n}>{t('每页 {0} 条',[n])}</option>)}</select><div className="pool-view-toggle" aria-label={t('展示方式')}><button aria-pressed={view==='cards'} onClick={()=>setView('cards')}><LayoutGrid size={14}/>{t('卡片')}</button><button aria-pressed={view==='list'} onClick={()=>setView('list')}><List size={14}/>{t('列表')}</button></div></div></div>
       {loading?<Loading/>:!accounts.length?<Empty title={all.length?t('没有匹配的账号'):t('添加第一个 Claude Max 账号')} detail={all.length?t('调整筛选条件，或新增账号并完成平台授权。'):t('从你已有的账号开始：填写邮箱、绑定固定代理、完成授权，再查看实际用量与收益。')} action={!all.length&&<button className="button primary" onClick={()=>props.onOnboard({})}><Zap size={15}/>{t('新增账号')}</button>}/>:<>
         {view==='cards'?<div className="pool-card-grid">{visible.map(account=><AccountCard key={account.id} account={account} day={day} actions={<AccountActions account={account} {...actionProps}/>}/>)}</div>:
-          <Table headers={[t('Claude 账号'),t('平台连接 / 状态'),t('今日平台账单'),t('近 7 天平台账单'),t('归属团队'),t('固定出口代理'),t('操作')]}>{visible.map(a=><tr key={a.id}><td><strong>{a.email}</strong><small>{a.label}</small><Link className="text-button" to={`/analytics?accountId=${a.id}${provider==='all'?'':`&provider=${provider}`}`}>{t('调用详情')} <ArrowUpRight size={12}/></Link></td><td><div className="binding-list">{a.bindings.map((b:any)=><div key={b.id}><PlatformIdentity provider={b.provider} connectionId={b.connection_id}/><Badge state={b.connection_enabled?b.status:'disabled'}/></div>)}</div>{!a.bindings.length&&<Badge state="pending" label={t('等待上号')}/>}</td><td><Amount value={poolBill(a.bindings,day,'today').value}/><small>{coverage(poolBill(a.bindings,day,'today'))}</small></td><td><Amount value={poolBill(a.bindings,day,'7d').value}/></td><td><AccountOwner account={a}/></td><td><ProxyLabel account={a}/></td><td><AccountActions account={a} {...actionProps}/></td></tr>)}</Table>}
+          <Table headers={[t('Claude 账号'),t('平台连接 / 状态'),t('今日平台账单'),t('近 7 天平台账单'),t('归属团队'),t('固定出口代理'),t('操作')]}>{visible.map(a=><tr key={a.id}><td><strong>{a.email}</strong><small>{a.label}</small><Link className="text-button" to={`/analytics?accountId=${a.id}${provider==='all'?'':`&provider=${provider}`}`}>{t('调用详情')} <ArrowUpRight size={12}/></Link></td><td><div className="binding-list">{a.bindings.map((b:any)=><div key={b.id}><PlatformIdentity provider={b.provider} connectionId={b.connection_id}/><Badge state={b.connection_enabled&&b.usage_enabled!==false?b.status:'disabled'}/></div>)}</div>{!a.bindings.length&&<Badge state="pending" label={t('等待上号')}/>}</td><td><Amount value={poolBill(a.bindings,day,'today').value}/><small>{coverage(poolBill(a.bindings,day,'today'))}</small></td><td><Amount value={poolBill(a.bindings,day,'7d').value}/></td><td><AccountOwner account={a}/></td><td><ProxyLabel account={a}/></td><td><AccountActions account={a} {...actionProps}/></td></tr>)}</Table>}
         <Paginator total={accounts.length} page={page} setPage={setPage} size={size}/>
       </>}
     </section>
@@ -77,7 +77,7 @@ function Summary({label,metric,usd=false,loading=false}:{label:string;metric:Poo
 }
 
 function AccountCard({account:a,day,actions}:{account:any;day:string;actions:React.ReactNode}){
-  const bindings=a.bindings,today=poolBill(bindings,day,'today'),fresh=bindings.filter((b:any)=>b.data_fresh).length;
+  const bindings=a.bindings,today=poolBill(bindings,day,'today'),fresh=bindings.filter((b:any)=>b.usage_enabled!==false&&b.data_fresh).length;
   const activity=(key:'rpm'|'tpm'|'concurrent')=>poolMetric(bindings,d=>d.activity[key]);
   const requests=poolMetric(bindings,d=>d.day===day?d.periods.today.requests:null),tokens=poolMetric(bindings,d=>d.day===day?d.periods.today.tokens:null);
   return <article className="pool-account-card" aria-label={a.email}>
@@ -95,7 +95,7 @@ function AccountCard({account:a,day,actions}:{account:any;day:string;actions:Rea
 
 function BindingUsage({binding:b,day}:{binding:any;day:string}){
   const q=b.telemetry?.quota,valid=b.data_fresh;
-  return <section className="pool-binding" aria-label={platformName(b.provider)}><div className="pool-binding-head"><PlatformIdentity provider={b.provider} connectionId={b.connection_id}/><Badge state={b.connection_enabled?b.status:'disabled'}/></div>
+  return <section className="pool-binding" aria-label={platformName(b.provider)}><div className="pool-binding-head"><PlatformIdentity provider={b.provider} connectionId={b.connection_id}/><Badge state={b.connection_enabled&&b.usage_enabled!==false?b.status:'disabled'}/></div>
     <div className="pool-quotas"><Quota label={t('5 小时额度')} value={valid?q?.fiveHour:null} reset={valid?q?.reset5h:null}/><Quota label={t('7 天额度')} value={valid?q?.sevenDay:null} reset={valid?q?.reset7d:null}/></div>
     <div className="pool-binding-foot"><span>{t('今日')} <Amount value={poolBill([b],day,'today').value} digits={2}/></span><small className={valid?'':'pool-stale'}>{valid?t('最近同步'):t('数据待更新')} · {dateTime(b.snapshot_at)}</small></div>
   </section>;
