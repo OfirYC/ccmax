@@ -163,6 +163,10 @@ export async function migrate(db: DB) {
       await keyManTemplate(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (20)');
     }
+    if (!done.some(row=>Number(row.version)===21)) {
+      await tx.query('ALTER TABLE billing_days ADD COLUMN reviewed boolean NOT NULL DEFAULT false');
+      await tx.query('INSERT INTO migrations(version) VALUES (21)');
+    }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are
     // safe to apply idempotently on every startup, including v20 databases.

@@ -151,18 +151,27 @@ export async function balance(db: DB, userId: string) {
 }
 
 // The withdrawable wallet intentionally contains only the member's profit.
-// Expose the gross upstream amount and the direct team's outstanding invoices
-// separately so a payer can reserve downstream funds without making them
-// withdrawable or mixing them into the profit ledger.
+// Gross funding is tracked separately: confirmed upstream invoices are the
+// funding source, profit withdrawals and confirmed downstream settlements are
+// cash already committed from that source. This makes the current reserve
+// reconcilable without pretending that CCMAX itself moves external money.
 export async function settlementFunds(db: DB, userId: string) {
   const [row]=await db.query(`SELECT
     (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE user_id=$1 AND state='confirmed') AS confirmed_gross,
+    (SELECT COALESCE(sum(amount_usd),0) FROM withdrawals WHERE user_id=$1 AND state IN ('pending','paid')) AS withdrawn,
     (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='pending') AS downstream_due,
     (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='confirmed') AS downstream_paid`,[userId]);
+  const confirmed=new Decimal(row.confirmed_gross),withdrawn=new Decimal(row.withdrawn),paid=new Decimal(row.downstream_paid);
+  const grossFundingAvailable=Decimal.max(new Decimal(0),confirmed.minus(withdrawn).minus(paid));
+  const downstreamDue=new Decimal(row.downstream_due);
+  const fundedDownstream=Decimal.min(grossFundingAvailable,downstreamDue);
   return {
     confirmedGrossUsd:usd(row.confirmed_gross),
+    grossFundingAvailableUsd:usd(grossFundingAvailable),
     downstreamPayableUsd:usd(row.downstream_due),
     downstreamPaidUsd:usd(row.downstream_paid),
+    fundedDownstreamUsd:usd(fundedDownstream),
+    unfundedDownstreamUsd:usd(downstreamDue.minus(fundedDownstream)),
   };
 }
 export function withdrawalDestination(box:SecretBox, value:string):string {

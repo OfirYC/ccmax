@@ -94,8 +94,11 @@ describe('financial source reconciliation and complete agent cash flow', () => {
 
     expect(await settlementFunds(db, owner.id)).toEqual({
       confirmedGrossUsd: '70.00000000',
+      grossFundingAvailableUsd: '70.00000000',
       downstreamPayableUsd: '30.00000000',
       downstreamPaidUsd: '0.00000000',
+      fundedDownstreamUsd: '30.00000000',
+      unfundedDownstreamUsd: '0.00000000',
     });
     const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-ccmax-request': '1' }, payload: { email: owner.email, password } });
     const cookie = String(login.headers['set-cookie']).split(';')[0];
@@ -103,14 +106,21 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect(finance.statusCode).toBe(200);
     expect(finance.json().funds).toEqual({
       confirmedGrossUsd: '70.00000000',
+      grossFundingAvailableUsd: '70.00000000',
       downstreamPayableUsd: '30.00000000',
       downstreamPaidUsd: '0.00000000',
+      fundedDownstreamUsd: '30.00000000',
+      unfundedDownstreamUsd: '0.00000000',
     });
 
     await confirmInvoice(db, owner, child.id, 'downstream payment');
     expect((await settlementFunds(db, owner.id)).downstreamPayableUsd).toBe('0.00000000');
     expect((await settlementFunds(db, owner.id)).downstreamPaidUsd).toBe('30.00000000');
+    expect((await settlementFunds(db, owner.id)).grossFundingAvailableUsd).toBe('40.00000000');
     expect((await balance(db, owner.id)).available).toBe('40.00000000');
+    await withdraw(owner,'10');
+    expect((await settlementFunds(db, owner.id)).confirmedGrossUsd).toBe('70.00000000');
+    expect((await settlementFunds(db, owner.id)).grossFundingAvailableUsd).toBe('30.00000000');
   });
 
   it('lets an owner attest an ended live snapshot and creates the settlement chain', async () => {
@@ -120,12 +130,13 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     const cookie = String(login.headers['set-cookie']).split(';')[0];
     const response = await app.inject({
       method: 'POST', url: '/api/billing/finalize-snapshot', headers: { cookie, 'x-ccmax-request': '1' },
-      payload: { connectionId: connections.ai008, day: prior(), evidence: 'verified end-of-day upstream snapshot' },
+      payload: { connectionId: connections.ai008, day: prior(), evidence: 'verified end-of-day upstream snapshot', confirmUpstream: true, upstreamReference: 'platform receipt A-1028' },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ basis: 'snapshot', state: 'succeeded', finalized: 1, invoices: 4 });
+    expect(response.json()).toMatchObject({ basis: 'snapshot', state: 'succeeded', finalized: 1, invoices: 4, reviewed: true, upstreamConfirmed: 1, upstreamProfitUsd: '40.00000000' });
     expect((await db.query('SELECT state,source FROM usage_days'))[0]).toEqual({ state: 'final', source: 'reviewed_statement' });
     expect((await db.query('SELECT estimated FROM invoices')).every(row => !row.estimated)).toBe(true);
+    expect((await balance(db, owner.id)).available).toBe('40.00000000');
     const days = await app.inject({ url: `/api/billing/days?from=${prior()}&to=${prior()}`, headers: { cookie } });
     expect(days.json().rows[0]).toMatchObject({ reviewed: true });
   });

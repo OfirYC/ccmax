@@ -71,7 +71,7 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
         assert(binding, '历史账单账号尚未同步，请同步平台账号', 409);
         const owned=!!binding.owner_id&&binding.ownership_verified;
         const usageId = await ingestUsage(tx, { bindingId: binding.id, day, rawUsd: row.rawUsd, final: autoFinalize&&owned,
-          source,sourceAt:row.sourceAt??undefined,
+          source:options.reviewed&&owned?'reviewed_statement':source,sourceAt:row.sourceAt??undefined,
           evidence: `upstream_statement:${statement.id};sha256:${checksum}` });
         if(!autoFinalize||!owned) {
           const message=!owned?'账号归属待确认，账单已保留':'快照预估已存档，等待审核或启用快照自动出账';
