@@ -110,7 +110,28 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     await confirmInvoice(db, owner, child.id, 'downstream payment');
     expect((await settlementFunds(db, owner.id)).downstreamPayableUsd).toBe('0.00000000');
     expect((await settlementFunds(db, owner.id)).downstreamPaidUsd).toBe('30.00000000');
-    expect((await balance(db, owner.id)).available).toBe('40.00000000');
+    expect((await balance(db, owner.id)).available).toBe('70.00000000');
+  });
+
+  it('withdraws confirmed team funding through the same balance and restores a mixed rejection once', async () => {
+    await observe(await binding(a), '100');
+    const invoice = await createInvoice(db, owner, owner.id, prior(), prior());
+    await confirmInvoice(db, owner, invoice.id, 'upstream receipt');
+
+    expect(await balance(db, owner.id)).toEqual({ available: '70.00000000', pending: '0.00000000' });
+    const withdrawal = await withdraw(owner, '65');
+    expect(withdrawal.team_amount_usd).toBe('25.00000000');
+    expect(await balance(db, owner.id)).toEqual({ available: '5.00000000', pending: '65.00000000' });
+
+    await reviewWithdrawal(db, owner, withdrawal.id, 'rejected', 'team payment not sent');
+    await reviewWithdrawal(db, owner, withdrawal.id, 'rejected', 'team payment not sent');
+    expect(await balance(db, owner.id)).toEqual({ available: '70.00000000', pending: '0.00000000' });
+    expect(await db.query("SELECT kind,amount_usd FROM team_fund_ledger ORDER BY kind")).toEqual([
+      { kind: 'funding', amount_usd: '30.00000000' },
+      { kind: 'withdrawal_hold', amount_usd: '-25.00000000' },
+      { kind: 'withdrawal_release', amount_usd: '25.00000000' },
+    ]);
+    await assertWalletAccounting(db, owner.id);
   });
 
   it('lets an owner attest an ended live snapshot and creates the settlement chain', async () => {
@@ -162,6 +183,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
 
   it('conserves every 8-decimal dollar through branches, four levels, all four platforms, invoices and payouts', async () => {
     const expected = new Map([owner, a, b, c, sibling].map(user => [user.id, 0n]));
+    const withdrawable = new Map([owner, a, b, c, sibling].map(user => [user.id, 0n]));
     const samples = ['0.00000001', '0.00000007', '0.12345678', '100.12345678', '9876543210.12345678'];
     let upstream = 0n;
     for (const [provider, rootRate] of [['ai008', 7000], ['gatelink', 6000], ['minicc', 8000], ['maxchat', 6500]] as const) {
@@ -176,6 +198,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
             const item = earned.find(item => item.user_id === members[level].id)!;
             expect([item.gross_usd, item.downstream_usd, item.profit_usd]).toEqual([dollars(gross), dollars(payable), dollars(profit)]);
             expected.set(item.user_id, expected.get(item.user_id)! + profit);
+            withdrawable.set(item.user_id, withdrawable.get(item.user_id)! + gross);
           }
         }
       }
@@ -184,7 +207,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     for (let index = 0; index < members.length; index++) {
       const member = members[index], invoice = await createInvoice(db, member, member.id, prior(5), prior());
       await confirmInvoice(db, payers[index], invoice.id, 'verified upstream receipt');
-      expect((await balance(db, member.id)).available).toBe(dollars(expected.get(member.id)!));
+      expect((await balance(db, member.id)).available).toBe(dollars(withdrawable.get(member.id)!));
       await assertWalletAccounting(db, member.id);
     }
     expect([...expected.values()].reduce((total, profit) => total + profit, 0n)).toBe(upstream);
@@ -192,7 +215,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect(atoms(funded.totals.available_profit_usd)).toBe(upstream);
     expect(funded.platforms.every(p=>p.usage_days===10&&p.finalized_days===10&&Number(p.uninvoiced_receivable_usd)===0)).toBe(true);
     for (let index = 0; index < members.length; index++) {
-      const member = members[index], amount = expected.get(member.id)!, half = amount / 2n;
+      const member = members[index], amount = withdrawable.get(member.id)!, half = amount / 2n;
       const paid = await withdraw(member, dollars(half));
       await reviewWithdrawal(db, payers[index], paid.id, 'paid', 'external payment reference');
       await reviewWithdrawal(db, payers[index], paid.id, 'paid', 'external payment reference');
@@ -204,7 +227,7 @@ describe('financial source reconciliation and complete agent cash flow', () => {
       await expect(withdraw(member, dollars(amount - half + 1n))).rejects.toThrow('余额不足');
     }
     const paid=await audit();expect(paid.ok).toBe(true);
-    expect(atoms(paid.totals.available_profit_usd)+paid.wallets.reduce((n,w)=>n+atoms(w.paid_withdrawal_usd),0n)).toBe(upstream);
+    expect(atoms(paid.totals.available_profit_usd)+paid.wallets.reduce((n,w)=>n+atoms(w.paid_profit_withdrawal_usd),0n)).toBe(upstream);
   });
 
   it('requires confirmed parent coverage for every day, even when invoices cover different periods', async () => {

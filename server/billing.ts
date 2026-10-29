@@ -138,22 +138,29 @@ export async function confirmInvoice(db: DB, actor: Row, invoiceId: string, refe
     await tx.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[invoice.user_id]);
     const [result]=await tx.query(`UPDATE invoices SET state='confirmed',reference=$2,confirmed_by=$3,confirmed_at=now() WHERE id=$1 RETURNING *`,[invoiceId,reference,actor.id]);
     await tx.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',$3,$4)`,[id(),invoice.user_id,invoice.profit_usd,invoiceId]);
+    if(new Decimal(invoice.downstream_usd).gt(0)) await tx.query(`INSERT INTO team_fund_ledger(id,user_id,kind,amount_usd,reference_id)
+      VALUES($1,$2,'funding',$3,$4)`,[id(),invoice.user_id,invoice.downstream_usd,invoiceId]);
     await audit(tx,actor.id,'invoice.confirm',invoiceId,{reference});
     return result;
   });
 }
 
-export async function balance(db: DB, userId: string) {
+async function walletSources(db: DB, userId: string) {
   const [row]=await db.query(`SELECT
-    (SELECT COALESCE(sum(amount_usd),0) FROM ledger WHERE user_id=$1) AS available,
+    (SELECT COALESCE(sum(amount_usd),0) FROM ledger WHERE user_id=$1) AS personal,
+    (SELECT COALESCE(sum(amount_usd),0) FROM team_fund_ledger WHERE user_id=$1) AS team,
     (SELECT COALESCE(sum(amount_usd),0) FROM withdrawals WHERE user_id=$1 AND state='pending') AS pending`,[userId]);
-  return {available:usd(row.available),pending:usd(row.pending)};
+  const personal=new Decimal(row.personal),team=new Decimal(row.team);
+  return {personal,team,available:personal.plus(team),pending:new Decimal(row.pending)};
 }
 
-// The withdrawable wallet intentionally contains only the member's profit.
-// Expose the gross upstream amount and the direct team's outstanding invoices
-// separately so a payer can reserve downstream funds without making them
-// withdrawable or mixing them into the profit ledger.
+export async function balance(db: DB, userId: string) {
+  const funds=await walletSources(db,userId);
+  return {available:usd(funds.available),pending:usd(funds.pending)};
+}
+
+// Profit and team funding remain independently auditable even though the user
+// withdraws their combined confirmed upstream receivable through one wallet.
 export async function settlementFunds(db: DB, userId: string) {
   const [row]=await db.query(`SELECT
     (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE user_id=$1 AND state='confirmed') AS confirmed_gross,
@@ -180,11 +187,19 @@ export async function requestWithdrawal(db: DB, user: Row, amount: string, metho
     }
     await assertWalletAccounting(tx,user.id);
     const b=await balance(tx,user.id);
-    assert(money.lte(b.available),'可提现利润余额不足');
+    assert(money.lte(b.available),'可提现余额不足');
+    const sources=await walletSources(tx,user.id);
+    const personalAmount=Decimal.min(money,Decimal.max(sources.personal,0));
+    const teamAmount=money.minus(personalAmount);
+    assert(teamAmount.lte(sources.team),'团队付款资金余额不足');
     const withdrawalId=id();
-    const [withdrawal]=await tx.query(`INSERT INTO withdrawals(id,user_id,payer_id,amount_usd,method,destination,idempotency_key) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [withdrawalId,user.id,lockedUser.parent_id,usd(money),method,'enc:v1:'+box.encrypt({destination}),key]);
-    await tx.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'withdrawal_hold',$3,$4)`,[id(),user.id,usd(money.negated()),withdrawalId]);
+    const [withdrawal]=await tx.query(`INSERT INTO withdrawals(id,user_id,payer_id,amount_usd,team_amount_usd,method,destination,idempotency_key)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [withdrawalId,user.id,lockedUser.parent_id,usd(money),usd(teamAmount),method,'enc:v1:'+box.encrypt({destination}),key]);
+    if(personalAmount.gt(0)) await tx.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id)
+      VALUES($1,$2,'withdrawal_hold',$3,$4)`,[id(),user.id,usd(personalAmount.negated()),withdrawalId]);
+    if(teamAmount.gt(0)) await tx.query(`INSERT INTO team_fund_ledger(id,user_id,kind,amount_usd,reference_id)
+      VALUES($1,$2,'withdrawal_hold',$3,$4)`,[id(),user.id,usd(teamAmount.negated()),withdrawalId]);
     await audit(tx,user.id,'withdrawal.request',withdrawalId,{amount:usd(money)});
     return withdrawal;
   });
@@ -200,9 +215,13 @@ export async function reviewWithdrawal(db: DB, actor: Row, withdrawalId: string,
     assert(w.state==='pending','提现申请已处理',409);
     // A later settled loss can consume funds reserved by an earlier request.
     // Rejection may still release the hold; payment waits for a sufficient balance.
-    if(action==='paid')assert(new Decimal((await balance(tx,w.user_id)).available).gte(0),'可提现利润余额不足');
+    const personalAmount=new Decimal(w.amount_usd).minus(w.team_amount_usd);
+    if(action==='paid'&&personalAmount.gt(0))assert((await walletSources(tx,w.user_id)).personal.gte(0),'可提现利润余额不足');
     const [result]=await tx.query('UPDATE withdrawals SET state=$2,reference=$3,reviewed_by=$4,reviewed_at=now() WHERE id=$1 RETURNING *',[withdrawalId,action,reference,actor.id]);
-    if (action==='rejected') await tx.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'withdrawal_release',$3,$4)`,[id(),w.user_id,w.amount_usd,withdrawalId]);
+    if(action==='rejected'&&personalAmount.gt(0)) await tx.query(`INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id)
+      VALUES($1,$2,'withdrawal_release',$3,$4)`,[id(),w.user_id,usd(personalAmount),withdrawalId]);
+    if(action==='rejected'&&new Decimal(w.team_amount_usd).gt(0)) await tx.query(`INSERT INTO team_fund_ledger(id,user_id,kind,amount_usd,reference_id)
+      VALUES($1,$2,'withdrawal_release',$3,$4)`,[id(),w.user_id,w.team_amount_usd,withdrawalId]);
     await audit(tx,actor.id,`withdrawal.${action}`,withdrawalId,{reference});
     return result;
   });

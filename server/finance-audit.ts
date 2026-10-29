@@ -23,11 +23,17 @@ export async function auditFinance(db:DB) {
   }
   const day=today();
   const wallets=await db.query(`SELECT u.id,u.parent_id,
-    COALESCE(l.available,0) AS available,COALESCE(w.pending,0) AS pending,COALESCE(w.paid,0) AS paid_withdrawal_usd,
+    COALESCE(l.available,0) AS personal_available,COALESCE(t.available,0) AS team_available,
+    COALESCE(l.available,0)+COALESCE(t.available,0) AS available,
+    COALESCE(w.pending,0) AS pending,COALESCE(w.paid,0) AS paid_withdrawal_usd,
+    COALESCE(w.paid_profit,0) AS paid_profit_withdrawal_usd,COALESCE(w.paid_team,0) AS paid_team_withdrawal_usd,
     COALESCE(i.confirmed_profit,0) AS confirmed_profit_usd
     FROM users u LEFT JOIN (SELECT user_id,sum(amount_usd) AS available FROM ledger GROUP BY user_id) l ON l.user_id=u.id
+    LEFT JOIN (SELECT user_id,sum(amount_usd) AS available FROM team_fund_ledger GROUP BY user_id) t ON t.user_id=u.id
     LEFT JOIN (SELECT user_id,sum(amount_usd) FILTER(WHERE state='pending') AS pending,
-      sum(amount_usd) FILTER(WHERE state='paid') AS paid FROM withdrawals GROUP BY user_id) w ON w.user_id=u.id
+      sum(amount_usd) FILTER(WHERE state='paid') AS paid,
+      sum(amount_usd-team_amount_usd) FILTER(WHERE state='paid') AS paid_profit,
+      sum(team_amount_usd) FILTER(WHERE state='paid') AS paid_team FROM withdrawals GROUP BY user_id) w ON w.user_id=u.id
     LEFT JOIN (SELECT user_id,sum(profit_usd) FILTER(WHERE state='confirmed') AS confirmed_profit FROM invoices GROUP BY user_id) i ON i.user_id=u.id
     ORDER BY u.created_at,u.id`);
   const platforms=await db.query(`WITH inventory AS (
@@ -56,6 +62,8 @@ export async function auditFinance(db:DB) {
       FROM connections c LEFT JOIN inventory i ON i.connection_id=c.id LEFT JOIN usage d ON d.connection_id=c.id ORDER BY c.created_at,c.id`,[day]);
   const [totals]=await db.query(`SELECT
     (SELECT COALESCE(sum(amount_usd),0) FROM ledger) AS available_profit_usd,
+    (SELECT COALESCE(sum(amount_usd),0) FROM team_fund_ledger) AS available_team_funds_usd,
+    (SELECT COALESCE(sum(amount_usd),0) FROM ledger)+(SELECT COALESCE(sum(amount_usd),0) FROM team_fund_ledger) AS available_funds_usd,
     (SELECT COALESCE(sum(amount_usd),0) FROM withdrawals WHERE state='pending') AS pending_withdrawal_usd,
     (SELECT count(*)::int FROM usage_days WHERE state='final') AS finalized_usage_days,
     (SELECT count(*)::int FROM usage_days WHERE state='provisional') AS provisional_usage_days`);
@@ -63,6 +71,7 @@ export async function auditFinance(db:DB) {
     checked:{wallets:validHierarchy?users.length:0,pendingInvoices:validHierarchy?pending.length:0,
       finalizedUsageDays:totals.finalized_usage_days,provisionalUsageDays:totals.provisional_usage_days},
     inventory:attribution.inventory,unassignedUsageDays:attribution.unassignedUsageDays,
-    totals:{available_profit_usd:totals.available_profit_usd,pending_withdrawal_usd:totals.pending_withdrawal_usd},
+    totals:{available_profit_usd:totals.available_profit_usd,available_team_funds_usd:totals.available_team_funds_usd,
+      available_funds_usd:totals.available_funds_usd,pending_withdrawal_usd:totals.pending_withdrawal_usd},
     wallets,platforms,findings};
 }
