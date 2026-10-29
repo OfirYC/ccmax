@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir, readFile } from 'node:fs/promises';
-import { hardenSchema, extendProviders, accountProxies, accountProxyRotation, bindingUsageControls, integrationKeys, financialSources, signedSettlementSources, keyMarket, keyMarketSharedConnections, keyMarketSnapshotDeltas, keyMarketSubmissionIdempotency, keyManTemplate } from './migrations.js';
+import { hardenSchema, extendProviders, accountProxies, accountProxyRotation, bindingUsageControls, combinedWithdrawableFunds, integrationKeys, financialSources, signedSettlementSources, keyMarket, keyMarketSharedConnections, keyMarketSnapshotDeltas, keyMarketSubmissionIdempotency, keyManTemplate } from './migrations.js';
 import { telemetryMigration } from './telemetry.js';
 import { dailyBillingMigration } from './daily-billing-migration.js';
 import { snapshotRecoveryMigration } from './snapshot-recovery-migration.js';
@@ -164,8 +164,15 @@ export async function migrate(db: DB) {
       await tx.query('INSERT INTO migrations(version) VALUES (20)');
     }
     if (!done.some(row=>Number(row.version)===21)) {
-      await tx.query('ALTER TABLE billing_days ADD COLUMN reviewed boolean NOT NULL DEFAULT false');
+      await tx.query('ALTER TABLE billing_days ADD COLUMN IF NOT EXISTS reviewed boolean NOT NULL DEFAULT false');
       await tx.query('INSERT INTO migrations(version) VALUES (21)');
+    }
+    if (!done.some(row=>Number(row.version)===22)) {
+      // Keep the snapshot-review column available even for deployments that
+      // previously used migration 21 for the combined wallet change.
+      await tx.query('ALTER TABLE billing_days ADD COLUMN IF NOT EXISTS reviewed boolean NOT NULL DEFAULT false');
+      await combinedWithdrawableFunds(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (22)');
     }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are

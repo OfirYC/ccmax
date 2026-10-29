@@ -420,3 +420,90 @@ export async function keyManTemplate(tx: DB) {
   await tx.query('ALTER TABLE task_channels ADD COLUMN IF NOT EXISTS key_mode text');
   await tx.query('CREATE INDEX IF NOT EXISTS key_tasks_template ON key_tasks(template_type,state)');
 }
+
+// Confirmed upstream gross includes both the member's profit and cash they must
+// pass to their direct team. Keep the pass-through source separate internally,
+// while allowing both sources to fund the same withdrawal request.
+export async function combinedWithdrawableFunds(tx: DB) {
+  await tx.query('ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS team_amount_usd numeric(24,8) NOT NULL DEFAULT 0');
+  await tx.query('ALTER TABLE withdrawals DROP CONSTRAINT IF EXISTS withdrawals_team_amount_check');
+  await tx.query(`ALTER TABLE withdrawals ADD CONSTRAINT withdrawals_team_amount_check
+    CHECK(team_amount_usd>=0 AND team_amount_usd<=amount_usd)`);
+  await tx.query(`CREATE TABLE IF NOT EXISTS team_fund_ledger (
+    id text PRIMARY KEY,user_id text NOT NULL REFERENCES users(id),
+    kind text NOT NULL CHECK(kind IN ('funding','withdrawal_hold','withdrawal_release')),
+    amount_usd numeric(24,8) NOT NULL,reference_id text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(kind,reference_id))`);
+  await tx.query('CREATE INDEX IF NOT EXISTS team_fund_ledger_user ON team_fund_ledger(user_id)');
+  await tx.query('DROP TRIGGER IF EXISTS team_fund_ledger_append_only ON team_fund_ledger');
+  await tx.query(`CREATE TRIGGER team_fund_ledger_append_only BEFORE UPDATE OR DELETE ON team_fund_ledger
+    FOR EACH ROW EXECUTE FUNCTION ccmax_reject_change()`);
+  await tx.query('DROP TRIGGER IF EXISTS team_fund_source ON team_fund_ledger');
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_team_fund_source() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.kind='funding' THEN
+        IF NOT EXISTS(SELECT 1 FROM invoices i WHERE i.id=NEW.reference_id AND i.user_id=NEW.user_id
+          AND i.state='confirmed' AND i.downstream_usd=NEW.amount_usd AND NEW.amount_usd>0) THEN
+          RAISE EXCEPTION 'CCMAX: team funding source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_hold' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id
+          AND w.state='pending' AND w.team_amount_usd>0 AND -w.team_amount_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: team funding hold source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_release' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w JOIN team_fund_ledger h
+          ON h.reference_id=w.id AND h.kind='withdrawal_hold' WHERE w.id=NEW.reference_id
+          AND w.user_id=NEW.user_id AND w.state='rejected' AND w.team_amount_usd=NEW.amount_usd
+          AND h.user_id=w.user_id AND h.amount_usd=-w.team_amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: team funding release source mismatch' USING ERRCODE='23514';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query(`CREATE TRIGGER team_fund_source BEFORE INSERT ON team_fund_ledger
+    FOR EACH ROW EXECUTE FUNCTION ccmax_guard_team_fund_source()`);
+  await tx.query('DROP TRIGGER IF EXISTS withdrawals_sealed ON withdrawals');
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_withdrawal() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='DELETE' THEN RAISE EXCEPTION 'CCMAX: withdrawals cannot be deleted' USING ERRCODE='23514'; END IF;
+      IF OLD.state<>'pending' OR (NEW.id,NEW.user_id,NEW.payer_id,NEW.amount_usd,NEW.team_amount_usd,NEW.method,NEW.destination,NEW.idempotency_key)
+        IS DISTINCT FROM (OLD.id,OLD.user_id,OLD.payer_id,OLD.amount_usd,OLD.team_amount_usd,OLD.method,OLD.destination,OLD.idempotency_key) THEN
+        RAISE EXCEPTION 'CCMAX: withdrawal identity and processed records are immutable' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query(`CREATE TRIGGER withdrawals_sealed BEFORE UPDATE OR DELETE ON withdrawals
+    FOR EACH ROW EXECUTE FUNCTION ccmax_guard_withdrawal()`);
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_ledger_source() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.kind='settlement' THEN
+        IF NOT EXISTS(SELECT 1 FROM invoices i WHERE i.id=NEW.reference_id AND i.user_id=NEW.user_id
+          AND i.state='confirmed' AND i.profit_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: settlement ledger source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind IN ('task_settlement','task_adjustment') THEN
+        IF NOT EXISTS(SELECT 1 FROM task_settlement_entries e WHERE e.id=NEW.reference_id
+          AND e.user_id=NEW.user_id AND e.kind=NEW.kind AND e.profit_usd=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: task settlement ledger source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_hold' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id
+          AND w.amount_usd>w.team_amount_usd AND w.state='pending'
+          AND -(w.amount_usd-w.team_amount_usd)=NEW.amount_usd) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal hold source mismatch' USING ERRCODE='23514';
+        END IF;
+      ELSIF NEW.kind='withdrawal_release' THEN
+        IF NOT EXISTS(SELECT 1 FROM withdrawals w JOIN ledger h ON h.reference_id=w.id AND h.kind='withdrawal_hold'
+          WHERE w.id=NEW.reference_id AND w.user_id=NEW.user_id AND w.state='rejected'
+            AND w.amount_usd-w.team_amount_usd=NEW.amount_usd AND h.user_id=w.user_id
+            AND h.amount_usd=-(w.amount_usd-w.team_amount_usd)) THEN
+          RAISE EXCEPTION 'CCMAX: withdrawal release source mismatch' USING ERRCODE='23514';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await tx.query(`INSERT INTO team_fund_ledger(id,user_id,kind,amount_usd,reference_id,created_at)
+    SELECT md5(i.id||':team-funding'),i.user_id,'funding',i.downstream_usd,i.id,COALESCE(i.confirmed_at,i.created_at)
+    FROM invoices i WHERE i.state='confirmed' AND i.downstream_usd>0 ON CONFLICT(kind,reference_id) DO NOTHING`);
+}

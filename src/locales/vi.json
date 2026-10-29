@@ -1442,18 +1442,27 @@
   "核实依据 / 说明": "Bằng chứng / ghi chú xác minh",
   "填写已核对的平台账单或快照依据": "Mô tả hóa đơn nền tảng hoặc bằng chứng ảnh chụp đã kiểm tra",
   "确认快照并生成账单": "Xác nhận ảnh chụp và tạo hóa đơn",
-  "快照已核实并生成账单": "Đã xác minh ảnh chụp và tạo hóa đơn"
-  ,"快照已核实、上游回款已确认并生成账单": "Đã xác minh ảnh chụp, xác nhận tiền cấp trên và tạo hóa đơn"
-  ,"该日期仍有实时或快照预估。确认后将按现有快照封账并生成账单。填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "Ngày này vẫn có ước tính trực tiếp hoặc từ ảnh chụp. Sau khi xác nhận, hệ thống sẽ chốt ảnh chụp và tạo hóa đơn. Thêm chứng từ tiền cấp trên để xác nhận hóa đơn nền tảng và ghi lợi nhuận vào số dư có thể rút."
-  ,"填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "Thêm chứng từ tiền cấp trên để xác nhận hóa đơn nền tảng và ghi lợi nhuận vào số dư có thể rút."
-  ,"上游回款凭证（可选）": "Chứng từ tiền cấp trên (tùy chọn)"
-  ,"填写后同时确认上游回款；留空则只核实快照，账单仍需单独确认。": "Điền mục này để xác nhận tiền cấp trên; để trống chỉ xác minh ảnh chụp và cần xác nhận hóa đơn riêng."
-  ,"平台付款流水号或回款确认记录": "Mã giao dịch nền tảng hoặc bản ghi xác nhận tiền"
-  ,"累计已确认上游 gross": "Tổng gross cấp trên đã xác nhận"
-  ,"历史累计值，包含已提取金额": "Tổng lịch sử, gồm cả khoản đã rút"
-  ,"当前可用 gross 资金": "Gross hiện có để thanh toán"
-  ,"扣除利润提现和已确认团队结算": "Sau khi trừ rút lợi nhuận và quyết toán đội đã xác nhận"
-  ,"已覆盖待付款；仍需补足 {0}": "Đã đủ cho khoản phải trả; còn thiếu {0}"
-  ,"CCMAX不会自动转账。上游回款确认后，请在线下支付团队成员，再确认对应下级账单并填写付款凭证。": "CCMAX không tự chuyển tiền. Sau khi xác nhận tiền cấp trên, hãy trả tiền cho thành viên bên ngoài hệ thống, rồi xác nhận hóa đơn cấp dưới kèm chứng từ."
-  ,"当前 gross 已覆盖 {0}；仍需补足 {1}": "Gross hiện tại đã đủ {0}; còn thiếu {1}"
+  "快照已核实并生成账单": "Đã xác minh ảnh chụp và tạo hóa đơn",
+  "快照已核实、上游回款已确认并生成账单": "Đã xác minh ảnh chụp, xác nhận tiền cấp trên và tạo hóa đơn",
+  "该日期仍有实时或快照预估。确认后将按现有快照封账并生成账单。填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "Ngày này vẫn có ước tính trực tiếp hoặc từ ảnh chụp. Sau khi xác nhận, hệ thống sẽ chốt ảnh chụp và tạo hóa đơn. Thêm chứng từ tiền cấp trên để xác nhận hóa đơn nền tảng và ghi lợi nhuận vào số dư có thể rút.",
+  "填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "Thêm chứng từ tiền cấp trên để xác nhận hóa đơn nền tảng và ghi lợi nhuận vào số dư có thể rút.",
+  "上游回款凭证（可选）": "Chứng từ tiền cấp trên (tùy chọn)",
+  "填写后同时确认上游回款；留空则只核实快照，账单仍需单独确认。": "Điền mục này để xác nhận tiền cấp trên; để trống chỉ xác minh ảnh chụp và cần xác nhận hóa đơn riêng.",
+  "平台付款流水号或回款确认记录": "Mã giao dịch nền tảng hoặc bản ghi xác nhận tiền",
+  "累计已确认上游 gross": "Tổng gross cấp trên đã xác nhận",
+  "历史累计值，包含已提取金额": "Tổng lịch sử, gồm cả khoản đã rút",
+  "当前可用 gross 资金": "Gross hiện có để thanh toán",
+  "扣除利润提现和已确认团队结算": "Sau khi trừ rút lợi nhuận và quyết toán đội đã xác nhận",
+  "已覆盖待付款；仍需补足 {0}": "Đã đủ cho khoản phải trả; còn thiếu {0}",
+  "CCMAX不会自动转账。上游回款确认后，请在线下支付团队成员，再确认对应下级账单并填写付款凭证。": "CCMAX không tự chuyển tiền. Sau khi xác nhận tiền cấp trên, hãy trả tiền cho thành viên bên ngoài hệ thống, rồi xác nhận hóa đơn cấp dưới kèm chứng từ.",
+  "当前 gross 已覆盖 {0}；仍需补足 {1}": "Gross hiện tại đã đủ {0}; còn thiếu {1}",
+  "已确认利润和团队付款资金合并提现，由直属上级审核并线下打款。": "Lợi nhuận đã xác nhận và tiền thanh toán cho đội dùng chung một số dư rút. Cấp trên trực tiếp duyệt và thanh toán ngoài hệ thống.",
+  "可提现资金 · USD": "Tiền có thể rút · USD",
+  "已确认利润和团队付款资金扣除已申请提现金额": "Lợi nhuận và tiền đội đã xác nhận trừ các yêu cầu rút",
+  "直属下级待付": "Phải trả đội trực tiếp",
+  "直属下级待付款": "Khoản phải trả đội trực tiếp",
+  "已计入可提现资金；付款后确认下级账单": "Đã gồm trong tiền có thể rút; xác nhận hóa đơn cấp dưới sau khi thanh toán",
+  "完成日账单结算后，可在这里申请提现已确认资金。": "Sau khi quyết toán hóa đơn ngày, hãy rút tiền đã xác nhận tại đây.",
+  "本人利润和团队应付均计入同一可提现余额，内部独立核对。": "Lợi nhuận của bạn và khoản phải trả cho đội cùng vào một số dư rút nhưng được đối soát riêng.",
+  "当前可提现资金 · USD": "Tiền hiện có thể rút"
 }

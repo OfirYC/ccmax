@@ -40,7 +40,7 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect(flags.find(a=>a.id===assigned)?.ownership_verified).toBe(true);
   await expect(db.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[sealed,other])).rejects.toThrow('immutable');
   await db.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[sealed]);
-  expect(await db.query('SELECT * FROM migrations')).toHaveLength(21);
+  expect(await db.query('SELECT * FROM migrations')).toHaveLength(22);
   expect(await db.query('SELECT * FROM invitations')).toEqual([]);
   expect(await db.query('SELECT * FROM oauth_code_claims')).toEqual([]);
 
@@ -87,5 +87,25 @@ it('upgrades an existing version 14 deployment for MaxChat without assigning pri
   expect(await db.query("SELECT rate FROM invitation_rates WHERE provider='maxchat'")).toEqual([{rate:'0.0000'}]);
   expect(await db.query('SELECT * FROM ledger')).toEqual([]);
   await expect(db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'unknown','Unknown','encrypted',0.5)",[id()])).rejects.toThrow();
+ }finally{await db.close();}
+});
+
+it('backfills confirmed team funding exactly once when upgrading a version 20 deployment',async()=>{
+ const db=await openTestDB();
+ try {
+  await migrate(db);await bootstrap(db,{ADMIN_EMAIL:'migration@example.com',ADMIN_PASSWORD:'migration-password'});
+  const [owner]=await db.query("SELECT id FROM users WHERE role='owner'");
+  const invoice=id();
+  await db.query(`INSERT INTO invoices(id,number,user_id,date_from,date_to,gross_usd,downstream_usd,profit_usd,state,created_by,confirmed_by,confirmed_at)
+    VALUES($1,$1,$2,'2020-01-01','2020-01-01',70,30,40,'confirmed',$2,$2,now())`,[invoice,owner.id]);
+  await db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',40,$3)",[id(),owner.id,invoice]);
+  await db.query('DELETE FROM migrations WHERE version=ANY($1::int[])',[[21,22]]);
+
+  await migrate(db);await migrate(db);
+
+  expect(await db.query('SELECT user_id,kind,amount_usd,reference_id FROM team_fund_ledger')).toEqual([
+   {user_id:owner.id,kind:'funding',amount_usd:'30.00000000',reference_id:invoice},
+  ]);
+  expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=21'))[0].count).toBe(1);
  }finally{await db.close();}
 });

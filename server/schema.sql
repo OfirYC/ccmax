@@ -128,6 +128,7 @@ CREATE TABLE withdrawals (
   user_id text NOT NULL REFERENCES users(id),
   payer_id text REFERENCES users(id),
   amount_usd numeric(24,8) NOT NULL CHECK(amount_usd>0),
+  team_amount_usd numeric(24,8) NOT NULL DEFAULT 0 CHECK(team_amount_usd>=0 AND team_amount_usd<=amount_usd),
   method text NOT NULL,
   destination text NOT NULL,
   state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','paid','rejected')),
@@ -146,6 +147,16 @@ CREATE TABLE ledger (
   UNIQUE(kind,reference_id)
 );
 CREATE INDEX ledger_user ON ledger(user_id);
+CREATE TABLE team_fund_ledger (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id),
+  kind text NOT NULL CHECK(kind IN ('funding','withdrawal_hold','withdrawal_release')),
+  amount_usd numeric(24,8) NOT NULL,
+  reference_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(kind,reference_id)
+);
+CREATE INDEX team_fund_ledger_user ON team_fund_ledger(user_id);
 CREATE TABLE jobs (
   id text PRIMARY KEY,
   connection_id text NOT NULL REFERENCES connections(id),

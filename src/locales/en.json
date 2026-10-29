@@ -1442,18 +1442,27 @@
   "核实依据 / 说明": "Verification evidence / note",
   "填写已核对的平台账单或快照依据": "Describe the verified platform bill or snapshot evidence",
   "确认快照并生成账单": "Confirm snapshot and create bills",
-  "快照已核实并生成账单": "Snapshot verified and bills created"
-  ,"快照已核实、上游回款已确认并生成账单": "Snapshot verified, upstream payment confirmed, and bills created"
-  ,"该日期仍有实时或快照预估。确认后将按现有快照封账并生成账单。填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "This date still has live or snapshot estimates. Confirmation will close the existing snapshots and create bills. Add upstream payment evidence to confirm the platform bill and credit the profit to your withdrawable balance."
-  ,"填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "Add upstream payment evidence to confirm the platform bill and credit the profit to your withdrawable balance."
-  ,"上游回款凭证（可选）": "Upstream payment evidence (optional)"
-  ,"填写后同时确认上游回款；留空则只核实快照，账单仍需单独确认。": "Filling this also confirms upstream payment; leave it blank to verify the snapshot only, then confirm the bill separately."
-  ,"平台付款流水号或回款确认记录": "Platform payment ID or receipt confirmation"
-  ,"累计已确认上游 gross": "Cumulative confirmed upstream gross"
-  ,"历史累计值，包含已提取金额": "Historical total, including amounts already withdrawn"
-  ,"当前可用 gross 资金": "Current gross funding available"
-  ,"扣除利润提现和已确认团队结算": "After profit withdrawals and confirmed team settlements"
-  ,"已覆盖待付款；仍需补足 {0}": "Covered payable amount; still short by {0}"
-  ,"CCMAX不会自动转账。上游回款确认后，请在线下支付团队成员，再确认对应下级账单并填写付款凭证。": "CCMAX does not transfer money automatically. After upstream receipt is confirmed, pay the team member externally, then confirm the downstream bill with payment evidence."
-  ,"当前 gross 已覆盖 {0}；仍需补足 {1}": "Current gross covers {0}; still short by {1}"
+  "快照已核实并生成账单": "Snapshot verified and bills created",
+  "快照已核实、上游回款已确认并生成账单": "Snapshot verified, upstream payment confirmed, and bills created",
+  "该日期仍有实时或快照预估。确认后将按现有快照封账并生成账单。填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "This date still has live or snapshot estimates. Confirmation will close the existing snapshots and create bills. Add upstream payment evidence to confirm the platform bill and credit the profit to your withdrawable balance.",
+  "填写上游回款凭证后，会同时确认我的平台账单并把利润记入可提现余额。": "Add upstream payment evidence to confirm the platform bill and credit the profit to your withdrawable balance.",
+  "上游回款凭证（可选）": "Upstream payment evidence (optional)",
+  "填写后同时确认上游回款；留空则只核实快照，账单仍需单独确认。": "Filling this also confirms upstream payment; leave it blank to verify the snapshot only, then confirm the bill separately.",
+  "平台付款流水号或回款确认记录": "Platform payment ID or receipt confirmation",
+  "累计已确认上游 gross": "Cumulative confirmed upstream gross",
+  "历史累计值，包含已提取金额": "Historical total, including amounts already withdrawn",
+  "当前可用 gross 资金": "Current gross funding available",
+  "扣除利润提现和已确认团队结算": "After profit withdrawals and confirmed team settlements",
+  "已覆盖待付款；仍需补足 {0}": "Covered payable amount; still short by {0}",
+  "CCMAX不会自动转账。上游回款确认后，请在线下支付团队成员，再确认对应下级账单并填写付款凭证。": "CCMAX does not transfer money automatically. After upstream receipt is confirmed, pay the team member externally, then confirm the downstream bill with payment evidence.",
+  "当前 gross 已覆盖 {0}；仍需补足 {1}": "Current gross covers {0}; still short by {1}",
+  "已确认利润和团队付款资金合并提现，由直属上级审核并线下打款。": "Confirmed profit and team-payment funds share one withdrawal balance. Your direct manager reviews and pays offline.",
+  "可提现资金 · USD": "Withdrawable funds · USD",
+  "已确认利润和团队付款资金扣除已申请提现金额": "Confirmed profit and team-payment funds less requested withdrawals",
+  "直属下级待付": "Due to direct team",
+  "直属下级待付款": "Payment due to direct team",
+  "已计入可提现资金；付款后确认下级账单": "Included in withdrawable funds; confirm the downstream bill after payment",
+  "完成日账单结算后，可在这里申请提现已确认资金。": "After daily bills are settled, withdraw confirmed funds here.",
+  "本人利润和团队应付均计入同一可提现余额，内部独立核对。": "Your profit and team payables enter one withdrawable balance while remaining independently reconciled.",
+  "当前可提现资金 · USD": "Funds available to withdraw · USD"
 }

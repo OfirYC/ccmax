@@ -156,7 +156,7 @@ describe('pricing risk reports and atomic batch adjustments',()=>{
     expect(await db.query('SELECT id FROM rates WHERE effective_date=$1',[nextDay()])).toHaveLength(2);
   });
 
-  it('settles genuine contractual losses as signed profit, prevents withdrawal, and offsets later income',async()=>{
+  it('settles genuine contractual losses while keeping confirmed team funding withdrawable',async()=>{
     const date=today(),newDay=nextDay(date),timestamp=Date.now();
     // A real upper-layer change leaves existing lower contracts unchanged.
     expect((await call(owner,'PUT',`/api/team/${parent.id}/rates`,{provider:'ai008',rate:0.2})).statusCode).toBe(200);
@@ -175,19 +175,19 @@ describe('pricing risk reports and atomic batch adjustments',()=>{
       await confirmInvoice(db,payer,bill.id,'idempotent replay');
       await assertWalletAccounting(db,member.id);
     }
-    expect((await balance(db,parent.id)).available).toBe('-10.00000000');
-    expect((await balance(db,child.id)).available).toBe('20.00000000');
+    expect((await balance(db,parent.id)).available).toBe('20.00000000');
+    expect((await balance(db,child.id)).available).toBe('30.00000000');
     expect((await db.query('SELECT sum(amount_usd) AS total FROM ledger'))[0].total).toBe('50.00000000');
     expect(await db.query("SELECT id FROM ledger WHERE kind='settlement'")).toHaveLength(4);
-    await expect(requestWithdrawal(db,parent,'1','Binance ID','test-destination',id(),secretBox(encryptionKey))).rejects.toThrow('可提现利润余额不足');
+    await expect(requestWithdrawal(db,parent,'21','Binance ID','test-destination',id(),secretBox(encryptionKey))).rejects.toThrow('可提现余额不足');
     const before=await db.query('SELECT * FROM invoices WHERE id=ANY($1::text[]) ORDER BY id',[firstBills.map(b=>b.id)]);
     await observe(parent,'later-income@example.com');
     for(const [member,payer] of [[owner,owner],[parent,owner]]) {
       const bill=await createInvoice(db,member,member.id,newDay,newDay);await confirmInvoice(db,payer,bill.id,'verified later income');
     }
-    expect((await balance(db,parent.id)).available).toBe('10.00000000');
+    expect((await balance(db,parent.id)).available).toBe('40.00000000');
     await assertWalletAccounting(db,parent.id);
-    expect((await requestWithdrawal(db,parent,'10','Binance ID','test-destination',id(),secretBox(encryptionKey))).amount_usd).toBe('10.00000000');
+    expect((await requestWithdrawal(db,parent,'40','Binance ID','test-destination',id(),secretBox(encryptionKey))).amount_usd).toBe('40.00000000');
     expect((await balance(db,parent.id)).available).toBe('0.00000000');
     expect(await db.query('SELECT * FROM invoices WHERE id=ANY($1::text[]) ORDER BY id',[firstBills.map(b=>b.id)])).toEqual(before);
   });
@@ -204,11 +204,11 @@ describe('pricing risk reports and atomic batch adjustments',()=>{
       const bill=await createInvoice(db,member,member.id,day,day);await confirmInvoice(db,payer,bill.id,'verified reserved loss');
     }
     await assertWalletAccounting(db,parent.id);
-    expect((await balance(db,parent.id)).available).toBe('-5.00000000');
+    expect((await balance(db,parent.id)).available).toBe('25.00000000');
     await expect(reviewWithdrawal(db,owner,withdrawal.id,'paid','cannot pay debt')).rejects.toThrow('可提现利润余额不足');
     expect((await db.query('SELECT state FROM withdrawals WHERE id=$1',[withdrawal.id]))[0].state).toBe('pending');
     await reviewWithdrawal(db,owner,withdrawal.id,'rejected','release consumed reservation');
-    expect(await balance(db,parent.id)).toEqual({available:'30.00000000',pending:'0.00000000'});
+    expect(await balance(db,parent.id)).toEqual({available:'60.00000000',pending:'0.00000000'});
     await assertWalletAccounting(db,parent.id);
   });
 });
