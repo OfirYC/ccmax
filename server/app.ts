@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { z, ZodError } from 'zod';
 import type { DB, Row } from './db.js';
 import { AppError, assert, audit, dayString, hashPassword, id, nextDay, requireDirect, requireOwner, secretBox, subtree, today, verifyPassword } from './core.js';
-import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, withdrawalDestination } from './billing.js';
+import { balance, confirmInvoice, createInvoice, csv, ingestUsage, requestWithdrawal, reviewWithdrawal, settlementFunds, withdrawalDestination } from './billing.js';
 import { enqueue, enqueueAccountProxySync } from './worker.js';
 import { PROVIDERS, PROVIDER_KEYS, platformCatalog, ProviderClient, type ProviderKey } from './providers.js';
 import { accountProxy, parseProxy, proxyFingerprint } from './proxies.js';
@@ -623,7 +623,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const withdrawals=accountSource?await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
       WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
     const ledger=await db.query(`SELECT * FROM ledger WHERE user_id=$1 AND ($2='all' OR ($2='account' AND kind='settlement') OR ($2='key' AND kind IN ('task_settlement','task_adjustment'))) ORDER BY created_at DESC LIMIT 20`,[req.user.id,q.source]);
-    return {balance:await balance(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger,source:q.source,billing:billingSchedule()};
+    return {balance:await balance(db,req.user.id),funds:await settlementFunds(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger,source:q.source,billing:billingSchedule()};
   });
   app.get('/api/ledger/export',async(req,reply)=>{
     const [total]=await db.query('SELECT count(*) AS count FROM ledger WHERE user_id=$1',[req.user.id]);

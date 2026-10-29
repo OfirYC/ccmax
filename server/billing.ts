@@ -149,6 +149,22 @@ export async function balance(db: DB, userId: string) {
     (SELECT COALESCE(sum(amount_usd),0) FROM withdrawals WHERE user_id=$1 AND state='pending') AS pending`,[userId]);
   return {available:usd(row.available),pending:usd(row.pending)};
 }
+
+// The withdrawable wallet intentionally contains only the member's profit.
+// Expose the gross upstream amount and the direct team's outstanding invoices
+// separately so a payer can reserve downstream funds without making them
+// withdrawable or mixing them into the profit ledger.
+export async function settlementFunds(db: DB, userId: string) {
+  const [row]=await db.query(`SELECT
+    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE user_id=$1 AND state='confirmed') AS confirmed_gross,
+    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='pending') AS downstream_due,
+    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='confirmed') AS downstream_paid`,[userId]);
+  return {
+    confirmedGrossUsd:usd(row.confirmed_gross),
+    downstreamPayableUsd:usd(row.downstream_due),
+    downstreamPaidUsd:usd(row.downstream_paid),
+  };
+}
 export function withdrawalDestination(box:SecretBox, value:string):string {
   return value.startsWith('enc:v1:')?box.decrypt(value.slice(7)).destination:value;
 }

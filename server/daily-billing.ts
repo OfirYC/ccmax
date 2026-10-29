@@ -31,11 +31,11 @@ export async function createDailyInvoices(db: DB, owner: Row, day: string) {
 }
 
 export async function recordDailyStatement(db: DB, connection: Row, owner: Row, day: string, input: DailyAmount[],
-  options:{basis?:'upstream'|'snapshot';autoFinalize?:boolean;issues?:Issue[];sourceError?:string}={}) {
+  options:{basis?:'upstream'|'snapshot';autoFinalize?:boolean;issues?:Issue[];sourceError?:string;reviewed?:boolean}={}) {
   assert(day < today(), '仅可结算已经结束的北京时间日期');
   assert(Array.isArray(input) && input.length <= 100000, '历史账号结果不完整，未写入账本', 502);
   const seen = new Set<string>();
-  const basis=options.basis??'upstream',autoFinalize=options.autoFinalize!==false;
+  const basis=options.basis??'upstream',autoFinalize=options.autoFinalize!==false,source=options.reviewed?'reviewed_statement':basis==='upstream'?'upstream_daily':'daily_snapshot';
   const rows = input.map(row => {
     assert(typeof row.externalId === 'string' && row.externalId.trim() && !seen.has(row.externalId), '历史用量金额或账号重复，未写入账本', 502);
     seen.add(row.externalId);
@@ -71,7 +71,7 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
         assert(binding, '历史账单账号尚未同步，请同步平台账号', 409);
         const owned=!!binding.owner_id&&binding.ownership_verified;
         const usageId = await ingestUsage(tx, { bindingId: binding.id, day, rawUsd: row.rawUsd, final: autoFinalize&&owned,
-          source: basis==='upstream'?'upstream_daily':'daily_snapshot',sourceAt:row.sourceAt??undefined,
+          source,sourceAt:row.sourceAt??undefined,
           evidence: `upstream_statement:${statement.id};sha256:${checksum}` });
         if(!autoFinalize||!owned) {
           const message=!owned?'账号归属待确认，账单已保留':'快照预估已存档，等待审核或启用快照自动出账';

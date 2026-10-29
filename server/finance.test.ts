@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { migrate, type DB, type Row } from './db.js';
 import { bootstrap, id, MAX_USD, secretBox, today } from './core.js';
-import { balance, confirmInvoice, createInvoice, ingestUsage, requestWithdrawal, reviewWithdrawal } from './billing.js';
+import { balance, confirmInvoice, createInvoice, ingestUsage, requestWithdrawal, reviewWithdrawal, settlementFunds } from './billing.js';
 import { assertWalletAccounting } from './financial-integrity.js';
 import { auditFinance } from './finance-audit.js';
 import { previewInvoice } from './invoice-preview.js';
@@ -83,6 +83,51 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect((await app.inject({ url: `/api/invoices/preview?from=${today()}&to=${today()}`, headers: { cookie } })).statusCode).toBe(400);
     expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
     expect(await db.query('SELECT * FROM invoices')).toHaveLength(1);
+  });
+
+  it('reports confirmed gross funding and separates direct team payment obligations', async () => {
+    const bindingId = await binding(a);
+    await observe(bindingId, '100');
+    const upstream = await createInvoice(db, owner, owner.id, prior(), prior());
+    await confirmInvoice(db, owner, upstream.id, 'upstream receipt');
+    const child = await createInvoice(db, a, a.id, prior(), prior());
+
+    expect(await settlementFunds(db, owner.id)).toEqual({
+      confirmedGrossUsd: '70.00000000',
+      downstreamPayableUsd: '30.00000000',
+      downstreamPaidUsd: '0.00000000',
+    });
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-ccmax-request': '1' }, payload: { email: owner.email, password } });
+    const cookie = String(login.headers['set-cookie']).split(';')[0];
+    const finance = await app.inject({ url: '/api/finance', headers: { cookie } });
+    expect(finance.statusCode).toBe(200);
+    expect(finance.json().funds).toEqual({
+      confirmedGrossUsd: '70.00000000',
+      downstreamPayableUsd: '30.00000000',
+      downstreamPaidUsd: '0.00000000',
+    });
+
+    await confirmInvoice(db, owner, child.id, 'downstream payment');
+    expect((await settlementFunds(db, owner.id)).downstreamPayableUsd).toBe('0.00000000');
+    expect((await settlementFunds(db, owner.id)).downstreamPaidUsd).toBe('30.00000000');
+    expect((await balance(db, owner.id)).available).toBe('40.00000000');
+  });
+
+  it('lets an owner attest an ended live snapshot and creates the settlement chain', async () => {
+    const bindingId = await binding(c), sourceAt = new Date(prior()+'T23:00:00+08:00').toISOString();
+    await db.transaction(tx => ingestUsage(tx, { bindingId, day: prior(), rawUsd: '100', final: false, source: 'live_snapshot', sourceAt }));
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-ccmax-request': '1' }, payload: { email: owner.email, password } });
+    const cookie = String(login.headers['set-cookie']).split(';')[0];
+    const response = await app.inject({
+      method: 'POST', url: '/api/billing/finalize-snapshot', headers: { cookie, 'x-ccmax-request': '1' },
+      payload: { connectionId: connections.ai008, day: prior(), evidence: 'verified end-of-day upstream snapshot' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ basis: 'snapshot', state: 'succeeded', finalized: 1, invoices: 4 });
+    expect((await db.query('SELECT state,source FROM usage_days'))[0]).toEqual({ state: 'final', source: 'reviewed_statement' });
+    expect((await db.query('SELECT estimated FROM invoices')).every(row => !row.estimated)).toBe(true);
+    const days = await app.inject({ url: `/api/billing/days?from=${prior()}&to=${prior()}`, headers: { cookie } });
+    expect(days.json().rows[0]).toMatchObject({ reviewed: true });
   });
 
   it('shows every frozen rate for the selected settlement member without substituting current or administrator prices',async()=>{

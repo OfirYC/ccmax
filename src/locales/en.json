@@ -1432,5 +1432,15 @@
   "恢复 CCMAX 使用": "Resume CCMAX use",
   "本地已停用平台使用；不会修改上游账号状态。": "Usage is paused in CCMAX; the upstream account status is unchanged.",
   "平台 A 使用已在 CCMAX 停用": "Platform A usage is paused in CCMAX",
-  "平台 A 使用已恢复": "Platform A usage resumed"
+  "平台 A 使用已恢复": "Platform A usage resumed",
+  "已确认上游应收总额": "Confirmed upstream receivables",
+  "包括本人利润和团队应付": "Includes own profit and team payables",
+  "团队待付款准备金": "Team payment reserve",
+  "待支付给直属下级的金额，单独保留": "Amount due to direct downstream members, held separately",
+  "核实并结算快照": "Verify and settle snapshot",
+  "该日期仍有实时或快照预估。确认后将按现有快照封账并生成账单。": "This date still has live or snapshot estimates. Confirmation will close the existing snapshots and create bills.",
+  "核实依据 / 说明": "Verification evidence / note",
+  "填写已核对的平台账单或快照依据": "Describe the verified platform bill or snapshot evidence",
+  "确认快照并生成账单": "Confirm snapshot and create bills",
+  "快照已核实并生成账单": "Snapshot verified and bills created"
 }

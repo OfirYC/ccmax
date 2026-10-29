@@ -1432,5 +1432,15 @@
   "恢复 CCMAX 使用": "Bật lại trong CCMAX",
   "本地已停用平台使用；不会修改上游账号状态。": "Đã tạm dừng sử dụng trong CCMAX; trạng thái tài khoản trên nền tảng không đổi.",
   "平台 A 使用已在 CCMAX 停用": "Đã tạm dừng sử dụng Nền tảng A trong CCMAX",
-  "平台 A 使用已恢复": "Đã bật lại sử dụng Nền tảng A"
+  "平台 A 使用已恢复": "Đã bật lại sử dụng Nền tảng A",
+  "已确认上游应收总额": "Tổng khoản phải thu cấp trên đã xác nhận",
+  "包括本人利润和团队应付": "Gồm lợi nhuận của bạn và khoản phải trả cho đội",
+  "团队待付款准备金": "Khoản dự phòng thanh toán cho đội",
+  "待支付给直属下级的金额，单独保留": "Khoản phải trả cấp dưới trực tiếp, giữ riêng",
+  "核实并结算快照": "Xác minh và quyết toán ảnh chụp",
+  "该日期仍有实时或快照预估。确认后将按现有快照封账并生成账单。": "Ngày này vẫn có ước tính trực tiếp hoặc từ ảnh chụp. Sau khi xác nhận, hệ thống sẽ chốt ảnh chụp hiện có và tạo hóa đơn.",
+  "核实依据 / 说明": "Bằng chứng / ghi chú xác minh",
+  "填写已核对的平台账单或快照依据": "Mô tả hóa đơn nền tảng hoặc bằng chứng ảnh chụp đã kiểm tra",
+  "确认快照并生成账单": "Xác nhận ảnh chụp và tạo hóa đơn",
+  "快照已核实并生成账单": "Đã xác minh ảnh chụp và tạo hóa đơn"
 }
