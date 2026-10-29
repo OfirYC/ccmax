@@ -70,4 +70,3 @@
 - [ ] **Step 2: Run `npm run check` and `npm run build`.**
 - [ ] **Step 3: Run the full `npm test` suite.**
 - [ ] **Step 4: Commit the UI/documentation change.**
-
