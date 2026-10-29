@@ -6,6 +6,7 @@ import { telemetryMigration } from './telemetry.js';
 import { dailyBillingMigration } from './daily-billing-migration.js';
 import { snapshotRecoveryMigration } from './snapshot-recovery-migration.js';
 import { invitationMigration } from './invitations.js';
+import { applyJadenSettlementRepair } from './jaden-settlement-repair.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -173,6 +174,10 @@ export async function migrate(db: DB) {
       await tx.query('ALTER TABLE billing_days ADD COLUMN IF NOT EXISTS reviewed boolean NOT NULL DEFAULT false');
       await combinedWithdrawableFunds(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (22)');
+    }
+    if (!done.some(row=>Number(row.version)===23)) {
+      await applyJadenSettlementRepair(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (23)');
     }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are
