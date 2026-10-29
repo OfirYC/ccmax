@@ -1455,4 +1455,5 @@
   ,"扣除利润提现和已确认团队结算": "After profit withdrawals and confirmed team settlements"
   ,"已覆盖待付款；仍需补足 {0}": "Covered payable amount; still short by {0}"
   ,"CCMAX不会自动转账。上游回款确认后，请在线下支付团队成员，再确认对应下级账单并填写付款凭证。": "CCMAX does not transfer money automatically. After upstream receipt is confirmed, pay the team member externally, then confirm the downstream bill with payment evidence."
+  ,"当前 gross 已覆盖 {0}；仍需补足 {1}": "Current gross covers {0}; still short by {1}"
 }

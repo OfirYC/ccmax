@@ -1455,4 +1455,5 @@
   ,"扣除利润提现和已确认团队结算": "Sau khi trừ rút lợi nhuận và quyết toán đội đã xác nhận"
   ,"已覆盖待付款；仍需补足 {0}": "Đã đủ cho khoản phải trả; còn thiếu {0}"
   ,"CCMAX不会自动转账。上游回款确认后，请在线下支付团队成员，再确认对应下级账单并填写付款凭证。": "CCMAX không tự chuyển tiền. Sau khi xác nhận tiền cấp trên, hãy trả tiền cho thành viên bên ngoài hệ thống, rồi xác nhận hóa đơn cấp dưới kèm chứng từ."
+  ,"当前 gross 已覆盖 {0}；仍需补足 {1}": "Gross hiện tại đã đủ {0}; còn thiếu {1}"
 }
