@@ -192,9 +192,9 @@ describe('CCMAX authorization and ledger safeguards', () => {
     await expect(confirmInvoice(db,b,invoices[1].id,'wrong parent')).rejects.toThrow('只能确认');
     for(let i=0;i<invoices.length;i++)await confirmInvoice(db,[owner,owner,a,b][i],invoices[i].id,'test remittance');
     await confirmInvoice(db,owner,invoices[0].id,'retry');
-    expect((await balance(db,owner.id)).available).toBe('40.00000000');
-    expect((await balance(db,a.id)).available).toBe('20.00000000');
-    expect((await balance(db,b.id)).available).toBe('20.00000000');
+    expect((await balance(db,owner.id)).available).toBe('100.00000000');
+    expect((await balance(db,a.id)).available).toBe('60.00000000');
+    expect((await balance(db,b.id)).available).toBe('40.00000000');
     expect((await balance(db,c.id)).available).toBe('20.00000000');
     expect(await db.query("SELECT * FROM ledger WHERE kind='settlement'")).toHaveLength(4);
     await expect(createInvoice(db,a,a.id,prior(),prior())).rejects.toThrow('没有可结算');

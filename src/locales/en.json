@@ -1442,5 +1442,13 @@
   "核实依据 / 说明": "Verification evidence / note",
   "填写已核对的平台账单或快照依据": "Describe the verified platform bill or snapshot evidence",
   "确认快照并生成账单": "Confirm snapshot and create bills",
-  "快照已核实并生成账单": "Snapshot verified and bills created"
+  "快照已核实并生成账单": "Snapshot verified and bills created",
+  "已确认利润和团队付款资金合并提现，由直属上级审核并线下打款。": "Confirmed profit and team-payment funds share one withdrawal balance. Your direct manager reviews and pays offline.",
+  "可提现资金 · USD": "Withdrawable funds · USD",
+  "已确认利润和团队付款资金扣除已申请提现金额": "Confirmed profit and team-payment funds less requested withdrawals",
+  "直属下级待付": "Due to direct team",
+  "已计入可提现资金；付款后确认下级账单": "Included in withdrawable funds; confirm the downstream bill after payment",
+  "完成日账单结算后，可在这里申请提现已确认资金。": "After daily bills are settled, withdraw confirmed funds here.",
+  "本人利润和团队应付均计入同一可提现余额，内部独立核对。": "Your profit and team payables enter one withdrawable balance while remaining independently reconciled.",
+  "当前可提现资金 · USD": "Funds available to withdraw · USD"
 }

@@ -54,8 +54,8 @@ describe('automatic daily billing',()=>{
     expect(await db.query('SELECT * FROM invoices')).toHaveLength(3);expect(await db.query('SELECT * FROM upstream_statements')).toHaveLength(1);
     const chain=[owner,agent,leaf];
     for(let i=0;i<chain.length;i++)await confirmInvoice(db,chain[Math.max(0,i-1)],invoices.find(b=>b.user_id===chain[i].id)!.id,'verified real receipt');
-    expect((await balance(db,owner.id)).available).toBe('10.00000000');
-    expect((await balance(db,agent.id)).available).toBe('10.00000000');
+    expect((await balance(db,owner.id)).available).toBe('30.00000000');
+    expect((await balance(db,agent.id)).available).toBe('20.00000000');
     expect((await balance(db,leaf.id)).available).toBe('10.00000000');
   });
 
