@@ -125,7 +125,10 @@ export async function createInvoiceInTransaction(tx: DB, actor: Row, userId: str
 }
 
 export async function confirmInvoice(db: DB, actor: Row, invoiceId: string, reference: string) {
-  return db.transaction(async tx=>{
+  return db.transaction(tx=>confirmInvoiceInTransaction(tx,actor,invoiceId,reference));
+}
+
+export async function confirmInvoiceInTransaction(tx: DB, actor: Row, invoiceId: string, reference: string) {
     const [invoice]=await tx.query('SELECT * FROM invoices WHERE id=$1 FOR UPDATE',[invoiceId]);
     assert(invoice,'账单不存在',404);
     assert(invoice.payer_id===actor.id || (!invoice.payer_id && actor.role==='owner'),'只能确认直属下级账单；平台回款仅管理员确认',403);
@@ -142,7 +145,6 @@ export async function confirmInvoice(db: DB, actor: Row, invoiceId: string, refe
       VALUES($1,$2,'funding',$3,$4)`,[id(),invoice.user_id,invoice.downstream_usd,invoiceId]);
     await audit(tx,actor.id,'invoice.confirm',invoiceId,{reference});
     return result;
-  });
 }
 
 async function walletSources(db: DB, userId: string) {
