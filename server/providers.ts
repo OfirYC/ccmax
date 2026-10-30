@@ -15,8 +15,9 @@ export const PROVIDERS = {
   maxchat: { name:upstreamNames.maxchat, url:'https://cldgtw.maxchatapi.com', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
 } as const;
 // Owner-only source metadata; public catalogs never contain upstream names/URLs.
-export function platformCatalog(owner=false) {
-  return Object.fromEntries(Object.entries(PROVIDERS).map(([provider,{name,url,...capabilities}])=>[provider,{
+export function platformCatalog(owner=false, enabledProviders?: Iterable<string>) {
+  const enabled=enabledProviders===undefined?null:new Set(enabledProviders);
+  return Object.fromEntries(Object.entries(PROVIDERS).filter(([provider])=>owner||enabled===null||enabled.has(provider)).map(([provider,{name,url,...capabilities}])=>[provider,{
     ...capabilities,name:publicPlatformName(provider),...(owner?{upstreamName:name,url}:{}),
   }]));
 }

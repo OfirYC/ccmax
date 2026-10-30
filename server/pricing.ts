@@ -21,7 +21,11 @@ async function context(db:DB,actor:Row) {
   // enabled upstream contract so the owner sees risk on any of those accounts.
   const connections=actor.role==='owner'?await db.query('SELECT id,provider,enabled FROM connections ORDER BY id'):[];
   const upstream=actor.role==='owner'?await db.query<Quote>(`SELECT connection_id,rate,effective_date::text AS effective_date FROM connection_rates WHERE connection_id=ANY($1::text[]) ORDER BY connection_id,effective_date`,[connections.map(c=>c.id)]):[];
-  return {actorId:actor.id,root:actor.role==='owner',current,effectiveDate,users,rates,connections,upstream};
+  const states=await db.query<{provider:ProviderKey;enabled:string|boolean}>(`SELECT provider,bool_or(enabled) AS enabled
+    FROM connections GROUP BY provider ORDER BY provider`);
+  const providers=new Set<ProviderKey>(PROVIDER_KEYS);
+  for(const state of states)if(state.enabled!==true&&state.enabled!=='true')providers.delete(state.provider);
+  return {actorId:actor.id,root:actor.role==='owner',current,effectiveDate,users,rates,connections,upstream,providers};
 }
 
 function ownRate(c:Context,provider:ProviderKey,date:string):string|null {
@@ -42,9 +46,10 @@ function risk(payerId:string,payerName:string,user:Row,provider:ProviderKey,date
 
 function report(c:Context,actor:Row) {
   const direct=c.users.filter(u=>u.parent_id===actor.id);
-  const prices=PROVIDER_KEYS.map(provider=>({provider,currentRate:ownRate(c,provider,c.current),nextRate:ownRate(c,provider,c.effectiveDate),connectionCount:c.connections.filter(r=>r.enabled&&r.provider===provider).length}));
+  const providerKeys=actor.role==='owner'?PROVIDER_KEYS:[...c.providers];
+  const prices=providerKeys.map(provider=>({provider,currentRate:ownRate(c,provider,c.current),nextRate:ownRate(c,provider,c.effectiveDate),connectionCount:c.connections.filter(r=>r.enabled&&r.provider===provider).length}));
   const risks=[];
-  for(const p of PROVIDER_KEYS) {
+  for(const p of providerKeys) {
     // Ignore platforms neither side has priced and which have no active upstream.
     if(!c.rates.some(r=>r.provider===p&&(r.user_id===actor.id||direct.some(u=>u.id===r.user_id)))&&!c.connections.some(r=>r.enabled&&r.provider===p))continue;
     const dates=[...new Set([c.current,c.effectiveDate,...c.rates.filter(r=>r.provider===p&&r.effective_date>c.current).map(r=>r.effective_date),...c.upstream.filter(r=>r.effective_date>c.current).map(r=>r.effective_date)])].sort();

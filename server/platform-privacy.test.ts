@@ -53,6 +53,21 @@ describe('private platform identities at the HTTP boundary',()=>{
   expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(before.usage);expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(before.earnings);expect(await db.query('SELECT * FROM rates ORDER BY id')).toEqual(before.rates);
  });
 
+ it('hides a paused platform from agent catalogs while keeping it available to the administrator',async()=>{
+  const paused=connections.find(c=>c.provider==='maxchat');
+  const changed=await request('PATCH',`/api/connections/${paused.id}`,{enabled:false},ownerCookie);
+  expect(changed.statusCode,changed.body).toBe(200);
+  const agentCatalog=await request('GET','/api/connections');
+  expect(agentCatalog.statusCode).toBe(200);
+  expect(agentCatalog.json().connections.some((c:any)=>c.provider==='D')).toBe(false);
+  expect(agentCatalog.json().providers).not.toHaveProperty('D');
+  const ownerCatalog=await request('GET','/api/connections',undefined,ownerCookie);
+  expect(ownerCatalog.json().connections.find((c:any)=>c.provider==='D')).toMatchObject({enabled:false});
+  expect(ownerCatalog.json().providers).toHaveProperty('D');
+  const invite=await request('POST','/api/team/invitations',{name:'Paused platform',rates:{D:0.1}},ownerCookie);
+  expect(invite.statusCode).toBe(409);
+ });
+
  it('routes public filters, single prices, batch prices and invitations back to the original independent platform',async()=>{
   for(const code of 'ABCD'){const usage=await request('GET',`/api/usage?provider=${code}`);expect(usage.statusCode,usage.body).toBe(200);expect(usage.json().rows).toHaveLength(1);expect(usage.json().rows[0]).toMatchObject({provider:code,raw_usd:'100.00000000',rate:'0.2000',gross_usd:'20.00000000'});}
   const created=await request('POST','/api/team',{name:'Child',email:'privacy-leaf@example.com',password,rates:{B:0.1,D:0},effectiveFrom:'1970-01-01'});expect(created.statusCode).toBe(200);const child=created.json().user;

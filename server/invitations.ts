@@ -49,9 +49,22 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
   const fields = 'id,inviter_id,name,expires_at,max_uses,used_count,revoked_at,created_at';
   const publicFields = (row: Row) => Object.fromEntries(fields.split(',').map(key => [key, row[key]]));
   const link = (row: Row) => new URL(`/invite/${box.decrypt<string>(row.token_secret)}`, appUrl).href;
-  const rates = async (tx: DB, invitationId: string) => Object.fromEntries((await tx.query(
-    'SELECT provider,rate FROM invitation_rates WHERE invitation_id=$1 ORDER BY provider', [invitationId],
-  )).map(row => [row.provider, row.rate]));
+  const availableProviders = async (tx: DB) => {
+    const states = await tx.query<{provider: string; enabled: string|boolean}>(`SELECT provider,bool_or(enabled) AS enabled
+      FROM connections GROUP BY provider ORDER BY provider`);
+    const enabled = new Set<string>(PROVIDER_KEYS);
+    // Providers without a configured connection remain available for future
+    // onboarding. A provider is hidden after every configured connection is
+    // paused by the administrator.
+    for (const state of states) if (state.enabled !== true && state.enabled !== 'true') enabled.delete(state.provider);
+    return enabled;
+  };
+  const rates = async (tx: DB, invitationId: string) => {
+    const enabled = await availableProviders(tx);
+    return Object.fromEntries((await tx.query(
+      'SELECT provider,rate FROM invitation_rates WHERE invitation_id=$1 ORDER BY provider', [invitationId],
+    )).filter(row => enabled.has(row.provider)).map(row => [row.provider, row.rate]));
+  };
 
   async function available(tx: DB, rawToken: unknown, lock = false) {
     const parsed = tokenSchema.safeParse(rawToken);
@@ -67,7 +80,8 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
   app.get('/api/team/invitations', async req => {
     const invitations = await db.query(`SELECT ${fields},token_secret FROM invitations WHERE inviter_id=$1 ORDER BY created_at DESC,id`, [req.user.id]);
     const quotes = await db.query(`SELECT r.* FROM invitation_rates r JOIN invitations i ON i.id=r.invitation_id WHERE i.inviter_id=$1`, [req.user.id]);
-    return { invitations: invitations.map(row => ({ ...publicFields(row), url: link(row), rates: Object.fromEntries(quotes.filter(q => q.invitation_id === row.id).map(q => [q.provider, q.rate])) })) };
+    const enabled = req.user.role === 'owner' ? new Set<string>(PROVIDER_KEYS) : await availableProviders(db);
+    return { invitations: invitations.map(row => ({ ...publicFields(row), url: link(row), rates: Object.fromEntries(quotes.filter(q => q.invitation_id === row.id && enabled.has(q.provider)).map(q => [q.provider, q.rate])) })) };
   });
 
   app.post('/api/team/invitations', async req => {
@@ -84,6 +98,8 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
       const [count] = await tx.query(`SELECT count(*) AS count FROM invitations WHERE inviter_id=$1 AND revoked_at IS NULL
         AND (expires_at IS NULL OR expires_at>now()) AND (max_uses IS NULL OR used_count<max_uses)`, [req.user.id]);
       assert(Number(count.count) < 100, '最多保留 100 条有效邀请链接，请先停用不再使用的链接', 409);
+      const enabled = await availableProviders(tx);
+      assert(Object.keys(data.rates).every(provider => enabled.has(provider)), '平台连接不存在或已停用', 409);
       const [invite] = await tx.query(`INSERT INTO invitations(id,inviter_id,name,token_hash,token_secret,expires_at,max_uses)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [id(), req.user.id, data.name, digest(token), box.encrypt(token), data.expiresInDays === null ? null : new Date(Date.now() + data.expiresInDays * 86400000), data.maxUses]);
       for (const [provider, rate] of Object.entries(data.rates)) await tx.query('INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,$2,$3)', [invite.id, provider, rate]);
@@ -112,6 +128,8 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
       const [invite] = await tx.query('SELECT id,revoked_at FROM invitations WHERE id=$1 AND inviter_id=$2 FOR UPDATE', [target, req.user.id]);
       assert(invite, '邀请链接不存在', 404);
       assert(!invite.revoked_at, '邀请链接已停用', 409);
+      const enabled = await availableProviders(tx);
+      assert(Object.keys(changes).every(provider => enabled.has(provider)), '平台连接不存在或已停用', 409);
       for (const [provider, value] of Object.entries(changes)) {
         await tx.query(`INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,$2,$3)
           ON CONFLICT(invitation_id,provider) DO UPDATE SET rate=EXCLUDED.rate`, [target, provider, value]);
@@ -119,7 +137,8 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
       await audit(tx, req.user.id, 'invitation.rate.update', target, { rates: changes });
       const [row] = await tx.query(`SELECT ${fields},token_secret FROM invitations WHERE id=$1`, [target]);
       const updated = await tx.query<{ provider: string; rate: string }>('SELECT provider,rate FROM invitation_rates WHERE invitation_id=$1', [target]);
-      return { invitation: { ...publicFields(row), url: link(row), rates: Object.fromEntries(updated.map(item => [item.provider, item.rate])) } };
+      const visible = req.user.role === 'owner' ? new Set<string>(PROVIDER_KEYS) : await availableProviders(tx);
+      return { invitation: { ...publicFields(row), url: link(row), rates: Object.fromEntries(updated.filter(item => visible.has(item.provider)).map(item => [item.provider, item.rate])) } };
     });
   };
 
@@ -142,7 +161,8 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
   app.get('/api/invitations/:token', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async req => db.transaction(async tx => {
     const invite = await available(tx, (req.params as Row).token);
     const [inviter] = await tx.query('SELECT name FROM users WHERE id=$1', [invite.inviter_id]);
-    return { inviterName: inviter.name, rates: await rates(tx, invite.id), providers: platformCatalog(), expiresAt: invite.expires_at };
+    const enabled = await availableProviders(tx);
+    return { inviterName: inviter.name, rates: await rates(tx, invite.id), providers: platformCatalog(false, enabled), expiresAt: invite.expires_at };
   }));
 
   app.post('/api/invitations/:token/register', { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } }, async req => {
