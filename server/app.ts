@@ -184,8 +184,11 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       ) m ON m.user_id=u.id WHERE u.id=ANY($1::text[]) ORDER BY u.created_at`,[ids,q.from,q.to]);
     const rates=await db.query(`SELECT DISTINCT ON(user_id,provider) user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date<=$2 ORDER BY user_id,provider,effective_date DESC`,[ids,current]);
     const upcoming=await db.query(`SELECT user_id,provider,rate,effective_date::text AS effective_date FROM rates WHERE user_id=ANY($1::text[]) AND effective_date>$2`,[ids,current]);
-    const catalog=await catalogFor(req.user.role==='owner'),visible=new Set(Object.keys(catalog));
-    return {users,rates:req.user.role==='owner'?rates:rates.filter(row=>visible.has(row.provider)),upcoming:req.user.role==='owner'?upcoming:upcoming.filter(row=>visible.has(row.provider)),period:q,providers:catalog};
+    // The team quote surface follows active platforms for every role. Owners
+    // still see paused connections in Platform management so they can resume
+    // them, while old rates and historical billing remain stored untouched.
+    const catalog=await catalogFor(false),visible=new Set(Object.keys(catalog));
+    return {users,rates:rates.filter(row=>visible.has(row.provider)),upcoming:upcoming.filter(row=>visible.has(row.provider)),period:q,providers:catalog};
   });
   app.get('/api/team/pricing',async req=>pricingReport(db,req.user));
   app.post('/api/team/rates/preview',async req=>{

@@ -46,7 +46,10 @@ function risk(payerId:string,payerName:string,user:Row,provider:ProviderKey,date
 
 function report(c:Context,actor:Row) {
   const direct=c.users.filter(u=>u.parent_id===actor.id);
-  const providerKeys=actor.role==='owner'?PROVIDER_KEYS:[...c.providers];
+  // Paused providers keep their historical contracts, but they are no longer
+  // part of the active quote surface. Do not turn their missing upstream
+  // contract into a false risk for every member and future effective date.
+  const providerKeys=[...c.providers];
   const prices=providerKeys.map(provider=>({provider,currentRate:ownRate(c,provider,c.current),nextRate:ownRate(c,provider,c.effectiveDate),connectionCount:c.connections.filter(r=>r.enabled&&r.provider===provider).length}));
   const risks=[];
   for(const p of providerKeys) {

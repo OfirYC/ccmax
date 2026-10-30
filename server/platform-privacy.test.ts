@@ -64,6 +64,12 @@ describe('private platform identities at the HTTP boundary',()=>{
   const ownerCatalog=await request('GET','/api/connections',undefined,ownerCookie);
   expect(ownerCatalog.json().connections.find((c:any)=>c.provider==='D')).toMatchObject({enabled:false});
   expect(ownerCatalog.json().providers).toHaveProperty('D');
+  const ownerPricing=await request('GET','/api/team/pricing',undefined,ownerCookie);
+  expect(ownerPricing.statusCode,ownerPricing.body).toBe(200);
+  expect(ownerPricing.json().prices.some((p:any)=>p.provider==='D')).toBe(false);
+  expect(ownerPricing.json().risks.some((r:any)=>r.provider==='D')).toBe(false);
+  const ownerTeam=await request('GET','/api/team',undefined,ownerCookie);
+  expect(ownerTeam.json().providers).not.toHaveProperty('D');
   const invite=await request('POST','/api/team/invitations',{name:'Paused platform',rates:{D:0.1}},ownerCookie);
   expect(invite.statusCode).toBe(409);
  });
