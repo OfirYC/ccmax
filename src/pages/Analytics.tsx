@@ -85,10 +85,12 @@ function AccountDetail({row,day,onClose}:{row:any;day:string;onClose:()=>void}){
     <div className="telemetry-quotas"><Quota label={t('5 小时额度使用')} value={d.quota.fiveHour} reset={d.quota.reset5h}/><Quota label={t('7 天额度使用')} value={d.quota.sevenDay} reset={d.quota.reset7d}/></div>
     <Table headers={[t('统计窗口'),t('请求数'),'Token',t('平台计费 USD'),t('官方原价 USD'),t('缓存补偿 USD')]}>{telemetryPeriods.map(p=>{const v=p==='today'&&d.day!==day?null:d.periods[p];return <tr key={p}><td>{periodLabels()[p]}{p==='today'&&d.day!==day&&<small>{t('今日有效数据暂缺')}</small>}</td><td>{count(v?.requests)}</td><td>{count(v?.tokens)}</td><td><Amount value={v?.billedUsd}/></td><td><Amount value={v?.officialUsd}/></td><td><Amount value={v?.cacheCreditUsd}/></td></tr>;})}</Table>
     <div className="telemetry-detail-grid"><div><small>{t('24 小时请求')}</small><strong>{count(d.health.requests24h)}</strong></div><div><small>{t('24 小时成功')}</small><strong>{count(d.health.successful24h)}</strong></div><div><small>{t('24 小时限流')}</small><strong>{count(d.health.limited24h)}</strong></div><div><small>{t('24 小时成功率')}</small><strong>{d.health.requests24h!==null&&d.health.requests24h>0&&d.health.successful24h!==null&&d.health.successful24h<=d.health.requests24h?`${(d.health.successful24h/d.health.requests24h*100).toFixed(1)}%`:'—'}</strong></div></div>
+    {d.financial&&<div className="notice telemetry-financial"><strong>{t('上游产值')}</strong><span>{d.financial.verifiedPointsMinor.toLocaleString()} points</span>{d.financial.posted&&<span>{t('已记账')} · {formatMinor(d.financial.posted.amountMinor,d.financial.posted.currency)}</span>}{d.financial.paid&&<span>{t('已支付')} · {formatMinor(d.financial.paid.amountMinor,d.financial.paid.currency)}</span>}</div>}
     <p className="form-hint">{t('未返回的指标显示 —。账号详情补充读取不可用时保留列表快照，不影响结算同步。平台计费金额用于运营核对，实际应收与利润以结算账单为准。')}</p>
     <Link className="button" to={`/analytics?accountId=${row.account_id}` } onClick={onClose}>{t('查看此账号所有平台')}</Link>
   </>}</Modal>;
 }
+function formatMinor(amount:number,currency:string){return `${currency} ${(amount/100).toFixed(2)}`;}
 function Quota({label,value,reset}:{label:string;value:number|null;reset:string|null}){return <div><div><strong>{label}</strong><span>{value===null?'—':`${number(value)}%`}</span></div><div className="telemetry-model-track"><i style={{width:`${Math.min(100,value??0)}%`}}/></div><small>{t('重置时间')}: {dateTime(reset)}</small></div>;}
 function RateTrend({samples,total}:{samples:any[];total:number}){
   useLocale();const [metric,setMetric]=useState('rpm');

@@ -138,6 +138,30 @@ describe('upstream adapter data integrity',()=>{
     await expect(c.call('/api/admin/oauth-accounts')).rejects.toThrow('HTTP 403');
     try{await c.call('/api/admin/oauth-accounts');}catch(error){expect(String(error)).not.toContain('private-secret');}
   });
+  it('uses the Aeromax provider session, keeps points/CNY out of USD billing, and reads only own accounts',async()=>{
+    const paths:string[]=[];
+    const c=new ProviderClient('aeromax',{username:'provider@example.com',password:'provider-password'},async(url,init)=>{
+      const parsed=new URL(String(url));paths.push(parsed.pathname);
+      if(parsed.pathname==='/api/v1/auth/login'){
+        expect(JSON.parse(String(init?.body))).toEqual({email:'provider@example.com',password:'provider-password',intendedRole:'provider'});
+        return new Response(JSON.stringify({role:'provider',email:'provider@example.com'}),{headers:{'content-type':'application/json','set-cookie':'aeromax_session=opaque-session; Path=/; HttpOnly'}});
+      }
+      if(parsed.pathname==='/api/v1/view/provider')return Response.json({role:'provider',email:'provider@example.com',accounts:[{providerId:'provider-account-1',displayName:'slot',health:'healthy',lastError:null,money:{tag:'provider_payable',verifiedPointsMinor:1234,posted:{amountMinor:456,currency:'CNY'},paid:{amountMinor:0,currency:'CNY'}},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false},service:{ownerEmail:'claude-owner@example.com',requests:8,refusedRequests:1,inputTokens:100,outputTokens:50,deployment:'ready',rpm:2,rpmLimit:10,activity:{requestsToday:8,requestsRecent:3,windows:{h5:{requests:3,utilization:.2,windowEnd:null},d7:{requests:8,utilization:.3,windowEnd:null}}}}}],live:{accounts:1,requestsRecent:3,requestsToday:8,rpm:2,rpmCapacity:10,eligible:1,healthy:1,rateLimited:0,reauth:0,degraded:0,retired:0,pointsToday:12,pointsTotal:1234,ledgerBasis:true,windows:{h5:{utilization:.2,open:1,reporting:1},d7:{utilization:.3,open:1,reporting:1},f5:{utilization:.1,open:1,reporting:1}}},timeline:[],earnings:{tag:'provider_payable',verifiedPointsMinor:1234},uploader:{state:'ready',detail:'ready'},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false}});
+      throw new Error(`unexpected ${parsed.pathname}`);
+    });
+    await c.login();const accounts=await c.listAccounts();expect(accounts).toHaveLength(1);expect(accounts[0]).toMatchObject({id:'provider-account-1',email:'claude-owner@example.com',dailyUsd:null,status:'active'});expect(accounts[0].telemetry?.periods.today.billedUsd).toBeNull();expect(accounts[0].telemetry?.periods.today.requests).toBe(8);expect(paths).toEqual(['/api/v1/auth/login','/api/v1/view/provider']);
+  });
+  it('runs Aeromax uploader authorization with a fixed URL proxy and verifies the resulting account',async()=>{
+    let viewCalls=0;const c=new ProviderClient('aeromax',{username:'provider@example.com',password:'provider-password'},async(url,init)=>{
+      const parsed=new URL(String(url));
+      if(parsed.pathname==='/api/v1/auth/login')return new Response(JSON.stringify({role:'provider',email:'provider@example.com'}),{headers:{'content-type':'application/json','set-cookie':'aeromax_session=opaque-session; Path=/; HttpOnly'}});
+      if(parsed.pathname==='/api/v1/provider/uploader/sessions'){expect(JSON.parse(String(init?.body))).toMatchObject({httpProxy:'http://proxy.example.com:8080',acceptDirectRisk:false});return Response.json({id:'11111111-1111-4111-8111-111111111111',authorizationUrl:'https://claude.ai/oauth/authorize?opaque=1',expiresAt:Date.now()+600000});}
+      if(parsed.pathname==='/api/v1/provider/uploader/authorize'){expect(JSON.parse(String(init?.body))).toMatchObject({sessionId:'11111111-1111-4111-8111-111111111111',code:'one-time-code',name:'claude-owner@example.com'});return Response.json({id:'22222222-2222-4222-8222-222222222222',status:'succeeded',phase:'complete',message:'ok',name:'claude-owner@example.com',providerId:'provider-account-1',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});}
+      if(parsed.pathname==='/api/v1/view/provider'){viewCalls++;return Response.json({role:'provider',email:'provider@example.com',accounts:[{providerId:'provider-account-1',displayName:'slot',health:'healthy',lastError:null,money:{tag:'unpriced',verifiedPointsMinor:0},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false},service:{ownerEmail:'claude-owner@example.com',requests:0,refusedRequests:0,inputTokens:0,outputTokens:0,deployment:'ready'}}],live:{accounts:1,requestsRecent:0,requestsToday:0,rpm:0,rpmCapacity:null,eligible:1,healthy:1,rateLimited:0,reauth:0,degraded:0,retired:0,pointsToday:null,pointsTotal:0,ledgerBasis:true,windows:{h5:{utilization:0,open:1,reporting:1},d7:{utilization:0,open:1,reporting:1},f5:{utilization:0,open:1,reporting:1}}},timeline:[],earnings:{tag:'unpriced',verifiedPointsMinor:0},uploader:{state:'ready',detail:'ready'},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false}});}
+      throw new Error(`unexpected ${parsed.pathname}`);
+    });
+    await c.login();const attempt=await c.startOAuth({email:'claude-owner@example.com',proxy:'http://proxy.example.com:8080'});expect(attempt.url).toContain('claude.ai');const remote=await c.exchangeOAuth(attempt.secret,'one-time-code');expect(remote.id).toBe('provider-account-1');expect(viewCalls).toBe(1);
+  });
   it('blocks Gatelink account status writes with an agent session and permits an authenticated upstream admin',async()=>{
     let writes=0;
     const c=new ProviderClient('gatelink',{username:'fixture',password:'fixture'},async(url,init)=>{writes++;expect(String(url)).toContain('/api/admin/accounts/existing/enabled');expect(JSON.parse(String(init?.body))).toEqual({enabled:false});return Response.json({});});

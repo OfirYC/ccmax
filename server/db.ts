@@ -179,6 +179,10 @@ export async function migrate(db: DB) {
       await applyJadenSettlementRepair(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (23)');
     }
+    if (!done.some(row=>Number(row.version)===24)) {
+      await tx.query('ALTER TABLE connections ADD COLUMN IF NOT EXISTS upstream_snapshot jsonb');
+      await tx.query('INSERT INTO migrations(version) VALUES (24)');
+    }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are
     // safe to apply idempotently on every startup, including v20 databases.

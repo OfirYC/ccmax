@@ -2,9 +2,9 @@ import { platformNames } from '../shared/platforms.js';
 import { assert } from './core.js';
 
 // Server-only mapping. Stored account bindings, contract keys and hashes do not
-// change when public platform identifiers are serialized as A–D.
-const aliases = {gatelink:'A',ai008:'B',minicc:'C',maxchat:'D'} as const;
-export const upstreamNames = {gatelink:'Gatelink',ai008:'AI008',minicc:'Mini CC Gateway',maxchat:'MaxChat Gateway'} as const;
+// change when public platform identifiers are serialized as A–E.
+const aliases = {gatelink:'A',ai008:'B',minicc:'C',maxchat:'D',aeromax:'E'} as const;
+export const upstreamNames = {gatelink:'Gatelink',ai008:'AI008',minicc:'Mini CC Gateway',maxchat:'MaxChat Gateway',aeromax:'E-coding'} as const;
 type InternalProvider = keyof typeof aliases;
 export const publicProvider = (provider:string) => aliases[provider as InternalProvider] ?? provider;
 export const publicPlatformName = (provider:string) => platformNames[publicProvider(provider) as keyof typeof platformNames] ?? '—';
@@ -14,7 +14,9 @@ const privateIdentities: [RegExp,string][] = [
   [/https?:\/\/ai008\.xyz[^\s<>"']*|ai008\.xyz/gi,'平台 B'],
   [/https?:\/\/207\.57\.170\.28(?::8096)?[^\s<>"']*|207\.57\.170\.28(?::8096)?/g,'平台 C'],
   [/https?:\/\/cldgtw\.maxchatapi\.com[^\s<>"']*|cldgtw\.maxchatapi\.com/gi,'平台 D'],
+  [/https?:\/\/www\.aeromax\.one[^\s<>"']*|https?:\/\/aeromax\.one[^\s<>"']*|www\.aeromax\.one|aeromax\.one/gi,'平台 E'],
   [/Gatelink/gi,'平台 A'],[/AI008/gi,'平台 B'],[/Mini\s*CC(?:\s+Gateway)?|minicc/gi,'平台 C'],[/MaxChat(?:\s+Gateway)?/gi,'平台 D'],
+  [/E-coding|AeroMax/gi,'平台 E'],
 ];
 export const redactPlatformText = (value:string) => privateIdentities.reduce((text,[pattern,alias])=>text.replace(pattern,alias),value);
 const plain = (value:any) => value && (Object.getPrototypeOf(value)===Object.prototype||Object.getPrototypeOf(value)===null);

@@ -42,6 +42,15 @@ const publicUser=(u:Row)=>({id:u.id,name:u.name,email:u.email,role:u.role,parent
 const connectionName=(_user:Row,provider:ProviderKey,connectionId:string,_internalName:string)=>`${publicPlatformName(provider)} · ${connectionId.slice(0,8)}`;
 const publicConnectionRows=(user:Row,rows:Row[]):Row[]=>rows.map(r=>({...r,connection_name:connectionName(user,r.provider,r.connection_id,r.connection_name)}));
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
+function aeromaxCallbackCode(value:string) {
+  const input=value.trim();let code=input;
+  if(/^https?:\/\//i.test(input)) {
+    try {const url=new URL(input),values=url.searchParams.getAll('code');assert(values.length===1&&values[0],'请粘贴 E-coding 返回的授权码或完整回调地址');code=values[0]!;}
+    catch(error) {if(error instanceof AppError)throw error;throw new AppError(400,'请粘贴有效的 E-coding 授权码');}
+  }
+  assert(code.length>0&&code.length<=4096&&!/[\s#]/.test(code),'请粘贴有效的 E-coding 授权码');
+  return code;
+}
 const optionSchema=z.object({accountType:z.enum(['speed','stable','team','max','pro']).optional(),policyTemplateId:z.string().max(100).optional(),groupIds:z.array(z.string().max(100)).max(30).optional(),ccTemplateId:z.string().max(100).optional()}).strict();
 const batchPricingSchema=z.object({provider,userIds:z.array(identifier).min(1).max(500),mode:z.enum(['fixed','scale','cap']),value:rate.optional()}).strict().refine(d=>d.mode==='cap'||d.value!==undefined,'请填写批量调价的折扣或比例');
 
@@ -246,7 +255,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
 
   app.get('/api/connections',async req=>{
     const current=today(),root=req.user.role==='owner';
-    const rows=await db.query(`SELECT c.id,c.provider,c.name,c.enabled,c.status,c.last_error,c.last_sync_at,c.snapshot_billing,
+    const rows=await db.query(`SELECT c.id,c.provider,c.name,c.enabled,c.status,c.last_error,c.upstream_snapshot,c.last_sync_at,c.snapshot_billing,
       COALESCE((SELECT r.rate FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1),c.payout_rate) AS payout_rate,
       (SELECT r.effective_date::text FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date<=$1 ORDER BY r.effective_date DESC LIMIT 1) AS payout_effective_date,
       (SELECT r.rate FROM connection_rates r WHERE r.connection_id=c.id AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS upcoming_payout_rate,
@@ -257,21 +266,26 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       (SELECT r.effective_date::text FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_date
       FROM connections c ${root?'':'WHERE c.enabled=true'} ORDER BY c.created_at`,[current,req.user.id]);
     const catalog=await catalogFor(root);
-    return {connections:rows.map(({payout_rate,payout_effective_date,last_error,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
+    return {connections:rows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
       ...c,name:connectionName(req.user,c.provider,c.id,c.name),
       settlement_rate:root?payout_rate:own_rate,settlement_effective_date:root?payout_effective_date:own_effective_date,
       upcoming_settlement_rate:root?upcoming_payout_rate:own_upcoming_rate,upcoming_settlement_date:root?upcoming_payout_date:own_upcoming_date,
-      ...(root?{payout_rate,last_error,upcoming_payout_rate,upcoming_payout_date}:{}),capabilities:catalog[c.provider],
+      ...(root?{payout_rate,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date}:{}),capabilities:catalog[c.provider],
     })),providers:catalog,today:current};
   });
   app.post('/api/connections',async req=>{
     await requireOwner(req.user);
-    const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional(),snapshotBilling:z.boolean().optional()}).parse(req.body);
+    const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional(),snapshotBilling:z.boolean().optional(),initialAgentRate:rate.optional()}).parse(req.body);
     const connectionId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     await db.transaction(async tx=>{
       await lockPricing(tx);
       await tx.query('INSERT INTO connections(id,provider,name,credentials,payout_rate,snapshot_billing) VALUES($1,$2,$3,$4,$5,$6)',[connectionId,d.provider,d.name,box.encrypt({username:d.username,password:d.password}),d.payoutRate,d.snapshotBilling??d.provider==='gatelink']);
       await tx.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)',[id(),connectionId,d.payoutRate,effective,req.user.id]);
+      const initialAgentRate=d.initialAgentRate??(d.provider==='aeromax'?0.16:undefined);
+      if(initialAgentRate!==undefined) await tx.query(`INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by)
+        SELECT md5($1||':'||u.id),u.id,$2,$3,$4,$5 FROM users u
+        WHERE u.role='agent' AND NOT EXISTS(SELECT 1 FROM rates r WHERE r.user_id=u.id AND r.provider=$2)
+        ON CONFLICT(user_id,provider,effective_date) DO NOTHING`,[connectionId,d.provider,initialAgentRate,effective,req.user.id]);
       await audit(tx,req.user.id,'connection.create',connectionId,{provider:d.provider});
     });
     const job=await enqueue(db,box,req.user.id,connectionId,'sync',{},id());
@@ -340,7 +354,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     await requireOwner(req.user);
     const proxyId=identifier.parse((req.params as Row).id),d=z.object({connectionId:identifier,externalId:z.string().min(1).max(200),evidence:z.string().trim().min(5).max(2000)}).parse(req.body);
     const [p]=await db.query('SELECT * FROM proxies WHERE id=$1 AND owner_id=$2',[proxyId,req.user.id]),[c]=await db.query('SELECT * FROM connections WHERE id=$1 AND enabled=true',[d.connectionId]);assert(p?.enabled && c,'代理或平台不可用');
-    assert(c.provider!=='gatelink','Gatelink 直接使用账号固定代理 URL，无需配置平台映射');
+    assert(c.provider!=='gatelink'&&c.provider!=='aeromax','该平台直接使用账号固定代理 URL，无需配置平台代理映射');
     const client=new ProviderClient(c.provider,box.decrypt(c.credentials));await client.login();await client.verifyProxyMapping(box.decrypt(p.secret).url,d.externalId);
     await db.transaction(async tx=>{
       const [old]=await tx.query('SELECT * FROM proxy_bindings WHERE proxy_id=$1 AND connection_id=$2',[proxyId,c.id]);
@@ -540,12 +554,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       }
       // Reject a wrong-platform callback before consuming the attempt or code.
       // Old Gatelink attempts stored the state only inside their authorization URL.
+      const [connection]=await tx.query('SELECT provider FROM connections WHERE id=$1',[a.connection_id]);
       const pendingState=secret.pendingState||authorizationState(a.authorization_url);
-      const {code}=validateOAuthCallback(d.callback,pendingState);
+      const code=connection?.provider==='aeromax'?aeromaxCallbackCode(d.callback):validateOAuthCallback(d.callback,pendingState).code;
       const [claim]=await tx.query(`INSERT INTO oauth_code_claims(user_id,code_hash,attempt_id) VALUES($1,$2,$3)
         ON CONFLICT DO NOTHING RETURNING attempt_id`,[req.user.id,digest(req.user.id+':'+code),a.id]);
       assert(claim,'此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权',409);
-      if(!secret.pendingState)await tx.query('UPDATE oauth_attempts SET secret=$2 WHERE id=$1',[a.id,box.encrypt({...secret,pendingState})]);
+      if(connection?.provider!=='aeromax'&&!secret.pendingState)await tx.query('UPDATE oauth_attempts SET secret=$2 WHERE id=$1',[a.id,box.encrypt({...secret,pendingState})]);
       await tx.query(`UPDATE oauth_attempts SET state='exchanging' WHERE id=$1`,[a.id]);
       return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:proxy.id,attemptId,callback:d.callback},d.key);
     });

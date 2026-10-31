@@ -29,13 +29,13 @@ export default function Platforms(){useLocale();
     <p className="page-note platform-scope-note">{t("平台数据按账号归属统计；过期或缺失指标不计入汇总。平台账单为折扣前金额，不等于结算收益。")}</p>
     <div className="notice"><ShieldCheck size={18}/><span>{root?t("平台主账号凭据加密保存，仅管理员可配置。所有页面只显示平台名称和当前用户的结算价格。"):t("账号归属与结算由 CCMAX 统一管理。以下为直属上级给你的结算价格。")}</span></div>
     {loading?<Loading/>:<div className="connections-grid platform-data-grid">{data?.connections.map((c:any)=><section className="panel connection-card" key={c.id} aria-label={platformName(c.provider)}>
-      <div className="platform-card-head"><PlatformMark provider={c.provider}/><div><h2>{platformName(c.provider)}</h2><small className="platform-connection-id">{c.id.slice(0,8)}</small>{root&&<><small>{c.capabilities.upstreamName}</small><small>{c.capabilities.url?.replace(/^https?:\/\//,'')}</small></>}</div><Badge state={c.enabled?c.status:'disabled'}/></div>
+      <div className="platform-card-head"><PlatformMark provider={c.provider}/><div><h2>{platformName(c.provider)}</h2><small className="platform-connection-id">{c.id.slice(0,8)}</small>{root&&<><small>{c.capabilities.upstreamName}</small><small>{c.capabilities.url?.replace(/^https?:\/\//,'')}</small>{c.upstream_snapshot?.uploader&&<small>{t('上号器')} · {c.upstream_snapshot.uploader.state}</small>}{c.upstream_snapshot?.live?.pointsToday!==null&&c.upstream_snapshot?.live?.pointsToday!==undefined&&<small>{t('今日产值')} · {c.upstream_snapshot.live.pointsToday} points</small>}</>}</div><Badge state={c.enabled?c.status:'disabled'}/></div>
       <PlatformActivity connectionId={c.id} activity={stats?.platforms?.find((p:any)=>p.id===c.id)} loading={!stats} scope={scope}/>
       <SettlementPrice connection={c} root={root}/>
       <details className="platform-capabilities"><summary>{t("平台能力与同步信息")}</summary><div className="connection-facts">
         <div><span>{t("OAuth 上号")}</span><span className="teal-text"><Check size={14}/>{t("已支持")}</span></div>
         <div><span>{t("Refresh token 导入")}</span><span>{c.capabilities.refreshTokenImport?t("已支持"):t("需使用 OAuth")}</span></div>
-        <div><span>{t("账单更新")}</span><span>{t("每天 02:00 后（北京时间）")}</span></div>
+        <div><span>{t("账单更新")}</span><span>{c.capabilities.historicalUsage?t("每天 02:00 后（北京时间）"):t("仅实时账号数据，历史账单需人工核对")}</span></div>
         <div><span>{t('账号启停')}</span><span>{c.capabilities.statusRequiresAdmin?t('需要上游管理员权限'):t('已支持')}</span></div>
         <div><span>{t("最近成功同步")}</span><span>{dateTime(c.last_sync_at)}</span></div>
       </div>

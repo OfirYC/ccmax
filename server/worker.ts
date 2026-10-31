@@ -60,7 +60,7 @@ export async function saveBinding(tx:DB,connection:Row,remote:UpstreamAccount,ex
     utilization=EXCLUDED.utilization,proxy_id=COALESCE(EXCLUDED.proxy_id,bindings.proxy_id),last_seen_at=now() RETURNING *`,
     [id(),account!.id,connection.id,remote.id,remote.status,remote.dailyUsd,remote.cost7d,remote.cost30d,remote.utilization,proxyId??null]);
   assert(bound.account_id===account!.id,'上游账号归属冲突',409);
-  if(connection.provider!=='gatelink' && account!.proxy_id && remote.proxyExternalId!==undefined) {
+    if(connection.provider!=='gatelink' && connection.provider!=='aeromax' && account!.proxy_id && remote.proxyExternalId!==undefined) {
     const [mapping]=await tx.query('SELECT external_id FROM proxy_bindings WHERE proxy_id=$1 AND connection_id=$2',[account!.proxy_id,connection.id]);
     const verified=mapping && mapping.external_id===remote.proxyExternalId?account!.proxy_id:null;
     [bound]=await tx.query('UPDATE bindings SET proxy_id=$2 WHERE id=$1 RETURNING *',[bound.id,verified]);
@@ -124,13 +124,14 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         assert(secret.proxyId===proxy.id && secret.options?.proxy===proxy.url,'OAuth 代理快照不一致，请重新授权');
         if(recovery)assert(secret.options.existingExternalId===recovery.external_id,'重新授权的原绑定已变化，请核对');
         client.restoreSession(secret.session);
-        if(connection.provider!=='gatelink')await client.verifyProxyMapping(proxy.url,secret.options.proxyExternalId);
+        if(connection.provider!=='gatelink' && connection.provider!=='aeromax')await client.verifyProxyMapping(proxy.url,secret.options.proxyExternalId);
       } else await client.login();
       if(job.kind==='sync') {
         assert(actor.role==='owner','仅管理员可以同步共享主账号');
         const day=today(),accounts=await client.listAccounts();
         if(typeof client.enrichTelemetry==='function')await client.enrichTelemetry(accounts);
         assert(today()===day,'同步跨越北京时间零点，请重新同步');
+        if(client.providerSnapshot!==undefined)await db.query('UPDATE connections SET upstream_snapshot=$2 WHERE id=$1',[connection.id,JSON.stringify(client.providerSnapshot)]);
         let skippedDaily=0;
         const billingIssues:{externalId:string;message:string}[]=[];
         // Inventory, telemetry and snapshots are independent of downstream
@@ -307,7 +308,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
   }
   async function submissionOptions(client:ProviderClient,connection:Row,proxy:any,options:any) {
     let externalId:string|undefined;
-    if(connection.provider!=='gatelink') {
+    if(connection.provider!=='gatelink' && connection.provider!=='aeromax') {
       let [mapping]=await db.query('SELECT * FROM proxy_bindings WHERE proxy_id=$1 AND connection_id=$2',[proxy.id,connection.id]);
       if(mapping)await client.verifyProxyMapping(proxy.url,mapping.external_id);
       else {

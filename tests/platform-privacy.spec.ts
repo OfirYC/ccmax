@@ -4,7 +4,7 @@ import { test, expect } from './fixtures';
 test('agent pages, network responses, public docs and loaded browser assets contain no upstream identity',async({page})=>{
   test.setTimeout(60000);
   await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
-  const privateSource=/gatelink|ai008|minicc|maxchat|mini\s*cc|207\.57\.170\.28|private-upstream-/i;
+  const privateSource=/gatelink|ai008|minicc|maxchat|aeromax|e-coding|aeromax\.one|mini\s*cc|207\.57\.170\.28|private-upstream-/i;
   const checked:Promise<void>[]=[],leaks:string[]=[];
   page.on('response',response=>{
     const path=new URL(response.url()).pathname;
@@ -26,7 +26,7 @@ test('agent pages, network responses, public docs and loaded browser assets cont
     }
   }
   await page.getByRole('button',{name:'使用帮助',exact:true}).click();expect(await page.getByRole('dialog').innerText()).not.toMatch(privateSource);await page.getByRole('button',{name:'关闭弹窗'}).click();
-  const catalog=await(await page.request.get('/api/connections')).json();expect(Object.keys(catalog.providers)).toEqual(['A','B','C','D']);
+  const catalog=await(await page.request.get('/api/connections')).json();expect(Object.keys(catalog.providers)).toEqual(['A','B','C','D','E']);
   for(const entry of Object.values(catalog.providers)){expect(entry).not.toHaveProperty('url');expect(entry).not.toHaveProperty('upstreamName');}
   for(const path of ['/api/docs','/api/openapi.json','/api/usage/export']){const response=await page.request.get(path);expect(response.ok()).toBe(true);expect(await response.text()).not.toMatch(privateSource);}
   await Promise.all(checked);expect(leaks).toEqual([]);
