@@ -147,11 +147,59 @@ export class ProviderClient {
         assert(data.role==='provider' && data.email && String(data.email).toLowerCase()===this.credentials.username.toLowerCase(),'E-coding provider 返回身份不一致',502);
         assert(Array.isArray(data.accounts),'E-coding provider 账号列表格式变化',502);
         const numeric=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=Number.MAX_SAFE_INTEGER?value:null;
+        const minor=(value:unknown)=>{
+          const n=typeof value==='number'?value:typeof value==='string'&&/^\d+$/.test(value)?Number(value):NaN;
+          return Number.isSafeInteger(n)&&n>=0?n:null;
+        };
+        // CCMAX keeps one USD ledger. Aeromax reports settlement in CNY minor
+        // units, so convert deterministically with the agreed fixed rate and
+        // half-up rounding (1 USD = ¥6.7).
+        const cnyToUsdMinor=(value:number|null)=>value===null?null:new Decimal(value).div('6.7').toDecimalPlaces(0,Decimal.ROUND_HALF_UP).toNumber();
         const money=(value:any)=>value&&Number.isSafeInteger(value.amountMinor)&&value.amountMinor>=0&&['CNY','USD'].includes(value.currency)?{amountMinor:value.amountMinor,currency:value.currency}:null;
+        // Aeromax exposes provider settlement in points/CNY. Keep the raw
+        // reference labelled while applying CCMAX's fixed CNY→USD contract
+        // conversion to the platform-level settlement values below.
+        let settlement:any=null;
+        try {
+          const raw=await this.call('/api/v1/provider/settlement');
+          if(raw&&typeof raw==='object') {
+            const pointsToday=numeric(raw.pointsToday);
+            // Some Aeromax deployments omit the daily money field. A zero
+            // point counter is still an unambiguous zero-dollar day; any
+            // non-zero day stays pending until the upstream supplies a CNY
+            // amount that can be reconciled.
+            const owedTodayMinor=minor(raw.owedTodayMinor)??(pointsToday===0?0:null);
+            const paidTodayMinor=minor(raw.paidTodayMinor);
+            const balanceTodayMinor=minor(raw.balanceTodayMinor);
+            const generatedAt=typeof raw.generatedAt==='string'&&Number.isFinite(Date.parse(raw.generatedAt))?new Date(raw.generatedAt).toISOString():new Date().toISOString();
+            settlement={
+            currency:'CNY',
+            usdCurrency:'USD',
+            cnyPerUsd:'6.7',
+            today:typeof raw.today==='string'?raw.today:null,
+            pointsToday,
+            owedTodayMinor,
+            paidTodayMinor,
+            balanceTodayMinor,
+            owedMinor:minor(raw.owedMinor),
+            paidMinor:minor(raw.paidMinor),
+            balanceMinor:minor(raw.balanceMinor),
+            owedTodayUsdMinor:cnyToUsdMinor(owedTodayMinor),
+            paidTodayUsdMinor:cnyToUsdMinor(paidTodayMinor),
+            balanceTodayUsdMinor:cnyToUsdMinor(balanceTodayMinor),
+            owedUsdMinor:cnyToUsdMinor(minor(raw.owedMinor)),
+            paidUsdMinor:cnyToUsdMinor(minor(raw.paidMinor)),
+            balanceUsdMinor:cnyToUsdMinor(minor(raw.balanceMinor)),
+            sourceOk:raw.sourceOk!==false,
+            generatedAt,
+          };
+          }
+        } catch { /* Settlement is an optional reference read; inventory sync remains safe. */ }
         this.providerSnapshot={uploader:data.uploader&&typeof data.uploader.state==='string'?{state:data.uploader.state,detail:typeof data.uploader.detail==='string'?data.uploader.detail:null}:null,
           stats:data.stats&&typeof data.stats==='object'?{totalRequests:numeric(data.stats.totalRequests),successfulRequests:numeric(data.stats.successfulRequests),failedRequests:numeric(data.stats.failedRequests),inputTokens:numeric(data.stats.inputTokens),outputTokens:numeric(data.stats.outputTokens),pointsConsumedMinor:numeric(data.stats.pointsConsumedMinor),activeProviders:numeric(data.stats.activeProviders),unhealthyProviders:numeric(data.stats.unhealthyProviders)}:null,
           live:data.live&&typeof data.live==='object'?{accounts:numeric(data.live.accounts),requestsRecent:numeric(data.live.requestsRecent),requestsToday:numeric(data.live.requestsToday),rpm:numeric(data.live.rpm),rpmCapacity:numeric(data.live.rpmCapacity),eligible:numeric(data.live.eligible),healthy:numeric(data.live.healthy),rateLimited:numeric(data.live.rateLimited),reauth:numeric(data.live.reauth),degraded:numeric(data.live.degraded),retired:numeric(data.live.retired),pointsToday:numeric(data.live.pointsToday),pointsTotal:numeric(data.live.pointsTotal)}:null,
           earnings:data.earnings&&typeof data.earnings.tag==='string'?{tag:data.earnings.tag,verifiedPointsMinor:numeric(data.earnings.verifiedPointsMinor),posted:money(data.earnings.posted),paid:money(data.earnings.paid)}:null,
+          settlement,
           sourceAt:typeof data.stamp?.asOf==='string'&&Number.isFinite(Date.parse(data.stamp.asOf))?new Date(data.stamp.asOf).toISOString():null};
       }
       const items=this.provider==='aeromax'||this.provider==='gatelink'?data.items??data.accounts:data.accounts;
@@ -242,9 +290,10 @@ export class ProviderClient {
       const financial=a.money&&['unpriced','provider_payable','agent_payable'].includes(a.money.tag)?{tag:a.money.tag,verifiedPointsMinor:typeof a.money.verifiedPointsMinor==='number'&&Number.isSafeInteger(a.money.verifiedPointsMinor)&&a.money.verifiedPointsMinor>=0?a.money.verifiedPointsMinor:0,posted:money(a.money.posted),paid:money(a.money.paid)}:undefined;
       const telemetry=normalizeTelemetry(this.provider,{sourceAt:a.stamp?.asOf,aeromaxFinancial:financial,stats:{daily_req:activity.requestsToday??null,daily_tok:(service.inputTokens??0)+(service.outputTokens??0),rpm:service.rpm??null,active_sessions:null,concurrent:null},max_rpm:service.rpmLimit??null,req_24h:requests,ok_24h:requests!==null&&refused!==null?Math.max(0,requests-refused):null,limited_24h:refused,usage_windows:{req_5h:windows.h5?.requests??null,req_7d:windows.d7?.requests??null},claude_utilization:{five_hour:{utilization:windows.h5?.utilization??null,resets_at:windows.h5?.windowEnd??null},seven_day:{utilization:windows.d7?.utilization??null,resets_at:windows.d7?.windowEnd??null}}});
       const status={healthy:'active',degraded:'degraded',cooldown:'cooldown',expired:'disabled',rejected:'disabled',retired:'disabled'}[a.health as string]??'unknown';
-      // Aeromax exposes points and settlement currencies, but no verified daily
-      // USD amount in this view. Keep billing unknown until a daily USD source
-      // is available; never convert points or CNY into a USD ledger value.
+      // Aeromax exposes points and settlement currencies, but the account view
+      // does not identify a verified daily amount. Keep account billing
+      // pending until a reconciliable per-account CNY amount is available;
+      // platform-level settlement is converted separately at the fixed rate.
       return {id:String(a.providerId),email,name:email,status,dailyUsd:null,cost7d:null,cost30d:null,utilization:windows.d7?.utilization??null,telemetry};
     }
     if(this.provider==='minicc') {
