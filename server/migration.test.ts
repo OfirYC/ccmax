@@ -78,7 +78,7 @@ it('upgrades existing provider checks so Platform E can be added after the origi
   const invitation=id();
   await db.query("INSERT INTO invitations(id,inviter_id,name,token_hash,token_secret) VALUES($1,$2,'Platform E invite','platform-e-hash','platform-e-secret')",[invitation,owner.id]);
   await db.query("INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,'aeromax',0.16)",[invitation]);
-  expect((await db.query('SELECT version FROM migrations ORDER BY version DESC LIMIT 1'))[0].version).toBe(25);
+  expect((await db.query('SELECT version FROM migrations ORDER BY version DESC LIMIT 1'))[0].version).toBe(26);
  } finally {await db.close();}
 });
 

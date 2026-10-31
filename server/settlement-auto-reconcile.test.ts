@@ -15,9 +15,10 @@ const TARGETS=[
   ['80937669-cc7c-48ac-9692-9f2e7456a917','dev4@sartel.ai','gatelink','2026-10-30','0.90842500'],
   ['567af9c1-aae5-4581-b315-2e0fcc01973e','junior1@sartel.ai','gatelink','2026-10-30','19.34791100'],
   ['8642d5ef-237a-4c74-ae73-6e830f37e647','junior3@sartel.ai','gatelink','2026-10-30','0.84696500'],
+  ['dcd5dfed-8cf2-4493-aacc-8534fa570509','rhinasofi@hotmail.com','gatelink','2026-10-31','115.54776200'],
 ] as const;
 
-it('credits the ten exact stranded production rows once when the deployment migrates',async()=>{
+it('credits the eleven exact stranded production rows once when the deployment migrates',async()=>{
   const db=await openTestDB();
   try {
     await migrate(db);
@@ -54,8 +55,8 @@ it('credits the ten exact stranded production rows once when the deployment migr
     await migrate(db);
 
     const [credit]=await db.query("SELECT COALESCE(sum(amount_usd),0) AS amount,count(*)::int AS count FROM ledger WHERE user_id=$1 AND kind='settlement'",[JADEN]);
-    expect(credit).toEqual({amount:'203.12254774',count:1});
-    expect((await db.query("SELECT count(*)::int AS count FROM usage_days WHERE id=ANY($1::text[]) AND state='final'",[TARGETS.map(target=>target[0])]))[0].count).toBe(10);
+    expect(credit).toEqual({amount:'236.63139872',count:1});
+    expect((await db.query("SELECT count(*)::int AS count FROM usage_days WHERE id=ANY($1::text[]) AND state='final'",[TARGETS.map(target=>target[0])]))[0].count).toBe(11);
     expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=26'))[0].count).toBe(1);
   } finally {await db.close();}
 });

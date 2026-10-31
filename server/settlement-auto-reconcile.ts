@@ -17,6 +17,7 @@ const TARGETS=[
   {id:'80937669-cc7c-48ac-9692-9f2e7456a917',email:'dev4@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'0.90842500',profit:'0.26344325'},
   {id:'567af9c1-aae5-4581-b315-2e0fcc01973e',email:'junior1@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'19.34791100',profit:'5.61089419'},
   {id:'8642d5ef-237a-4c74-ae73-6e830f37e647',email:'junior3@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'0.84696500',profit:'0.24561985'},
+  {id:'dcd5dfed-8cf2-4493-aacc-8534fa570509',email:'rhinasofi@hotmail.com',provider:'gatelink',day:'2026-10-31',raw:'115.54776200',profit:'33.50885098'},
 ] as const;
 
 async function exactInvoice(tx:DB,actor:Row,user:Row,usageIds:string[]) {
