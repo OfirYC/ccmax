@@ -18,7 +18,7 @@ const beijingDay=(v:string)=>new Date(Date.parse(v)+8*3600000).toISOString().sli
 export function normalizeTelemetry(provider:string,row:any,detail?:any):AccountTelemetry {
   const gate=provider==='gatelink',a=detail?.account??(gate?row.upstreamSnapshot:row)??{},s=detail?.stats??a.stats??{};
   const collectedAt=new Date().toISOString();
-  const declared=gate?timestamp(row.upstreamSyncedAt??a.detail_synced_at):collectedAt;
+  const declared=gate?timestamp(row.upstreamSyncedAt??a.detail_synced_at):timestamp(row.sourceAt??a.stamp?.asOf)??collectedAt;
   const sourceAt=declared&&Date.parse(declared)<=Date.now()+60000?declared:null;
   const windows=detail?.cost_windows??a.usage_windows??{};
   const u=s.claude_utilization??a.claude_utilization??{};
@@ -33,7 +33,7 @@ export function normalizeTelemetry(provider:string,row:any,detail?:any):AccountT
     const m=modelSource[{today:'today','5h':'five_hour','7d':'seven_day','30d':'thirty_day'}[p]];
     periods[p].models=normalizeModelAmounts(m);
   }
-  return telemetrySchema.parse({version:1,collectedAt,sourceAt,day:beijingDay(sourceAt??collectedAt),source:detail?'account_detail':'account_list',detail:detail?'available':'unavailable',
+  return telemetrySchema.parse({version:1,collectedAt,sourceAt,day:beijingDay(sourceAt??collectedAt),source:detail?'account_detail':'account_list',detail:detail?'available':'unavailable',financial:row.aeromaxFinancial,
     modelsAt:timestamp(detail?.modelUsageAt??(gate?row.upstreamSyncedAt:undefined)),
     activity:{rpm:numeric(s.rpm??a.live_rpm??a.rpm),tpm:numeric(s.tpm??a.live_tpm??a.tpm),concurrent:numeric(s.concurrent??a.live_concurrent??a.concurrent),sessions:numeric(s.active_sessions??a.slots_used)},
     limits:{rpm:numeric(a.max_rpm),tpm:numeric(a.max_tpm),concurrent:numeric(a.max_concurrent)},

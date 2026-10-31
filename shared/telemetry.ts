@@ -5,9 +5,11 @@ const amount=z.string().regex(/^(0|[1-9]\d*)(\.\d+)?$/).nullable();
 const stamp=z.iso.datetime({offset:true}).nullable();
 const period=z.object({requests:count,tokens:count,billedUsd:amount,officialUsd:amount,cacheCreditUsd:amount,
   models:z.array(z.object({model:z.enum(['opus','fable']),usageUsd:amount}).strict()).max(2)}).strict();
+const upstreamMoney=z.object({amountMinor:z.number().int().nonnegative(),currency:z.enum(['CNY','USD'])}).nullable();
 export const telemetrySchema=z.object({
   version:z.literal(1),collectedAt:z.iso.datetime({offset:true}),sourceAt:stamp,day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   source:z.enum(['account_list','account_detail']),detail:z.enum(['available','unavailable']),
+  financial:z.object({tag:z.enum(['unpriced','provider_payable','agent_payable']),verifiedPointsMinor:z.number().int().nonnegative(),posted:upstreamMoney,paid:upstreamMoney}).optional(),
   modelsAt:stamp,
   activity:z.object({rpm:count,tpm:count,concurrent:count,sessions:count}).strict(),
   limits:z.object({rpm:count,tpm:count,concurrent:count}).strict(),

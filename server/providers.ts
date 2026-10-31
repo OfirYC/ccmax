@@ -13,6 +13,7 @@ export const PROVIDERS = {
   ai008: { name:upstreamNames.ai008, url:'https://ai008.xyz', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
   minicc: { name:upstreamNames.minicc, url:'http://207.57.170.28:8096', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
   maxchat: { name:upstreamNames.maxchat, url:'https://cldgtw.maxchatapi.com', oauth:true, refreshTokenImport:true, historicalUsage:true,statusRequiresAdmin:false },
+  aeromax: { name:upstreamNames.aeromax, url:'https://www.aeromax.one', oauth:true, refreshTokenImport:false, historicalUsage:false,statusRequiresAdmin:false },
 } as const;
 // Owner-only source metadata; public catalogs never contain upstream names/URLs.
 export function platformCatalog(owner=false, enabledProviders?: Iterable<string>) {
@@ -26,7 +27,7 @@ export const PROVIDER_KEYS=Object.keys(PROVIDERS) as [ProviderKey,...ProviderKey
 export const usesAdminOAuth=(provider:ProviderKey)=>provider==='ai008'||provider==='maxchat';
 export type Credentials={username:string;password:string};
 export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string|null;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
-export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string;existingExternalId?:string};
+export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string;existingExternalId?:string;note?:string};
 export class UpstreamError extends AppError {
   constructor(public upstreamStatus:number, message:string) { super(502,message); }
 }
@@ -68,6 +69,7 @@ export class ProviderClient {
   private token='';
   private csrf='';
   public user:any;
+  public providerSnapshot:any;
   constructor(public provider:ProviderKey,private credentials:Credentials,private request:typeof fetch=fetch) {}
   exportSession() { return {cookies:[...this.cookies],token:this.token,csrf:this.csrf,user:this.user}; }
   restoreSession(session:any) { this.cookies=new Map(session.cookies);this.token=session.token;this.csrf=session.csrf;this.user=session.user; }
@@ -124,6 +126,11 @@ export class ProviderClient {
       const data=await this.call('/api/me');
       assert(data.authenticated===true && data.user && this.cookies.size>0,'Mini CC 登录响应缺少有效会话',502);
       this.user=data.user;
+    } else if(this.provider==='aeromax') {
+      const data=await this.call('/api/v1/auth/login','POST',{email:this.credentials.username,password:this.credentials.password,intendedRole:'provider'});
+      assert(data.role==='provider' && data.email && this.cookies.size>0,'E-coding provider 登录响应缺少有效会话',502);
+      assert(String(data.email).toLowerCase()===this.credentials.username.toLowerCase(),'E-coding provider 身份与配置账号不一致',502);
+      this.user=data;
     } else {
       const data=await this.call('/api/auth/admin-login','POST',{identifier:this.credentials.username,email:this.credentials.username,password:this.credentials.password});
       assert(data.accessToken && data.user,`${PROVIDERS[this.provider].name} 登录响应缺少会话信息`,502);
@@ -135,14 +142,73 @@ export class ProviderClient {
     const result:UpstreamAccount[]=[];
     const seen=new Set<string>(),emails=new Set<string>();let declaredTotal:number|undefined;
     for(let page=1;page<=1000;page++) {
-      const data=await this.call(this.provider==='gatelink'?`/api/submissions?page=${page}&pageSize=100`:this.provider==='minicc'?`/api/accounts?page=${page}&page_size=100`:`/api/admin/oauth-accounts?page_mode=1&page=${page}&page_size=100`);
-      const items=this.provider==='gatelink'?data.items:data.accounts;
+      const data=await this.call(this.provider==='aeromax'?'/api/v1/view/provider':this.provider==='gatelink'?`/api/submissions?page=${page}&pageSize=100`:this.provider==='minicc'?`/api/accounts?page=${page}&page_size=100`:`/api/admin/oauth-accounts?page_mode=1&page=${page}&page_size=100`);
+      if(this.provider==='aeromax') {
+        assert(data.role==='provider' && data.email && String(data.email).toLowerCase()===this.credentials.username.toLowerCase(),'E-coding provider 返回身份不一致',502);
+        assert(Array.isArray(data.accounts),'E-coding provider 账号列表格式变化',502);
+        const numeric=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=Number.MAX_SAFE_INTEGER?value:null;
+        const minor=(value:unknown)=>{
+          const n=typeof value==='number'?value:typeof value==='string'&&/^\d+$/.test(value)?Number(value):NaN;
+          return Number.isSafeInteger(n)&&n>=0?n:null;
+        };
+        // CCMAX keeps one USD ledger. Aeromax reports settlement in CNY minor
+        // units, so convert deterministically with the agreed fixed rate and
+        // half-up rounding (1 USD = ¥6.7).
+        const cnyToUsdMinor=(value:number|null)=>value===null?null:new Decimal(value).div('6.7').toDecimalPlaces(0,Decimal.ROUND_HALF_UP).toNumber();
+        const money=(value:any)=>value&&Number.isSafeInteger(value.amountMinor)&&value.amountMinor>=0&&['CNY','USD'].includes(value.currency)?{amountMinor:value.amountMinor,currency:value.currency}:null;
+        // Aeromax exposes provider settlement in points/CNY. Keep the raw
+        // reference labelled while applying CCMAX's fixed CNY→USD contract
+        // conversion to the platform-level settlement values below.
+        let settlement:any=null;
+        try {
+          const raw=await this.call('/api/v1/provider/settlement');
+          if(raw&&typeof raw==='object') {
+            const pointsToday=numeric(raw.pointsToday);
+            // Some Aeromax deployments omit the daily money field. A zero
+            // point counter is still an unambiguous zero-dollar day; any
+            // non-zero day stays pending until the upstream supplies a CNY
+            // amount that can be reconciled.
+            const owedTodayMinor=minor(raw.owedTodayMinor)??(pointsToday===0?0:null);
+            const paidTodayMinor=minor(raw.paidTodayMinor);
+            const balanceTodayMinor=minor(raw.balanceTodayMinor);
+            const generatedAt=typeof raw.generatedAt==='string'&&Number.isFinite(Date.parse(raw.generatedAt))?new Date(raw.generatedAt).toISOString():new Date().toISOString();
+            settlement={
+            currency:'CNY',
+            usdCurrency:'USD',
+            cnyPerUsd:'6.7',
+            today:typeof raw.today==='string'?raw.today:null,
+            pointsToday,
+            owedTodayMinor,
+            paidTodayMinor,
+            balanceTodayMinor,
+            owedMinor:minor(raw.owedMinor),
+            paidMinor:minor(raw.paidMinor),
+            balanceMinor:minor(raw.balanceMinor),
+            owedTodayUsdMinor:cnyToUsdMinor(owedTodayMinor),
+            paidTodayUsdMinor:cnyToUsdMinor(paidTodayMinor),
+            balanceTodayUsdMinor:cnyToUsdMinor(balanceTodayMinor),
+            owedUsdMinor:cnyToUsdMinor(minor(raw.owedMinor)),
+            paidUsdMinor:cnyToUsdMinor(minor(raw.paidMinor)),
+            balanceUsdMinor:cnyToUsdMinor(minor(raw.balanceMinor)),
+            sourceOk:raw.sourceOk!==false,
+            generatedAt,
+          };
+          }
+        } catch { /* Settlement is an optional reference read; inventory sync remains safe. */ }
+        this.providerSnapshot={uploader:data.uploader&&typeof data.uploader.state==='string'?{state:data.uploader.state,detail:typeof data.uploader.detail==='string'?data.uploader.detail:null}:null,
+          stats:data.stats&&typeof data.stats==='object'?{totalRequests:numeric(data.stats.totalRequests),successfulRequests:numeric(data.stats.successfulRequests),failedRequests:numeric(data.stats.failedRequests),inputTokens:numeric(data.stats.inputTokens),outputTokens:numeric(data.stats.outputTokens),pointsConsumedMinor:numeric(data.stats.pointsConsumedMinor),activeProviders:numeric(data.stats.activeProviders),unhealthyProviders:numeric(data.stats.unhealthyProviders)}:null,
+          live:data.live&&typeof data.live==='object'?{accounts:numeric(data.live.accounts),requestsRecent:numeric(data.live.requestsRecent),requestsToday:numeric(data.live.requestsToday),rpm:numeric(data.live.rpm),rpmCapacity:numeric(data.live.rpmCapacity),eligible:numeric(data.live.eligible),healthy:numeric(data.live.healthy),rateLimited:numeric(data.live.rateLimited),reauth:numeric(data.live.reauth),degraded:numeric(data.live.degraded),retired:numeric(data.live.retired),pointsToday:numeric(data.live.pointsToday),pointsTotal:numeric(data.live.pointsTotal)}:null,
+          earnings:data.earnings&&typeof data.earnings.tag==='string'?{tag:data.earnings.tag,verifiedPointsMinor:numeric(data.earnings.verifiedPointsMinor),posted:money(data.earnings.posted),paid:money(data.earnings.paid)}:null,
+          settlement,
+          sourceAt:typeof data.stamp?.asOf==='string'&&Number.isFinite(Date.parse(data.stamp.asOf))?new Date(data.stamp.asOf).toISOString():null};
+      }
+      const items=this.provider==='aeromax'||this.provider==='gatelink'?data.items??data.accounts:data.accounts;
       assert(Array.isArray(items),'平台账号列表格式变化',502);
       if(this.provider==='minicc') {
         assert(Number.isInteger(data.pages) && data.pages>=1 && Number.isInteger(data.total) && data.total>=0,'平台分页格式变化',502);
       }
-      const totalPages=this.provider==='gatelink'?data.totalPages:this.provider==='minicc'?data.pages:(data.pagination?.total_pages??data.pagination?.totalPages);
-      const total=this.provider==='gatelink'?data.total:this.provider==='minicc'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
+      const totalPages=this.provider==='aeromax'?1:this.provider==='gatelink'?data.totalPages:this.provider==='minicc'?data.pages:(data.pagination?.total_pages??data.pagination?.totalPages);
+      const total=this.provider==='aeromax'?items.length:this.provider==='gatelink'?data.total:this.provider==='minicc'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
       if(total!==undefined) {
         assert(Number.isInteger(Number(total))&&Number(total)>=0,'平台分页格式变化',502);
         assert(declaredTotal===undefined||declaredTotal===Number(total),'平台账号数在分页时发生变化，请重新同步',502);
@@ -150,7 +216,7 @@ export class ProviderClient {
       }
       if(totalPages!==undefined)assert(Number.isInteger(Number(totalPages))&&Number(totalPages)>=0,'平台分页格式变化',502);
       for(const a of items) {
-        const email=this.provider==='gatelink'?(a.upstreamEmail||a.submittedEmail||a.email):(a.email||a.canonical_identity?.email);
+        const email=this.provider==='aeromax'?a.service?.ownerEmail:this.provider==='gatelink'?(a.upstreamEmail||a.submittedEmail||a.email):(a.email||a.canonical_identity?.email);
         assert(email,'平台未返回可核实邮箱，本次同步未提交',502);
         const normalized=this.normalize(a);
         assert(!seen.has(normalized.id),'平台分页出现重复账号，本次同步未提交',502);
@@ -182,11 +248,12 @@ export class ProviderClient {
       }
     };
     for(let page=1;page<=1000;page++) {
-      const data=await readPage(this.provider==='gatelink'?`/api/submissions?page=${page}&pageSize=100`:this.provider==='minicc'?`/api/accounts?page=${page}&page_size=100`:`/api/admin/oauth-accounts?page_mode=1&page=${page}&page_size=100`);
-      const items=this.provider==='gatelink'?data.items:data.accounts;
+      const data=await readPage(this.provider==='aeromax'?'/api/v1/view/provider':this.provider==='gatelink'?`/api/submissions?page=${page}&pageSize=100`:this.provider==='minicc'?`/api/accounts?page=${page}&page_size=100`:`/api/admin/oauth-accounts?page_mode=1&page=${page}&page_size=100`);
+      if(this.provider==='aeromax')assert(data.role==='provider'&&data.email&&String(data.email).toLowerCase()===this.credentials.username.toLowerCase(),'E-coding provider 返回身份不一致',502);
+      const items=this.provider==='aeromax'||this.provider==='gatelink'?data.items??data.accounts:data.accounts;
       assert(Array.isArray(items),'平台账号列表格式变化',502);
-      const pages=this.provider==='gatelink'?data.totalPages:this.provider==='minicc'?data.pages:(data.pagination?.total_pages??data.pagination?.totalPages);
-      const total=this.provider==='gatelink'?data.total:this.provider==='minicc'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
+      const pages=this.provider==='aeromax'?1:this.provider==='gatelink'?data.totalPages:this.provider==='minicc'?data.pages:(data.pagination?.total_pages??data.pagination?.totalPages);
+      const total=this.provider==='aeromax'?items.length:this.provider==='gatelink'?data.total:this.provider==='minicc'?data.total:(data.pagination?.total_rows??data.pagination?.total??data.pagination?.total_count);
       if(total!==undefined) {
         assert(Number.isInteger(Number(total))&&Number(total)>=0 && (declaredTotal===undefined||declaredTotal===Number(total)),'平台账号数在分页时发生变化，请重新同步',502);
         declaredTotal=Number(total);
@@ -214,6 +281,21 @@ export class ProviderClient {
     throw new UpstreamError(0,'平台账号超过分页上限，本次同步未提交');
   }
   normalize(a:any):UpstreamAccount {
+    if(this.provider==='aeromax') {
+      const email=typeof a.service?.ownerEmail==='string'?a.service.ownerEmail.trim().toLowerCase():'';
+      assert(a.providerId && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),'E-coding 未返回可核实的账号归属邮箱',502);
+      const service=a.service??{},activity=service.activity??{},windows=activity.windows??{};
+      const requests=service.requests??null,refused=service.refusedRequests??null;
+      const money=(value:any)=>value&&Number.isSafeInteger(value.amountMinor)&&value.amountMinor>=0&&['CNY','USD'].includes(value.currency)?{amountMinor:value.amountMinor,currency:value.currency}:null;
+      const financial=a.money&&['unpriced','provider_payable','agent_payable'].includes(a.money.tag)?{tag:a.money.tag,verifiedPointsMinor:typeof a.money.verifiedPointsMinor==='number'&&Number.isSafeInteger(a.money.verifiedPointsMinor)&&a.money.verifiedPointsMinor>=0?a.money.verifiedPointsMinor:0,posted:money(a.money.posted),paid:money(a.money.paid)}:undefined;
+      const telemetry=normalizeTelemetry(this.provider,{sourceAt:a.stamp?.asOf,aeromaxFinancial:financial,stats:{daily_req:activity.requestsToday??null,daily_tok:(service.inputTokens??0)+(service.outputTokens??0),rpm:service.rpm??null,active_sessions:null,concurrent:null},max_rpm:service.rpmLimit??null,req_24h:requests,ok_24h:requests!==null&&refused!==null?Math.max(0,requests-refused):null,limited_24h:refused,usage_windows:{req_5h:windows.h5?.requests??null,req_7d:windows.d7?.requests??null},claude_utilization:{five_hour:{utilization:windows.h5?.utilization??null,resets_at:windows.h5?.windowEnd??null},seven_day:{utilization:windows.d7?.utilization??null,resets_at:windows.d7?.windowEnd??null}}});
+      const status={healthy:'active',degraded:'degraded',cooldown:'cooldown',expired:'disabled',rejected:'disabled',retired:'disabled'}[a.health as string]??'unknown';
+      // Aeromax exposes points and settlement currencies, but the account view
+      // does not identify a verified daily amount. Keep account billing
+      // pending until a reconciliable per-account CNY amount is available;
+      // platform-level settlement is converted separately at the fixed rate.
+      return {id:String(a.providerId),email,name:email,status,dailyUsd:null,cost7d:null,cost30d:null,utilization:windows.d7?.utilization??null,telemetry};
+    }
     if(this.provider==='minicc') {
       const email=a.canonical_identity?.email||a.email,daily=a.daily_cost;
       assert(a.upstream_id && email,'平台未返回账号 ID / 邮箱',502);
@@ -238,7 +320,7 @@ export class ProviderClient {
       ...(!gate?{proxyExternalId:a.outbound_proxy_id?String(a.outbound_proxy_id):null}:{})};
   }
   async enrichTelemetry(accounts:UpstreamAccount[]) {
-    if(this.provider==='gatelink')return;
+    if(this.provider==='gatelink'||this.provider==='aeromax')return;
     // Optional operational reads are isolated per account. An unavailable
     // detail endpoint must not prevent inventory or financial synchronization.
     let index=0;
@@ -299,6 +381,9 @@ export class ProviderClient {
         groups:groups.map((g:any)=>({id:g.id,name:g.name})),
         defaults:{policyTemplateId:policy.id,ccTemplateId:template.id,groupIds:groups.map((g:any)=>String(g.id))}};
     }
+    if(this.provider==='aeromax') {
+      return {requireProxy:true,accountTypes:[],configurationLocked:true,proxyMode:'manual',uploader:true};
+    }
     const [groups,policies,templates]=await Promise.all([
       this.call('/api/admin/groups'),this.call('/api/admin/account-policy-templates'),this.call('/api/admin/cc-disguise-templates'),
     ]);
@@ -320,7 +405,7 @@ export class ProviderClient {
   }
   private requireProxy(options:OAuthOptions) {
     assert(options.proxy,'每个账号必须绑定专属出口代理');parseProxy(options.proxy);
-    if(this.provider!=='gatelink')assert(options.proxyExternalId,'平台代理映射尚未确认，已阻止上号');
+    if(this.provider!=='gatelink'&&this.provider!=='aeromax')assert(options.proxyExternalId,'平台代理映射尚未确认，已阻止上号');
   }
   private proxyMatches(record:any,url:string,full:boolean) {
     const expected=parseProxy(url),raw=record.url??record.proxy_url??record.uri;
@@ -362,7 +447,7 @@ export class ProviderClient {
   }
   async provisionProxy(url:string,existingExternalId?:string) {
     const normalized=parseProxy(url).url;
-    if(this.provider==='gatelink')return null;
+    if(this.provider==='gatelink'||this.provider==='aeromax')return null;
     const before=await this.remoteProxies();
     const exact=before.filter(p=>this.proxyMatches(p,normalized,true));
     assert(exact.length<=1,'上游出现重复代理，请管理员核对平台映射',502);
@@ -420,6 +505,12 @@ export class ProviderClient {
   }
   async startOAuth(options:OAuthOptions) {
     this.requireProxy(options);
+    if(this.provider==='aeromax') {
+      const data=await this.call('/api/v1/provider/uploader/sessions','POST',{httpProxy:options.proxy,acceptDirectRisk:false});
+      assert(data.id&&data.authorizationUrl,'E-coding 未返回上号授权链接',502);
+      const expiresAt=Number(data.expiresAt),expiresIn=Number.isFinite(expiresAt)?Math.max(60,Math.min(1800,(expiresAt-Date.now())/1000)):600;
+      return {url:data.authorizationUrl,secret:{options,sessionId:data.id,pendingState:null},expiresIn};
+    }
     if(this.provider==='gatelink') {
       const data=await this.call('/api/oauth-submissions/authorize','POST',{...this.gatelinkConfig(options),overwriteExisting:!!options.existingExternalId});
       assert(data.authorizationUrl,'平台未返回授权地址',502);
@@ -441,6 +532,19 @@ export class ProviderClient {
   }
   async exchangeOAuth(secret:any,callback:string) {
     this.requireProxy(secret.options);
+    if(this.provider==='aeromax') {
+      const input=callback.trim();let code=input;
+      if(/^https?:\/\//i.test(input)) {
+        const url=new URL(input);const values=url.searchParams.getAll('code');assert(values.length===1&&values[0],'请粘贴 E-coding 返回的授权码或完整回调地址');code=values[0]!;
+      }
+      assert(code.length>0&&code.length<=4096&&!/[\s#]/.test(code),'请粘贴有效的 E-coding 授权码');
+      const data=await this.call('/api/v1/provider/uploader/authorize','POST',{sessionId:secret.sessionId,code,name:secret.options.email,note:secret.options.note});
+      assert(data.id,'E-coding 未返回上号任务',502);
+      let task=data;
+      for(let n=0;n<30&&!['succeeded','failed','cancelled'].includes(task.status);n++) {await new Promise(resolve=>setTimeout(resolve,1000));task=await this.call(`/api/v1/provider/uploader/tasks/${encodeURIComponent(data.id)}`);}
+      assert(task.status==='succeeded'&&task.providerId,'E-coding 上号任务未成功完成',502);
+      return this.submittedIdentity({id:task.providerId},undefined);
+    }
     const code=statefulOAuthCallback(callback,secret.pendingState);
     if(this.provider==='gatelink') {
       const data=await this.call('/api/oauth-submissions/exchange','POST',{...this.gatelinkConfig(secret.options),callback:callback.trim()});
@@ -477,6 +581,11 @@ export class ProviderClient {
     return this.submittedIdentity(data,options.proxyExternalId);
   }
   private async submittedIdentity(data:any,expectedProxyId:string|undefined):Promise<UpstreamAccount> {
+    if(this.provider==='aeromax') {
+      const remote=(await this.listAccounts()).find(account=>account.id===String(data.id));
+      assert(remote && (!expectedProxyId||remote.proxyExternalId===expectedProxyId),'E-coding 未返回可核实的账号归属，请同步后由管理员核对',502);
+      return remote;
+    }
     // The label supplied by the user is never proof of ownership. If the write
     // response omits the canonical email, verify it against the upstream list.
     const path=this.provider==='minicc'?`/api/accounts/${encodeURIComponent(data.id)}/detail`:`/api/admin/oauth-accounts/${encodeURIComponent(data.id)}`;
@@ -491,6 +600,10 @@ export class ProviderClient {
     return {id:String(data.id),email:String(email).toLowerCase(),name:String(email),status:account.status||'active',dailyUsd:'0',cost7d:null,cost30d:null,utilization:null,proxyExternalId:expectedProxyId};
   }
   async verifySubmissionTarget(externalId:string,email:string) {
+    if(this.provider==='aeromax') {
+      const remote=(await this.listAccounts()).find(account=>account.id===externalId);
+      assert(remote?.email===email.toLowerCase(),'E-coding 原账号不存在或邮箱不一致，请管理员同步核对',409);return;
+    }
     if(this.provider==='gatelink') {
       const remote=(await this.listAccounts()).find(account=>account.id===externalId);
       assert(remote?.email===email,'上游原账号不存在或邮箱不一致，请管理员同步核对；未覆盖其他账号',409);
@@ -502,6 +615,7 @@ export class ProviderClient {
     assert(identity&&String(identity).toLowerCase()===email,'上游原账号不存在或邮箱不一致，请管理员同步核对；未覆盖其他账号',409);
   }
   async setEnabled(externalId:string,enabled:boolean) {
+    if(this.provider==='aeromax')return this.call(`/api/v1/provider/accounts/${encodeURIComponent(externalId)}/actions`,'POST',{action:enabled?'enable':'disable'});
     if(this.provider==='gatelink') {
       assert(this.user?.role==='admin','Gatelink 启停账号需要上游管理员权限，当前主账号无此权限');
       return this.call(`/api/admin/accounts/${encodeURIComponent(externalId)}/enabled`,'POST',{enabled});
@@ -511,7 +625,11 @@ export class ProviderClient {
   }
   async verifyAccountStatus(externalId:string,email:string,enabled:boolean) {
     let status:string|undefined,identity:string|undefined;
-    if(this.provider==='gatelink') {
+    if(this.provider==='aeromax') {
+      const remote=(await this.listAccounts()).find(account=>account.id===externalId);identity=remote?.email;status=remote?.status;
+      const ok=enabled?status==='active'||status==='degraded'||status==='cooldown':status==='disabled';
+      assert(identity===email.toLowerCase()&&ok,'E-coding 尚未确认目标账号状态，请同步核对；本地未提前修改状态',502);return;
+    } else if(this.provider==='gatelink') {
       const remote=(await this.listAccounts()).find(account=>account.id===externalId);
       status=remote?.status;identity=remote?.email;
     } else {
@@ -523,6 +641,11 @@ export class ProviderClient {
   }
   async setAccountProxy(externalId:string,options:OAuthOptions) {
     this.requireProxy(options);
+    if(this.provider==='aeromax') {
+      await this.call(`/api/v1/provider/accounts/${encodeURIComponent(externalId)}/proxy`,'PUT',{httpProxy:options.proxy});
+      const result=await this.call(`/api/v1/provider/accounts/${encodeURIComponent(externalId)}/proxy`);
+      assert(result?.proxy && this.proxyMatches({url:result.proxy},options.proxy!,false),'E-coding 实际代理未匹配，请核对后重试',502);return;
+    }
     assert(this.provider!=='gatelink','Gatelink 当前权限不支持修改已有账号代理，请在上游修改后由管理员核实');
     if(this.provider==='minicc')await this.call(`/api/accounts/${encodeURIComponent(externalId)}/policy`,'POST',{outbound_proxy_id:options.proxyExternalId});
     else await this.call(`/api/admin/oauth-accounts/${encodeURIComponent(externalId)}`,'PATCH',{outbound_proxy_id:options.proxyExternalId});

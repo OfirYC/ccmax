@@ -181,11 +181,22 @@ export async function migrate(db: DB) {
       await tx.query('INSERT INTO migrations(version) VALUES (23)');
     }
     if (!done.some(row=>Number(row.version)===24)) {
+      await tx.query('ALTER TABLE connections ADD COLUMN IF NOT EXISTS upstream_snapshot jsonb');
+      await tx.query('INSERT INTO migrations(version) VALUES (24)');
+    }
+    if (!done.some(row=>Number(row.version)===25)) {
+      // Platform E was added after the original provider constraint migration.
+      // Existing databases therefore need their three provider checks rebuilt
+      // before an aeromax connection can be created.
+      await extendProviders(tx,['connections','rates','invitation_rates']);
+      await tx.query('INSERT INTO migrations(version) VALUES (25)');
+    }
+    if (!done.some(row=>Number(row.version)===26)) {
       // Existing bindings start participating in completeness checks from this
       // deployment forward; newly created bindings retain their real timestamp.
       await tx.query('ALTER TABLE bindings ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()');
       await applySettlementAutoReconciliation(tx);
-      await tx.query('INSERT INTO migrations(version) VALUES (24)');
+      await tx.query('INSERT INTO migrations(version) VALUES (26)');
     }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are

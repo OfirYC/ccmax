@@ -49,13 +49,13 @@ it('credits the ten exact stranded production rows once when the deployment migr
         VALUES($1,$2,$3,$4,'provisional','live_snapshot',0.5)`,[usageId,binding,day,raw]);
     }
 
-    await db.query('DELETE FROM migrations WHERE version=24');
+    await db.query('DELETE FROM migrations WHERE version=26');
     await migrate(db);
     await migrate(db);
 
     const [credit]=await db.query("SELECT COALESCE(sum(amount_usd),0) AS amount,count(*)::int AS count FROM ledger WHERE user_id=$1 AND kind='settlement'",[JADEN]);
     expect(credit).toEqual({amount:'203.12254774',count:1});
     expect((await db.query("SELECT count(*)::int AS count FROM usage_days WHERE id=ANY($1::text[]) AND state='final'",[TARGETS.map(target=>target[0])]))[0].count).toBe(10);
-    expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=24'))[0].count).toBe(1);
+    expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=26'))[0].count).toBe(1);
   } finally {await db.close();}
 });

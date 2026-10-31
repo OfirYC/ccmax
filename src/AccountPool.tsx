@@ -6,7 +6,7 @@ import { dateTime, number } from './api';
 import { Badge, Empty, Loading, Paginator, Table, useSession } from './components';
 import { PlatformIdentity } from './PlatformIdentity';
 import { Amount } from './PriceDisplay';
-import { comparePoolBills, matchingBindings, poolBill, poolMetric, poolModel, type PoolMetric } from './account-pool';
+import { accountStatusKind, comparePoolBills, matchingBindings, poolBill, poolMetric, poolModel, type AccountStatusKind, type PoolMetric } from './account-pool';
 import { t } from './i18n';
 import { useLocale } from './LanguageSwitcher';
 import './account-pool.css';
@@ -25,8 +25,13 @@ export default function AccountPool(props:Props){
   const accounts=all.filter(a=>(!unassigned||!a.ownership_verified)&&(owner==='all'||a.owner_id===owner)&&
     (status!=='pending'||provider==='all'&&!a.bindings.length)&&
     `${a.email} ${a.label} ${a.owner_name||''}`.toLowerCase().includes(search.trim().toLowerCase()))
-    .map(a=>({...a,bindings:matchingBindings(a.bindings,provider,status)}))
-    .filter(a=>status==='pending'||provider==='all'&&status==='all'||a.bindings.length>0);
+    .map(a=>({...a,bindings:matchingBindings(a.bindings,provider,status==='partial'?'all':status)}))
+    .filter(a=>{
+      if(status==='pending')return !a.bindings.length;
+      if(status==='partial')return accountStatusKind(a)==='partial';
+      if(provider==='all'&&status==='all')return true;
+      return a.bindings.length>0;
+    });
   accounts.sort((a,b)=>{
     if(sort==='email')return a.email.localeCompare(b.email);
     if(sort==='latest')return Date.parse(b.created_at)-Date.parse(a.created_at)||a.id.localeCompare(b.id);
@@ -58,13 +63,14 @@ export default function AccountPool(props:Props){
         <label className="pool-search"><span>{t('搜索')}</span><div className="search-input"><Search size={15}/><input aria-label={t('搜索账号')} value={search} onChange={e=>setSearch(e.target.value)} placeholder={t('搜索邮箱或归属成员')}/></div></label>
         <label><span>{t('所属平台')}</span><select aria-label={t('筛选平台')} value={provider} onChange={e=>setProvider(e.target.value)}><option value="all">{t('所有平台')}</option>{Object.keys(data?.providers||{}).map(p=><option key={p} value={p}>{platformName(p)}</option>)}</select></label>
         <label><span>{t('归属团队')}</span><select aria-label={t('筛选归属')} value={owner} onChange={e=>setOwner(e.target.value)}><option value="all">{t('全部归属')}</option><option value={user.id}>{t('仅本人')}</option>{members.filter(m=>m.id!==user.id).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-        <label><span>{t('状态')}</span><select aria-label={t('筛选账号状态')} value={status} onChange={e=>setStatus(e.target.value)}><option value="all">{t('全部状态')}</option><option value="active">{t('正常')}</option><option value="disabled">{t('已停用')}</option><option value="attention">{t('需要核对')}</option><option value="pending">{t('等待上号')}</option></select></label>
+        <label><span>{t('状态')}</span><select aria-label={t('筛选账号状态')} value={status} onChange={e=>setStatus(e.target.value)}><option value="all">{t('全部状态')}</option><option value="active">{t('正常')}</option><option value="partial">{t('部分停用')}</option><option value="disabled">{t('已停用')}</option><option value="attention">{t('需要核对')}</option><option value="pending">{t('等待上号')}</option></select></label>
         <label><span>{t('排序')}</span><select aria-label={t('账号排序')} value={sort} onChange={e=>setSort(e.target.value)}><option value="today">{t('今日账单从高到低')}</option><option value="latest">{t('最近添加')}</option><option value="email">{t('邮箱名称')}</option></select></label>
       </div>
       <div className="pool-viewbar"><span>{t('筛选 {0} / 全部 {1} 个账号',[accounts.length,all.length])}</span><div className="actions"><select aria-label={t('每页条数')} value={size} onChange={e=>setSize(Number(e.target.value))}>{[12,24,48].map(n=><option key={n} value={n}>{t('每页 {0} 条',[n])}</option>)}</select><div className="pool-view-toggle" aria-label={t('展示方式')}><button aria-pressed={view==='cards'} onClick={()=>setView('cards')}><LayoutGrid size={14}/>{t('卡片')}</button><button aria-pressed={view==='list'} onClick={()=>setView('list')}><List size={14}/>{t('列表')}</button></div></div></div>
+      <StatusLegend/>
       {loading?<Loading/>:!accounts.length?<Empty title={all.length?t('没有匹配的账号'):t('添加第一个 Claude Max 账号')} detail={all.length?t('调整筛选条件，或新增账号并完成平台授权。'):t('从你已有的账号开始：填写邮箱、绑定固定代理、完成授权，再查看实际用量与收益。')} action={!all.length&&<button className="button primary" onClick={()=>props.onOnboard({})}><Zap size={15}/>{t('新增账号')}</button>}/>:<>
         {view==='cards'?<div className="pool-card-grid">{visible.map(account=><AccountCard key={account.id} account={account} day={day} actions={<AccountActions account={account} {...actionProps}/>}/>)}</div>:
-          <Table headers={[t('Claude 账号'),t('平台连接 / 状态'),t('今日平台账单'),t('近 7 天平台账单'),t('归属团队'),t('固定出口代理'),t('操作')]}>{visible.map(a=><tr key={a.id}><td><strong>{a.email}</strong><small>{a.label}</small><Link className="text-button" to={`/analytics?accountId=${a.id}${provider==='all'?'':`&provider=${provider}`}`}>{t('调用详情')} <ArrowUpRight size={12}/></Link></td><td><div className="binding-list">{a.bindings.map((b:any)=><div key={b.id}><PlatformIdentity provider={b.provider} connectionId={b.connection_id}/><Badge state={b.connection_enabled&&b.usage_enabled!==false?b.status:'disabled'}/></div>)}</div>{!a.bindings.length&&<Badge state="pending" label={t('等待上号')}/>}</td><td><Amount value={poolBill(a.bindings,day,'today').value}/><small>{coverage(poolBill(a.bindings,day,'today'))}</small></td><td><Amount value={poolBill(a.bindings,day,'7d').value}/></td><td><AccountOwner account={a}/></td><td><ProxyLabel account={a}/></td><td><AccountActions account={a} {...actionProps}/></td></tr>)}</Table>}
+          <Table headers={[t('Claude 账号'),t('账号状态'),t('平台连接 / 状态'),t('今日平台账单'),t('近 7 天平台账单'),t('归属团队'),t('固定出口代理'),t('操作')]}>{visible.map(a=><tr key={a.id}><td><strong>{a.email}</strong><small>{a.label}</small><Link className="text-button" to={`/analytics?accountId=${a.id}${provider==='all'?'':`&provider=${provider}`}`}>{t('调用详情')} <ArrowUpRight size={12}/></Link></td><td className={`account-status-cell status-${accountStatusKind(a)}`}><AccountStatus account={a}/></td><td><div className="binding-list">{a.bindings.map((b:any)=><div key={b.id}><PlatformIdentity provider={b.provider} connectionId={b.connection_id}/><Badge state={b.connection_enabled&&b.usage_enabled!==false?b.status:'disabled'}/></div>)}</div>{!a.bindings.length&&<Badge state="pending" label={t('等待上号')}/>}</td><td><Amount value={poolBill(a.bindings,day,'today').value}/><small>{coverage(poolBill(a.bindings,day,'today'))}</small></td><td><Amount value={poolBill(a.bindings,day,'7d').value}/></td><td><AccountOwner account={a}/></td><td><ProxyLabel account={a}/></td><td><AccountActions account={a} {...actionProps}/></td></tr>)}</Table>}
         <Paginator total={accounts.length} page={page} setPage={setPage} size={size}/>
       </>}
     </section>
@@ -80,8 +86,8 @@ function AccountCard({account:a,day,actions}:{account:any;day:string;actions:Rea
   const bindings=a.bindings,today=poolBill(bindings,day,'today'),fresh=bindings.filter((b:any)=>b.usage_enabled!==false&&b.data_fresh).length;
   const activity=(key:'rpm'|'tpm'|'concurrent')=>poolMetric(bindings,d=>d.activity[key]);
   const requests=poolMetric(bindings,d=>d.day===day?d.periods.today.requests:null),tokens=poolMetric(bindings,d=>d.day===day?d.periods.today.tokens:null);
-  return <article className="pool-account-card" aria-label={a.email}>
-    <header className="pool-card-head"><span className="account-avatar">{a.email[0].toUpperCase()}</span><div><h2>{a.email}</h2><small>{a.label||t('Claude 账号')}</small></div><Link className="icon-button" to={`/analytics?accountId=${a.id}`} aria-label={t('查看 {0} 的调用详情',[a.email])}><ArrowUpRight size={17}/></Link></header>
+  return <article className={`pool-account-card status-${accountStatusKind(a)}`} aria-label={a.email}>
+    <header className="pool-card-head"><span className="account-avatar">{a.email[0].toUpperCase()}</span><div><h2>{a.email}</h2><small>{a.label||t('Claude 账号')}</small></div><AccountStatus account={a}/><Link className="icon-button" to={`/analytics?accountId=${a.id}`} aria-label={t('查看 {0} 的调用详情',[a.email])}><ArrowUpRight size={17}/></Link></header>
     <div className="pool-card-meta"><AccountOwner account={a}/><span><Clock3 size={12}/>{t('添加于 {0}',[dateTime(a.created_at)])}</span></div>
     <div className="pool-card-bill"><div><span>{t('今日平台账单')}</span><strong><Amount value={today.value} digits={2}/></strong></div><small>{coverage(today)}</small></div>
     <div className="pool-periods">{(['5h','7d','30d'] as const).map(period=><div key={period}><span>{period==='5h'?t('近 5 小时'):period==='7d'?t('近 7 天'):t('近 30 天')}</span><Amount value={poolBill(bindings,day,period).value} digits={2}/><small>{coverage(poolBill(bindings,day,period))}</small></div>)}</div>
@@ -91,6 +97,15 @@ function AccountCard({account:a,day,actions}:{account:any;day:string;actions:Rea
     <div className="pool-card-requests"><span>{t('今日请求数')} <b title={coverage(requests)}>{count(requests.value)}</b></span><span>Token <b title={coverage(tokens)}>{count(tokens.value)}</b></span></div>
     <footer><div className="pool-card-proxy"><ShieldCheck size={13}/><ProxyLabel account={a}/></div>{actions}</footer>
   </article>;
+}
+
+const accountStatusLabels:Record<AccountStatusKind,string>={active:'正常',partial:'部分停用',disabled:'已停用',attention:'需要核对',pending:'等待上号'};
+function AccountStatus({account,compact=false}:{account:any;compact?:boolean}){
+  const kind=accountStatusKind(account);
+  return <span className={`account-status ${kind}${compact?' compact':''}`} title={t(accountStatusLabels[kind])}><i aria-hidden="true"/><span>{t(accountStatusLabels[kind])}</span></span>;
+}
+function StatusLegend(){
+  return <div className="pool-status-legend" aria-label={t('账号状态图例')}><span className="pool-status-legend-title">{t('账号状态')}</span>{(['active','partial','attention','disabled','pending'] as AccountStatusKind[]).map(kind=><span className={`legend-status ${kind}`} key={kind}><i aria-hidden="true"/>{t(accountStatusLabels[kind])}</span>)}</div>;
 }
 
 function BindingUsage({binding:b,day}:{binding:any;day:string}){
