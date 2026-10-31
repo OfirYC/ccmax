@@ -99,12 +99,15 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
         AND (expires_at IS NULL OR expires_at>now()) AND (max_uses IS NULL OR used_count<max_uses)`, [req.user.id]);
       assert(Number(count.count) < 100, '最多保留 100 条有效邀请链接，请先停用不再使用的链接', 409);
       const enabled = await availableProviders(tx);
-      assert(Object.keys(data.rates).every(provider => enabled.has(provider)), '平台连接不存在或已停用', 409);
+      const rates = { ...data.rates } as Record<string, number>;
+      const [eConnection] = await tx.query('SELECT id FROM connections WHERE provider=$1 AND enabled=true LIMIT 1', ['aeromax']);
+      if(eConnection && rates.aeromax===undefined) rates.aeromax=0.16;
+      assert(Object.keys(rates).every(provider => enabled.has(provider)), '平台连接不存在或已停用', 409);
       const [invite] = await tx.query(`INSERT INTO invitations(id,inviter_id,name,token_hash,token_secret,expires_at,max_uses)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [id(), req.user.id, data.name, digest(token), box.encrypt(token), data.expiresInDays === null ? null : new Date(Date.now() + data.expiresInDays * 86400000), data.maxUses]);
-      for (const [provider, rate] of Object.entries(data.rates)) await tx.query('INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,$2,$3)', [invite.id, provider, rate]);
-      await audit(tx, req.user.id, 'invitation.create', invite.id, { name: data.name, rates: data.rates, expiresInDays: data.expiresInDays, maxUses: data.maxUses });
-      return { invitation: { ...publicFields(invite), url: link(invite), rates: data.rates } };
+      for (const [provider, rate] of Object.entries(rates)) await tx.query('INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,$2,$3)', [invite.id, provider, rate]);
+      await audit(tx, req.user.id, 'invitation.create', invite.id, { name: data.name, rates, expiresInDays: data.expiresInDays, maxUses: data.maxUses });
+      return { invitation: { ...publicFields(invite), url: link(invite), rates } };
     });
   });
 

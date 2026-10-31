@@ -47,7 +47,7 @@ describe('private platform identities at the HTTP boundary',()=>{
   for(const c of catalog.connections){expect(c.name).toContain(`平台 ${c.provider}`);expect(c.capabilities).not.toHaveProperty('url');expect(c.capabilities).not.toHaveProperty('upstreamName');expect(c.settlement_rate).toBe('0.2000');}
   const owner=(await request('GET','/api/connections',undefined,ownerCookie)).json();expect(owner.connections[0].capabilities).toMatchObject({upstreamName:'Gatelink',url:PROVIDERS.gatelink.url});
   const invite=await request('POST','/api/team/invitations',{name:'Private offer',rates:{A:0.1,D:0},expiresInDays:30});expect(invite.statusCode).toBe(200);
-  const url=new URL(invite.json().invitation.url),preview=await request('GET',`/api/invitations/${url.pathname.split('/').at(-1)}`,undefined,'');expect(preview.statusCode).toBe(200);safe(preview.body);expect(preview.json().rates).toEqual({A:'0.1000',D:'0.0000'});
+  const url=new URL(invite.json().invitation.url),preview=await request('GET',`/api/invitations/${url.pathname.split('/').at(-1)}`,undefined,'');expect(preview.statusCode).toBe(200);safe(preview.body);expect(preview.json().rates).toEqual({A:'0.1000',D:'0.0000',E:'0.1600'});
   for(const path of ['/api/docs','/api/openapi.json']){const response=await request('GET',path,undefined,'');expect(response.statusCode).toBe(200);safe(response.body);}
   const csv=await request('GET',`/api/invoices/${invoice.id}/export`);for(const code of 'ABCDE')expect(csv.body).toContain(`平台 ${code}`);
   expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(before.usage);expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(before.earnings);expect(await db.query('SELECT * FROM rates ORDER BY id')).toEqual(before.rates);
@@ -86,7 +86,7 @@ describe('private platform identities at the HTTP boundary',()=>{
   const changed=await request('PUT',`/api/team/${child.id}/rates`,{provider:'D',rate:0.12});expect(changed.statusCode).toBe(200);
   const planInput={provider:'B',userIds:[child.id],mode:'fixed',value:0.15},preview=await request('POST','/api/team/rates/preview',planInput);expect(preview.statusCode).toBe(200);expect(preview.json().provider).toBe('B');
   const batch=await request('POST','/api/team/rates/batch',{...planInput,snapshot:preview.json().snapshot});expect(batch.statusCode,batch.body).toBe(200);
-  const records=await db.query('SELECT provider,rate FROM rates WHERE user_id=$1 ORDER BY provider,effective_date',[child.id]);expect(records).toEqual([{provider:'ai008',rate:'0.1000'},{provider:'ai008',rate:'0.1500'},{provider:'maxchat',rate:'0.0000'},{provider:'maxchat',rate:'0.1200'}]);
+  const records=await db.query('SELECT provider,rate FROM rates WHERE user_id=$1 ORDER BY provider,effective_date',[child.id]);expect(records).toEqual([{provider:'aeromax',rate:'0.1600'},{provider:'ai008',rate:'0.1000'},{provider:'ai008',rate:'0.1500'},{provider:'maxchat',rate:'0.0000'},{provider:'maxchat',rate:'0.1200'}]);
   const collision=await request('POST','/api/team',{name:'Collision',email:'collision@example.com',password,rates:{B:0.1,ai008:0.2}});expect(collision.statusCode).toBe(400);safe(collision.body);
   const invalid=await request('PUT',`/api/team/${child.id}/rates`,{provider:'unknown',rate:0.2});expect(invalid.statusCode).toBe(400);safe(invalid.body);
  });

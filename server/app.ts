@@ -213,15 +213,23 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.post('/api/team',async req=>{
     const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.partialRecord(provider,rate).refine(v=>Object.keys(v).length>0,'请至少设置一个平台价格'),effectiveFrom:date.optional()}).parse(req.body);
-    for(const p of Object.keys(d.rates) as ProviderKey[])await assertAgentProvider(req.user,p);
+    // Platform E has a fixed onboarding quote for every new downstream member.
+    // An explicit quote still wins; the default only applies while E has an
+    // enabled connection, so future providers remain opt-in.
+    const rates:Partial<Record<ProviderKey,number>>={...d.rates};
+    if(rates.aeromax===undefined) {
+      const [eConnection]=await db.query('SELECT id FROM connections WHERE provider=$1 AND enabled=true LIMIT 1',['aeromax']);
+      if(eConnection) rates.aeromax=0.16;
+    }
+    for(const p of Object.keys(rates) as ProviderKey[])await assertAgentProvider(req.user,p);
     const hash=await hashPassword(d.password),userId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     return db.transaction(async tx=>{
       await lockPricing(tx);
       const [u]=await tx.query('INSERT INTO users(id,parent_id,email,name,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING *',[userId,req.user.id,d.email,d.name,hash]);
-      for(const [p,value] of Object.entries(d.rates)) {
+      for(const [p,value] of Object.entries(rates)) {
         await tx.query('INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5,$6)',[id(),userId,p,value,effective,req.user.id]);
       }
-      await audit(tx,req.user.id,'team.create',userId,{name:d.name});return {user:publicUser(u)};
+      await audit(tx,req.user.id,'team.create',userId,{name:d.name,defaultedRates:Object.keys(rates).filter(p=>d.rates[p as ProviderKey]===undefined)});return {user:publicUser(u)};
     });
   });
   app.patch('/api/team/:id',async req=>{
