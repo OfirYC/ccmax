@@ -1471,6 +1471,7 @@
   "已记账": "Posted",
   "已支付": "Paid",
   "平台 E": "Nền tảng E",
+  "平台 E (coding)": "Nền tảng E (coding)",
   "可同时发起多个平台授权。每个平台需要各自有效的 OAuth 授权码，授权码不能跨平台重复使用。每个账号必须先绑定专属代理，所有平台使用同一代理。平台 B、平台 C 和 平台 D 还支持 refresh token 导入；平台 A 和 平台 E 使用 OAuth 授权。": "Bạn có thể cấp quyền nhiều nền tảng cùng lúc. Mỗi nền tảng cần mã OAuth hợp lệ riêng; không thể dùng lại mã giữa các nền tảng. Trước tiên hãy gắn proxy riêng; mọi nền tảng dùng cùng proxy đó. Nền tảng B, Nền tảng C và Nền tảng D hỗ trợ nhập refresh token; Nền tảng A và Nền tảng E dùng OAuth.",
   "请粘贴 平台 E 返回的授权码或完整回调地址": "Dán mã ủy quyền do Nền tảng E trả về hoặc URL callback đầy đủ",
   "请粘贴有效的 平台 E 授权码": "Dán mã ủy quyền Nền tảng E hợp lệ"
