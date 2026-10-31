@@ -2,7 +2,7 @@ import { describe,expect,it } from 'vitest';
 import Decimal from 'decimal.js';
 import { normalizeTelemetry,aggregateTelemetry } from '../server/telemetry';
 import { today } from '../server/core';
-import { comparePoolBills,poolBill,poolMetric,poolModel,matchingBindings,type PoolBinding } from './account-pool';
+import { accountStatusKind,comparePoolBills,poolBill,poolMetric,poolModel,matchingBindings,type PoolBinding } from './account-pool';
 
 function binding(amount:string|null,fresh=true):PoolBinding {
   const telemetry=normalizeTelemetry('ai008',{stats:{daily_cost:amount,rpm:4},usage_windows:{cost_7d:amount}});
@@ -48,5 +48,14 @@ describe('account pool totals',()=>{
     expect(matchingBindings([ai,gate,disabled],'gatelink','disabled')).toEqual([gate]);
     expect(matchingBindings([ai,gate,disabled],'all','disabled')).toEqual([gate,disabled]);
     expect(matchingBindings([ai,gate,disabled],'all','attention')).toEqual([]);
+  });
+  it('summarizes platform states into an actionable account status',()=>{
+    const active=binding('1'),disabled={...binding('2'),status:'disabled'},stale={...binding('3'),data_fresh:false};
+    expect(accountStatusKind({bindings:[active]})).toBe('active');
+    expect(accountStatusKind({bindings:[disabled]})).toBe('disabled');
+    expect(accountStatusKind({bindings:[active,disabled]})).toBe('partial');
+    expect(accountStatusKind({bindings:[stale]})).toBe('attention');
+    expect(accountStatusKind({ownership_verified:false,bindings:[active]})).toBe('attention');
+    expect(accountStatusKind({bindings:[]})).toBe('pending');
   });
 });
