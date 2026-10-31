@@ -40,7 +40,7 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect(flags.find(a=>a.id===assigned)?.ownership_verified).toBe(true);
   await expect(db.query('UPDATE accounts SET owner_id=$2 WHERE id=$1',[sealed,other])).rejects.toThrow('immutable');
   await db.query('UPDATE accounts SET ownership_verified=true WHERE id=$1',[sealed]);
-  expect(await db.query('SELECT * FROM migrations')).toHaveLength(24);
+  expect(await db.query('SELECT * FROM migrations')).toHaveLength(25);
   expect(await db.query('SELECT * FROM invitations')).toEqual([]);
   expect(await db.query('SELECT * FROM oauth_code_claims')).toEqual([]);
 
@@ -59,6 +59,27 @@ it('upgrades legacy records without treating an email reservation as proof of ow
   expect((await db.query('SELECT amount_usd,reference_id FROM ledger'))[0]).toEqual({amount_usd:'12.34567890',reference_id:'legacy-reference'});
   await expect(db.query("INSERT INTO ledger(id,user_id,kind,amount_usd,reference_id) VALUES($1,$2,'settlement',1,'new-orphan')",[id(),owner.id])).rejects.toThrow('source mismatch');
  }finally{await db.close();}
+});
+
+it('upgrades existing provider checks so Platform E can be added after the original migration',async()=>{
+ const db=await openTestDB();
+ try {
+  await migrate(db);await bootstrap(db,{ADMIN_EMAIL:'platform-e-migration@example.com',ADMIN_PASSWORD:'migration-password'});
+  for(const table of ['connections','rates','invitation_rates']) {
+   await db.query(`ALTER TABLE ${table} DROP CONSTRAINT ${table}_provider_check`);
+   await db.query(`ALTER TABLE ${table} ADD CONSTRAINT ${table}_provider_check CHECK(provider IN ('gatelink','ai008','minicc','maxchat'))`);
+  }
+  await db.query('DELETE FROM migrations WHERE version=25');
+  await migrate(db);await migrate(db);
+  const [owner]=await db.query("SELECT id FROM users WHERE role='owner'");
+  const connection=id();
+  await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'aeromax','Platform E','encrypted',0.4)",[connection]);
+  await db.query("INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by) VALUES($1,$2,'aeromax',0.16,'2026-01-01',$2)",[id(),owner.id]);
+  const invitation=id();
+  await db.query("INSERT INTO invitations(id,inviter_id,name,token_hash,token_secret) VALUES($1,$2,'Platform E invite','platform-e-hash','platform-e-secret')",[invitation,owner.id]);
+  await db.query("INSERT INTO invitation_rates(invitation_id,provider,rate) VALUES($1,'aeromax',0.16)",[invitation]);
+  expect((await db.query('SELECT version FROM migrations ORDER BY version DESC LIMIT 1'))[0].version).toBe(25);
+ } finally {await db.close();}
 });
 
 it('upgrades an existing version 14 deployment for MaxChat without assigning prices or changing old records',async()=>{
