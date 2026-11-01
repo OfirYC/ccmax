@@ -7,7 +7,7 @@ import { dailyBillingMigration } from './daily-billing-migration.js';
 import { snapshotRecoveryMigration } from './snapshot-recovery-migration.js';
 import { invitationMigration } from './invitations.js';
 import { applyJadenSettlementRepair } from './jaden-settlement-repair.js';
-import { applySettlementAutoReconciliation } from './settlement-auto-reconcile.js';
+import { applyRepeatedSnapshotReconciliation, applySettlementAutoReconciliation } from './settlement-auto-reconcile.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -197,6 +197,14 @@ export async function migrate(db: DB) {
       await tx.query('ALTER TABLE bindings ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()');
       await applySettlementAutoReconciliation(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (26)');
+    }
+    if (!done.some(row=>Number(row.version)===27)) {
+      // Migration 26 has already run in production. Keep the repeated-snapshot
+      // correction and stranded-profit repair in a new migration so deployment
+      // cannot silently skip either one.
+      await applySettlementAutoReconciliation(tx);
+      await applyRepeatedSnapshotReconciliation(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (27)');
     }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are

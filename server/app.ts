@@ -648,10 +648,18 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const ids=await subtree(db,req.user.id);
     const [accounts]=await db.query('SELECT count(*) AS total FROM accounts WHERE owner_id=ANY($1::text[]) AND ownership_verified',[ids]);
     const [team]=await db.query('SELECT count(*) AS total FROM users WHERE id=ANY($1::text[]) AND id<>$2',[ids,req.user.id]);
-    const [totals]=await db.query(`SELECT COALESCE(sum(u.raw_usd),0) AS raw_usd,COALESCE(sum(e.gross_usd),0) AS gross_usd,COALESCE(sum(e.downstream_usd),0) AS downstream_usd,COALESCE(sum(e.profit_usd),0) AS profit_usd,
-      COALESCE(sum(CASE WHEN u.state='final' THEN e.profit_usd ELSE 0 END),0) AS final_profit FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1`,[req.user.id]);
-    const daily=await db.query(`SELECT u.day,sum(u.raw_usd) AS raw_usd,sum(e.gross_usd) AS gross_usd,sum(e.profit_usd) AS profit_usd
-      FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1 GROUP BY u.day ORDER BY u.day DESC LIMIT 14`,[req.user.id]);
+    const [totals]=await db.query(`SELECT COALESCE(sum(u.raw_usd),0) AS raw_usd,
+      COALESCE(sum(e.gross_usd),0)+(SELECT COALESCE(sum(gross_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS gross_usd,
+      COALESCE(sum(e.downstream_usd),0)+(SELECT COALESCE(sum(downstream_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS downstream_usd,
+      COALESCE(sum(e.profit_usd),0)+(SELECT COALESCE(sum(profit_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS profit_usd,
+      COALESCE(sum(CASE WHEN u.state='final' THEN e.profit_usd ELSE 0 END),0)
+        +(SELECT COALESCE(sum(profit_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS final_profit
+      FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1`,[req.user.id]);
+    const daily=await db.query(`SELECT day,sum(raw_usd) AS raw_usd,sum(gross_usd) AS gross_usd,sum(profit_usd) AS profit_usd FROM (
+      SELECT u.day,u.raw_usd,e.gross_usd,e.profit_usd FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1
+      UNION ALL SELECT i.date_to AS day,0 AS raw_usd,a.gross_usd,a.profit_usd FROM settlement_adjustments a
+        JOIN invoices i ON i.id=a.invoice_id WHERE a.user_id=$1
+    ) corrected GROUP BY day ORDER BY day DESC LIMIT 14`,[req.user.id]);
     const snapshots=await visibleTelemetry(db,req.user,telemetryFilters.parse({}),connectionName);
     const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).map(c=>{
       const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today'),week=aggregateTelemetry(group,'7d');
@@ -674,7 +682,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       WHERE ${filter('i')} ORDER BY i.created_at DESC,i.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
     const withdrawals=accountSource?await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
       WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
-    const ledger=await db.query(`SELECT * FROM ledger WHERE user_id=$1 AND ($2='all' OR ($2='account' AND kind='settlement') OR ($2='key' AND kind IN ('task_settlement','task_adjustment'))) ORDER BY created_at DESC LIMIT 20`,[req.user.id,q.source]);
+    const ledger=await db.query(`SELECT * FROM ledger WHERE user_id=$1 AND ($2='all' OR ($2='account' AND kind IN ('settlement','settlement_adjustment')) OR ($2='key' AND kind IN ('task_settlement','task_adjustment'))) ORDER BY created_at DESC LIMIT 20`,[req.user.id,q.source]);
     return {balance:await balance(db,req.user.id),funds:await settlementFunds(db,req.user.id),pendingProfit:pending.amount,invoicesTotal:Number(ic.count),withdrawalsTotal:Number(wc.count),invoices,withdrawals:withdrawals.map(w=>({...w,destination:withdrawalDestination(box,w.destination)})),ledger,source:q.source,billing:billingSchedule()};
   });
   app.get('/api/ledger/export',async(req,reply)=>{

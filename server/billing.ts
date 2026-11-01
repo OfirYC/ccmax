@@ -133,6 +133,7 @@ export async function confirmInvoiceInTransaction(tx: DB, actor: Row, invoiceId:
     assert(invoice,'账单不存在',404);
     assert(invoice.payer_id===actor.id || (!invoice.payer_id && actor.role==='owner'),'只能确认直属下级账单；平台回款仅管理员确认',403);
     if (invoice.state==='confirmed') return invoice;
+    assert(invoice.state==='pending','只能确认待处理账单',409);
     const [repeatedSnapshot]=await tx.query(`SELECT u.id FROM invoice_items i JOIN earnings e ON e.id=i.earning_id
       JOIN usage_days u ON u.id=e.usage_id JOIN usage_days previous ON previous.binding_id=u.binding_id
         AND previous.day=(u.day-interval '1 day')::date AND previous.raw_usd=u.raw_usd
@@ -171,10 +172,12 @@ export async function balance(db: DB, userId: string) {
 // withdraws their combined confirmed upstream receivable through one wallet.
 export async function settlementFunds(db: DB, userId: string) {
   const [row]=await db.query(`SELECT
-    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE user_id=$1 AND state='confirmed') AS confirmed_gross,
+    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE user_id=$1 AND state='confirmed')
+      +(SELECT COALESCE(sum(gross_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS confirmed_gross,
     (SELECT COALESCE(sum(amount_usd),0) FROM withdrawals WHERE user_id=$1 AND state IN ('pending','paid')) AS withdrawn,
     (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='pending') AS downstream_due,
-    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='confirmed') AS downstream_paid`,[userId]);
+    (SELECT COALESCE(sum(gross_usd),0) FROM invoices WHERE payer_id=$1 AND state='confirmed')
+      +(SELECT COALESCE(sum(a.gross_usd),0) FROM settlement_adjustments a JOIN invoices i ON i.id=a.invoice_id WHERE i.payer_id=$1) AS downstream_paid`,[userId]);
   const confirmed=new Decimal(row.confirmed_gross),withdrawn=new Decimal(row.withdrawn),paid=new Decimal(row.downstream_paid);
   const grossFundingAvailable=Decimal.max(new Decimal(0),confirmed.minus(withdrawn).minus(paid));
   const downstreamDue=new Decimal(row.downstream_due);

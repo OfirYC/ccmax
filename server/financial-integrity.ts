@@ -115,7 +115,7 @@ export async function assertTaskSettlementAccounting(db: DB, userId: string) {
 export async function assertWalletAccounting(db: DB, userId: string) {
   const [invalid] = await db.query(`SELECT 1 FROM (
     SELECT l.id FROM ledger l LEFT JOIN invoices i ON i.id=l.reference_id LEFT JOIN withdrawals w ON w.id=l.reference_id
-      LEFT JOIN task_settlement_entries te ON te.id=l.reference_id
+      LEFT JOIN task_settlement_entries te ON te.id=l.reference_id LEFT JOIN settlement_adjustments sa ON sa.id=l.reference_id
     WHERE l.user_id=$1 AND (
       (l.kind='settlement' AND (i.id IS NULL OR i.state<>'confirmed' OR i.user_id<>l.user_id OR i.profit_usd<>l.amount_usd
         OR NOT EXISTS(SELECT 1 FROM invoice_items x WHERE x.invoice_id=i.id)
@@ -125,6 +125,7 @@ export async function assertWalletAccounting(db: DB, userId: string) {
           (SELECT ROW(sum(e.gross_usd),sum(e.downstream_usd),sum(e.profit_usd)) FROM invoice_items x JOIN earnings e ON e.id=x.earning_id WHERE x.invoice_id=i.id)))
       OR (l.kind='withdrawal_hold' AND (w.id IS NULL OR w.user_id<>l.user_id OR l.amount_usd<>-(w.amount_usd-w.team_amount_usd)))
       OR (l.kind='withdrawal_release' AND (w.id IS NULL OR w.user_id<>l.user_id OR w.state<>'rejected' OR l.amount_usd<>w.amount_usd-w.team_amount_usd))
+      OR (l.kind='settlement_adjustment' AND (sa.id IS NULL OR sa.user_id<>l.user_id OR sa.profit_usd<>l.amount_usd))
       OR (l.kind IN ('task_settlement','task_adjustment') AND (te.id IS NULL OR te.user_id<>l.user_id OR te.kind<>l.kind OR te.profit_usd<>l.amount_usd)))
     UNION ALL
     SELECT i.id FROM invoices i WHERE i.user_id=$1 AND i.state='confirmed'
@@ -143,8 +144,9 @@ export async function assertWalletAccounting(db: DB, userId: string) {
 
     UNION ALL
     SELECT t.id FROM team_fund_ledger t LEFT JOIN invoices i ON i.id=t.reference_id
-      LEFT JOIN withdrawals w ON w.id=t.reference_id WHERE t.user_id=$1 AND (
+      LEFT JOIN withdrawals w ON w.id=t.reference_id LEFT JOIN settlement_adjustments sa ON sa.id=t.reference_id WHERE t.user_id=$1 AND (
       (t.kind='funding' AND (i.id IS NULL OR i.user_id<>t.user_id OR i.state<>'confirmed' OR i.downstream_usd<>t.amount_usd OR t.amount_usd<=0))
+      OR (t.kind='funding_adjustment' AND (sa.id IS NULL OR sa.user_id<>t.user_id OR sa.downstream_usd<>t.amount_usd OR t.amount_usd>=0))
       OR (t.kind='withdrawal_hold' AND (w.id IS NULL OR w.user_id<>t.user_id OR w.team_amount_usd<=0 OR t.amount_usd<>-w.team_amount_usd))
       OR (t.kind='withdrawal_release' AND (w.id IS NULL OR w.user_id<>t.user_id OR w.state<>'rejected' OR t.amount_usd<>w.team_amount_usd)))
 
@@ -156,6 +158,13 @@ export async function assertWalletAccounting(db: DB, userId: string) {
     UNION ALL
     SELECT e.id FROM task_settlement_entries e WHERE e.user_id=$1
       AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind=e.kind AND l.reference_id=e.id AND l.user_id=e.user_id AND l.amount_usd=e.profit_usd)
+
+    UNION ALL
+    SELECT a.id FROM settlement_adjustments a WHERE a.user_id=$1 AND (
+      (a.profit_usd<>0 AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind='settlement_adjustment' AND l.reference_id=a.id
+        AND l.user_id=a.user_id AND l.amount_usd=a.profit_usd))
+      OR (a.downstream_usd<0 AND NOT EXISTS(SELECT 1 FROM team_fund_ledger t WHERE t.kind='funding_adjustment'
+        AND t.reference_id=a.id AND t.user_id=a.user_id AND t.amount_usd=a.downstream_usd)))
   ) problems LIMIT 1`, [userId]);
   if (invalid) walletConflict();
   const usages = await db.query(`SELECT DISTINCT e.usage_id FROM ledger l JOIN invoices i ON i.id=l.reference_id
