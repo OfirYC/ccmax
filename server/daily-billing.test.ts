@@ -235,7 +235,9 @@ describe('automatic daily billing',()=>{
     const job=(await queueBillingRange(db,box,owner,[connection.id],day,day))[0];
     await db.query("UPDATE jobs SET state='needs_attention',completed_at=now() WHERE id=$1",[job.id]);
     await db.query("UPDATE billing_days SET state=$2,next_attempt_at=now()+interval '1 hour' WHERE connection_id=$1",[connection.id,state]);
-    const now=new Date(Math.max(Date.now(),Date.parse(today()+'T02:00:00+08:00')));
+    // The recovery transaction resets the retry time using the database clock,
+    // which can be milliseconds later than the scheduler time captured here.
+    const now=new Date(Math.max(Date.now()+60000,Date.parse(today()+'T02:00:00+08:00')));
     expect(await scheduleDailyBilling(db,box,now)).toHaveLength(1);
     expect((await db.query('SELECT job_id FROM billing_days'))[0].job_id).not.toBe(job.id);
     expect(await scheduleDailyBilling(db,box,now)).toHaveLength(0);
