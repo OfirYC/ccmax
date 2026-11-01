@@ -192,7 +192,7 @@ describe('automatic daily billing',()=>{
     await worker.recover();
     expect((await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state).toBe('failed');
     expect((await db.query('SELECT state,next_attempt_at<=now() AS retry_due FROM billing_days'))[0]).toEqual({state:'failed',retry_due:true});
-    const now=new Date(Math.max(Date.now(),Date.parse(today()+'T02:00:00+08:00')));
+    const now=new Date(Math.max(Date.now()+60000,Date.parse(today()+'T02:00:00+08:00')));
     expect(await scheduleDailyBilling(db,box,now)).toHaveLength(1);
     expect(await scheduleDailyBilling(db,box,now)).toHaveLength(0);
     await worker.tick();
