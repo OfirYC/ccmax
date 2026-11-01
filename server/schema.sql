@@ -114,7 +114,7 @@ CREATE TABLE invoices (
   gross_usd numeric(24,8) NOT NULL,
   downstream_usd numeric(24,8) NOT NULL,
   profit_usd numeric(24,8) NOT NULL,
-  state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','confirmed')),
+  state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','confirmed','voided')),
   reference text,
   created_by text NOT NULL REFERENCES users(id),
   confirmed_by text REFERENCES users(id),
@@ -124,6 +124,18 @@ CREATE TABLE invoices (
 CREATE TABLE invoice_items (
   earning_id text PRIMARY KEY REFERENCES earnings(id),
   invoice_id text NOT NULL REFERENCES invoices(id)
+);
+CREATE TABLE settlement_adjustments (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id),
+  invoice_id text NOT NULL UNIQUE REFERENCES invoices(id),
+  gross_usd numeric(24,8) NOT NULL CHECK(gross_usd<0),
+  downstream_usd numeric(24,8) NOT NULL CHECK(downstream_usd<=0),
+  profit_usd numeric(24,8) NOT NULL,
+  reason text NOT NULL,
+  evidence jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK(profit_usd=gross_usd-downstream_usd)
 );
 CREATE TABLE withdrawals (
   id text PRIMARY KEY,
@@ -142,7 +154,7 @@ CREATE TABLE withdrawals (
 CREATE TABLE ledger (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id),
-  kind text NOT NULL CHECK(kind IN ('settlement','withdrawal_hold','withdrawal_release')),
+  kind text NOT NULL CHECK(kind IN ('settlement','settlement_adjustment','withdrawal_hold','withdrawal_release')),
   amount_usd numeric(24,8) NOT NULL,
   reference_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -152,7 +164,7 @@ CREATE INDEX ledger_user ON ledger(user_id);
 CREATE TABLE team_fund_ledger (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id),
-  kind text NOT NULL CHECK(kind IN ('funding','withdrawal_hold','withdrawal_release')),
+  kind text NOT NULL CHECK(kind IN ('funding','funding_adjustment','withdrawal_hold','withdrawal_release')),
   amount_usd numeric(24,8) NOT NULL,
   reference_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
