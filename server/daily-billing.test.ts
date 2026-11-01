@@ -123,6 +123,21 @@ describe('automatic daily billing',()=>{
     await expect(db.query("UPDATE upstream_statements SET raw_usd=0")).rejects.toThrow('append-only');
   });
 
+  it('blocks an unchanged nonzero snapshot carried into the next Beijing day',async()=>{
+    const previous=shiftBillingDay(day,-1);
+    await db.query('UPDATE connection_rates SET effective_date=$1',[previous]);
+    await db.query('UPDATE rates SET effective_date=$1',[previous]);
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:previous,rawUsd:'706.249458',final:true,source:'daily_snapshot'}));
+
+    const result=await recordDailyStatement(db,connection,owner,day,[{externalId:'real',rawUsd:'706.249458'}],{basis:'snapshot'});
+
+    expect(result).toMatchObject({state:'needs_attention',finalized:0,invoices:0,issueCount:1});
+    expect(await db.query('SELECT day,state,raw_usd FROM usage_days ORDER BY day')).toEqual([
+      {day:previous,state:'final',raw_usd:'706.24945800'},
+    ]);
+    expect((await db.query('SELECT state,error FROM billing_entries'))[0]).toMatchObject({state:'blocked'});
+  });
+
   it('does not manufacture zero daily statements for missing accounts or accept repeated IDs',async()=>{
     await expect(recordDailyStatement(db,connection,owner,day,[{externalId:'real',rawUsd:'10'},{externalId:'real',rawUsd:'10'}])).rejects.toThrow('重复');
     expect(await db.query('SELECT * FROM upstream_statements')).toHaveLength(0);

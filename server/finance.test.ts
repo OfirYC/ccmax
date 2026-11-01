@@ -85,6 +85,17 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect(await db.query('SELECT * FROM invoices')).toHaveLength(1);
   });
 
+  it('refuses to confirm an invoice containing a repeated nonzero daily snapshot', async () => {
+    const target=await binding(a,'gatelink'), previous=prior(2), current=prior();
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:target,day:previous,rawUsd:'706.249458',final:true,source:'daily_snapshot'}));
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:target,day:current,rawUsd:'706.249458',final:true,source:'daily_snapshot'}));
+    const invoice=await createInvoice(db,owner,a.id,current,current);
+
+    await expect(confirmInvoice(db,owner,invoice.id,'should remain blocked')).rejects.toThrow('前一日完全相同');
+    expect((await db.query('SELECT state FROM invoices WHERE id=$1',[invoice.id]))[0].state).toBe('pending');
+    expect(await db.query('SELECT * FROM ledger WHERE reference_id=$1',[invoice.id])).toHaveLength(0);
+  });
+
   it('reports confirmed gross funding and separates direct team payment obligations', async () => {
     const bindingId = await binding(a);
     await observe(bindingId, '100');

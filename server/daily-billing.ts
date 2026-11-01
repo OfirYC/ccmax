@@ -85,6 +85,12 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
         const [binding] = await tx.query(`SELECT b.id,a.owner_id,a.ownership_verified FROM bindings b
           JOIN accounts a ON a.id=b.account_id WHERE b.connection_id=$1 AND b.external_id=$2`, [connection.id, row.externalId]);
         assert(binding, '历史账单账号尚未同步，请同步平台账号', 409);
+        if(basis==='snapshot'&&new Decimal(row.rawUsd).gt(0)) {
+          const [repeated]=await tx.query(`SELECT 1 AS value FROM usage_days
+            WHERE binding_id=$1 AND day=($2::date-interval '1 day')::date AND raw_usd=$3::numeric
+            AND source IN ('live_snapshot','daily_snapshot') LIMIT 1`,[binding.id,day,row.rawUsd]);
+          assert(!repeated,'当日快照与前一日完全相同，疑似上游缓存；已阻止重复结算并等待真实日账单',409);
+        }
         const owned=!!binding.owner_id&&binding.ownership_verified;
         const usageId = await ingestUsage(tx, { bindingId: binding.id, day, rawUsd: row.rawUsd, final: autoFinalize&&owned,
           source:options.reviewed&&owned?'reviewed_statement':source,sourceAt:row.sourceAt??undefined,

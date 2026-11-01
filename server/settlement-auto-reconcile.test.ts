@@ -10,15 +10,10 @@ const TARGETS=[
   ['084662bf-95ff-47ce-a237-a55b33dad310','dev4@sartel.ai','gatelink','2026-10-29','130.55072400'],
   ['75d101df-832b-4f34-940b-112bd8c1739a','dev4@sartel.ai','maxchat','2026-10-29','60.16712520'],
   ['66d3eb3e-54b7-4719-a726-967f82f3c147','junior3@sartel.ai','maxchat','2026-10-29','5.51848000'],
-  ['7232050d-3e57-4620-96eb-de9e9fcbfcaf','dev2@sartel.ai','gatelink','2026-10-30','203.42130100'],
-  ['9a8266bc-3df5-4510-b34c-7ae0ee10b6ad','dev3@sartel.ai','gatelink','2026-10-30','43.52740600'],
-  ['80937669-cc7c-48ac-9692-9f2e7456a917','dev4@sartel.ai','gatelink','2026-10-30','0.90842500'],
-  ['567af9c1-aae5-4581-b315-2e0fcc01973e','junior1@sartel.ai','gatelink','2026-10-30','19.34791100'],
-  ['8642d5ef-237a-4c74-ae73-6e830f37e647','junior3@sartel.ai','gatelink','2026-10-30','0.84696500'],
   ['dcd5dfed-8cf2-4493-aacc-8534fa570509','rhinasofi@hotmail.com','gatelink','2026-10-31','115.54776200'],
 ] as const;
 
-it('credits the eleven exact stranded production rows once when the deployment migrates',async()=>{
+it('credits only the six independently supported stranded production rows once when the deployment migrates',async()=>{
   const db=await openTestDB();
   try {
     await migrate(db);
@@ -55,8 +50,8 @@ it('credits the eleven exact stranded production rows once when the deployment m
     await migrate(db);
 
     const [credit]=await db.query("SELECT COALESCE(sum(amount_usd),0) AS amount,count(*)::int AS count FROM ledger WHERE user_id=$1 AND kind='settlement'",[JADEN]);
-    expect(credit).toEqual({amount:'236.63139872',count:1});
-    expect((await db.query("SELECT count(*)::int AS count FROM usage_days WHERE id=ANY($1::text[]) AND state='final'",[TARGETS.map(target=>target[0])]))[0].count).toBe(11);
+    expect(credit).toEqual({amount:'158.89631640',count:1});
+    expect((await db.query("SELECT count(*)::int AS count FROM usage_days WHERE id=ANY($1::text[]) AND state='final'",[TARGETS.map(target=>target[0])]))[0].count).toBe(6);
     expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=26'))[0].count).toBe(1);
   } finally {await db.close();}
 });

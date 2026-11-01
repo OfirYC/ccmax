@@ -12,11 +12,6 @@ const TARGETS=[
   {id:'084662bf-95ff-47ce-a237-a55b33dad310',email:'dev4@sartel.ai',provider:'gatelink',day:'2026-10-29',raw:'130.55072400',profit:'37.85970996'},
   {id:'75d101df-832b-4f34-940b-112bd8c1739a',email:'dev4@sartel.ai',provider:'maxchat',day:'2026-10-29',raw:'60.16712520',profit:'12.03342504'},
   {id:'66d3eb3e-54b7-4719-a726-967f82f3c147',email:'junior3@sartel.ai',provider:'maxchat',day:'2026-10-29',raw:'5.51848000',profit:'1.10369600'},
-  {id:'7232050d-3e57-4620-96eb-de9e9fcbfcaf',email:'dev2@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'203.42130100',profit:'58.99217729'},
-  {id:'9a8266bc-3df5-4510-b34c-7ae0ee10b6ad',email:'dev3@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'43.52740600',profit:'12.62294774'},
-  {id:'80937669-cc7c-48ac-9692-9f2e7456a917',email:'dev4@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'0.90842500',profit:'0.26344325'},
-  {id:'567af9c1-aae5-4581-b315-2e0fcc01973e',email:'junior1@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'19.34791100',profit:'5.61089419'},
-  {id:'8642d5ef-237a-4c74-ae73-6e830f37e647',email:'junior3@sartel.ai',provider:'gatelink',day:'2026-10-30',raw:'0.84696500',profit:'0.24561985'},
   {id:'dcd5dfed-8cf2-4493-aacc-8534fa570509',email:'rhinasofi@hotmail.com',provider:'gatelink',day:'2026-10-31',raw:'115.54776200',profit:'33.50885098'},
 ] as const;
 
