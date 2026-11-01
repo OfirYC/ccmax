@@ -32,16 +32,22 @@ export async function createDailyInvoices(db: DB, owner: Row, day: string) {
 
 async function automaticDayReady(db:DB,day:string,connectionId:string,hasIssues:boolean) {
   if(hasIssues)return false;
-  const [result]=await db.query(`SELECT NOT EXISTS(
-      SELECT 1 FROM connections c WHERE c.id<>$2
+  // Platform E has no automatic USD statement. Its unrelated manual-review
+  // jobs must not hold up A–D; an actual stored USD day still participates.
+  const [result]=await db.query(`WITH eligible_connections AS (
+      SELECT c.* FROM connections c WHERE c.provider<>'aeromax'
+      OR EXISTS(SELECT 1 FROM usage_days u JOIN bindings b ON b.id=u.binding_id WHERE b.connection_id=c.id AND u.day=$1)
+    ) SELECT NOT EXISTS(
+      SELECT 1 FROM eligible_connections c WHERE c.id<>$2
       AND ((c.enabled AND (c.created_at AT TIME ZONE 'Asia/Shanghai')::date<=$1)
         OR EXISTS(SELECT 1 FROM usage_days u JOIN bindings b ON b.id=u.binding_id WHERE b.connection_id=c.id AND u.day=$1))
       AND NOT EXISTS(SELECT 1 FROM billing_days d WHERE d.connection_id=c.id AND d.day=$1 AND d.state='succeeded' AND d.issue_count=0)
     ) AND NOT EXISTS(
       SELECT 1 FROM usage_days u JOIN bindings b ON b.id=u.binding_id JOIN accounts a ON a.id=b.account_id
+      JOIN eligible_connections c ON c.id=b.connection_id
       WHERE u.day=$1 AND a.ownership_verified AND u.state<>'final'
     ) AND NOT EXISTS(
-      SELECT 1 FROM billing_entries e WHERE e.day=$1 AND e.state<>'recorded'
+      SELECT 1 FROM billing_entries e JOIN eligible_connections c ON c.id=e.connection_id WHERE e.day=$1 AND e.state<>'recorded'
     ) AS ready`,[day,connectionId]);
   return !!result.ready;
 }
@@ -113,8 +119,10 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
   }
   const absent = await db.query(`SELECT d.id,b.external_id FROM bindings b JOIN accounts a ON a.id=b.account_id
     LEFT JOIN usage_days d ON d.binding_id=b.id AND d.day=$2
-    WHERE b.connection_id=$1 AND NOT(b.external_id=ANY($3::text[])) AND a.ownership_verified
-    AND b.status='active' AND b.local_enabled AND (b.created_at AT TIME ZONE 'Asia/Shanghai')::date<=$2`,
+    WHERE b.connection_id=$1 AND NOT(b.external_id=ANY($3::text[]))
+    AND ((d.id IS NOT NULL AND (d.state='final' OR d.raw_usd>0))
+      OR (a.ownership_verified AND b.status='active' AND b.local_enabled
+        AND (b.created_at AT TIME ZONE 'Asia/Shanghai')::date<=$2))`,
   [connection.id, day, rows.map(row => row.externalId)]);
   for (const row of absent) {
     const message='上游完整日账单缺少已连接账号，已阻止部分结算并等待自动重试';

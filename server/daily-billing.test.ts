@@ -90,6 +90,28 @@ describe('automatic daily billing',()=>{
       .toEqual([{external_id:'missing',state:'blocked'}]);
   });
 
+  it('does not wait for Platform E without a USD billing source',async()=>{
+    const platformE=id();
+    await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,created_at) VALUES($1,'aeromax','Manual upstream','fixture',0.3,$2)",[platformE,day+'T00:00:00+08:00']);
+    await db.query("INSERT INTO billing_days(connection_id,day,state,issue_count) VALUES($1,$2,'needs_attention',1)",[platformE,day]);
+    await db.query("INSERT INTO billing_entries(connection_id,day,external_id,state,error) VALUES($1,$2,'manual','blocked','No USD statement')",[platformE,day]);
+
+    const result=await recordDailyStatement(db,connection,owner,day,[{externalId:'real',rawUsd:'100'}]);
+
+    expect(result).toMatchObject({state:'succeeded',invoices:3});
+  });
+
+  it('keeps existing nonzero usage blocked when an inactive account is absent from the statement',async()=>{
+    await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day,rawUsd:'100',final:false,source:'live_snapshot'}));
+    await db.query("UPDATE bindings SET status='disabled' WHERE id=$1",[binding.id]);
+
+    const result=await recordDailyStatement(db,connection,owner,day,[]);
+
+    expect(result).toMatchObject({state:'needs_attention',invoices:0,issueCount:1});
+    expect((await db.query('SELECT state FROM billing_entries'))[0].state).toBe('blocked');
+    expect((await db.query('SELECT raw_usd FROM usage_days'))[0].raw_usd).toBe('100.00000000');
+  });
+
   it('archives unassigned accounts and missing prices while settling unrelated accounts, then retries without duplicate invoices',async()=>{
     const unassigned=await account('unassigned',null,false);
     const input=[{externalId:'real',rawUsd:'100'},{externalId:'unassigned',rawUsd:'10'}];
@@ -438,7 +460,7 @@ describe('automatic daily billing',()=>{
       const [session]=await db.query('SELECT * FROM sessions');
       await saveAt('23:59:00','100');const snapshot=await snapshotDay(db,connection,day);
       const result=await recordDailyStatement(db,connection,owner,day,snapshot.rows,{basis:'snapshot',sourceError:'history HTTP 403'});
-      const progress=await app.inject({url:'/api/billing/days',headers});expect(progress.statusCode).toBe(200);expect(progress.json().rows[0].basis).toBe('snapshot');expect(progress.json().rows[0].connection_name).toMatch(/^平台 B/);expect(progress.body).not.toContain('Private upstream');expect(progress.body).not.toContain('403');expect(progress.body).not.toContain('source_error');
+      const progress=await app.inject({url:'/api/billing/days',headers});expect(progress.statusCode).toBe(200);expect(progress.json().rows[0].basis).toBe('snapshot');expect(progress.json().rows[0].connection_name).toMatch(/^平台 B/);expect(progress.body).not.toContain('Private upstream');expect(progress.body).not.toContain('history HTTP 403');expect(progress.body).not.toContain('source_error');
       expect((await app.inject({url:'/api/billing/statements/'+result.statementId,headers})).json().rows[0].sourceAt).toBeDefined();
       const [invoice]=await db.query('SELECT * FROM invoices WHERE user_id=$1',[owner.id]);
       const exported=await app.inject({url:'/api/invoices/'+invoice.id+'/export',headers});expect(exported.body).toContain('快照预估');
