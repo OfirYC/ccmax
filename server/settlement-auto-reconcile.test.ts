@@ -2,8 +2,12 @@ import { expect, it } from 'vitest';
 import { bootstrap, id } from './core.js';
 import { migrate } from './db.js';
 import { openTestDB } from './test-db.js';
-import { balance, createInvoiceInTransaction, ingestUsage, settlementFunds } from './billing.js';
+import { balance, confirmInvoice, createInvoiceInTransaction, ingestUsage, settlementFunds } from './billing.js';
 import { assertWalletAccounting } from './financial-integrity.js';
+import { applySettlementAutoReconciliation } from './settlement-auto-reconcile.js';
+import { createApp } from './app.js';
+import { auditFinance } from './finance-audit.js';
+import Decimal from 'decimal.js';
 
 const JADEN='1cf8308f-6e34-4aa8-acd7-b45a9c9cf6f5';
 const THANA='5f4dc270-335a-450f-a74f-8a33b1ad1f24';
@@ -16,7 +20,7 @@ const TARGETS=[
   ['dcd5dfed-8cf2-4493-aacc-8534fa570509','rhinasofi@hotmail.com','gatelink','2026-10-31','115.54776200'],
 ] as const;
 
-it('credits only the six independently supported stranded production rows once when the deployment migrates',async()=>{
+it.each([false,true])('reconciles snapshots once when migration 26 credit already exists: %s',async(alreadyReconciled)=>{
   const db=await openTestDB();
   try {
     await migrate(db);
@@ -114,6 +118,7 @@ it('credits only the six independently supported stranded production rows once w
     await db.transaction(tx=>ingestUsage(tx,{bindingId:ownBinding,day:'2026-10-31',rawUsd:'4107.441104',final:true,source:'upstream_daily'}));
     await settleUpstream('2026-10-31',false);
 
+    if(alreadyReconciled)await db.transaction(applySettlementAutoReconciliation);
     const beforeFunds=await settlementFunds(db,JADEN);
     expect(beforeFunds.downstreamPayableUsd).toBe('406.06890966');
     const before=await balance(db,JADEN);
@@ -121,11 +126,13 @@ it('credits only the six independently supported stranded production rows once w
     // Migration 26 is deliberately left applied: production has already
     // consumed it. A bad fingerprint must roll migration 27 back atomically.
     await db.query('DELETE FROM migrations WHERE version=27');
+    // A real version-26 database does not yet have the adjustment table.
+    await db.query('DROP TABLE settlement_adjustments CASCADE');
     const [oct31Thana]=await db.query("SELECT id FROM invoices WHERE user_id=$1 AND date_from='2026-10-31' AND state='pending'",[THANA]);
     await db.query('UPDATE invoices SET estimated=false WHERE id=$1',[oct31Thana.id]);
     await expect(migrate(db)).rejects.toThrow('fingerprint mismatch');
     expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=27'))[0].count).toBe(0);
-    expect((await db.query('SELECT count(*)::int AS count FROM settlement_adjustments'))[0].count).toBe(0);
+    expect((await db.query("SELECT to_regclass('settlement_adjustments')::text AS name"))[0].name).toBeNull();
     await db.query('UPDATE invoices SET estimated=true WHERE id=$1',[oct31Thana.id]);
     await migrate(db);
     await migrate(db);
@@ -138,7 +145,8 @@ it('credits only the six independently supported stranded production rows once w
     expect((await db.query('SELECT count(*)::int AS count FROM migrations WHERE version=27'))[0].count).toBe(1);
     const afterFunds=await settlementFunds(db,JADEN);
     expect(afterFunds.downstreamPayableUsd).toBe('16.71766578');
-    expect(afterFunds.confirmedGrossUsd).toBe(new (await import('decimal.js')).default(beforeFunds.confirmedGrossUsd).minus('257.15391258').toFixed(8));
+    const grossReduction=alreadyReconciled?'416.05022898':'257.15391258';
+    expect(afterFunds.confirmedGrossUsd).toBe(new Decimal(beforeFunds.confirmedGrossUsd).minus(grossReduction).toFixed(8));
     expect((await db.query("SELECT COALESCE(sum(profit_usd),0) AS amount FROM invoices WHERE user_id=$1 AND state='pending'",[JADEN]))[0].amount).toBe('1191.15792016');
     expect((await db.query(`SELECT count(*)::int AS count FROM earnings e LEFT JOIN invoice_items x ON x.earning_id=e.id
       WHERE e.usage_id=ANY($1::text[]) AND x.earning_id IS NULL`,[[
@@ -146,7 +154,28 @@ it('credits only the six independently supported stranded production rows once w
         'c74cf186-7e43-4759-a4a5-69095d28efdb','9ef08a4c-a9be-43bb-abb9-2cedff3ce12f',
         '2f7a01c3-03f5-41df-af73-7b1ce45d0239',
       ]]))[0].count).toBe(0);
-    expect((await balance(db,JADEN)).available).toBe(new (await import('decimal.js')).default(before.available).minus('257.15391258').toFixed(8));
+    expect((await balance(db,JADEN)).available).toBe(new Decimal(before.available).minus(grossReduction).toFixed(8));
     await expect(assertWalletAccounting(db,JADEN)).resolves.toBeUndefined();
+    const [voided]=await db.query("SELECT * FROM invoices WHERE user_id=$1 AND state='voided'",[JADEN]);
+    await expect(confirmInvoice(db,owner,voided.id,'cannot pay a voided bill')).rejects.toThrow('只能确认待处理账单');
+    await expect(db.query("UPDATE invoices SET state='pending' WHERE id=$1",[voided.id])).rejects.toThrow('immutable');
+
+    const report=await auditFinance(db),wallet=report.wallets.find(row=>row.id===JADEN)!;
+    expect(report.ok).toBe(true);
+    expect(wallet.confirmed_profit_usd).toBe(wallet.personal_available);
+    const {app}=await createApp(db,{encryptionKey:'ab'.repeat(32),appUrl:'http://localhost:3000'});
+    try {
+      const login=await app.inject({method:'POST',url:'/api/auth/login',headers:{'x-ccmax-request':'1'},payload:{email:owner.email,password:'migration-password'}});
+      const cookie=String(login.headers['set-cookie']).split(';')[0];
+      await db.query('UPDATE sessions SET user_id=$1',[JADEN]);
+      const dashboard=await app.inject({url:'/api/dashboard',headers:{cookie}});
+      expect(dashboard.statusCode).toBe(200);
+      expect(dashboard.json().daily.find((row:any)=>row.day==='2026-10-31').profit_usd).toBe('1224.66677114');
+      await db.query('UPDATE sessions SET user_id=$1',[THANA]);
+      const downstreamDashboard=await app.inject({url:'/api/dashboard',headers:{cookie}});
+      expect(downstreamDashboard.statusCode).toBe(200);
+      const downstreamDay=downstreamDashboard.json().daily.find((row:any)=>row.day==='2026-10-31');
+      expect(downstreamDay?.profit_usd??'0.00000000').toBe('0.00000000');
+    } finally {await app.close();}
   } finally {await db.close();}
 });

@@ -27,7 +27,7 @@ export async function auditFinance(db:DB) {
     COALESCE(l.available,0)+COALESCE(t.available,0) AS available,
     COALESCE(w.pending,0) AS pending,COALESCE(w.paid,0) AS paid_withdrawal_usd,
     COALESCE(w.paid_profit,0) AS paid_profit_withdrawal_usd,COALESCE(w.paid_team,0) AS paid_team_withdrawal_usd,
-    COALESCE(i.confirmed_profit,0) AS confirmed_profit_usd
+    COALESCE(i.confirmed_profit,0)+COALESCE(a.profit,0) AS confirmed_profit_usd
     FROM users u LEFT JOIN (SELECT user_id,sum(amount_usd) AS available FROM ledger GROUP BY user_id) l ON l.user_id=u.id
     LEFT JOIN (SELECT user_id,sum(amount_usd) AS available FROM team_fund_ledger GROUP BY user_id) t ON t.user_id=u.id
     LEFT JOIN (SELECT user_id,sum(amount_usd) FILTER(WHERE state='pending') AS pending,
@@ -35,6 +35,7 @@ export async function auditFinance(db:DB) {
       sum(amount_usd-team_amount_usd) FILTER(WHERE state='paid') AS paid_profit,
       sum(team_amount_usd) FILTER(WHERE state='paid') AS paid_team FROM withdrawals GROUP BY user_id) w ON w.user_id=u.id
     LEFT JOIN (SELECT user_id,sum(profit_usd) FILTER(WHERE state='confirmed') AS confirmed_profit FROM invoices GROUP BY user_id) i ON i.user_id=u.id
+    LEFT JOIN (SELECT user_id,sum(profit_usd) AS profit FROM settlement_adjustments GROUP BY user_id) a ON a.user_id=u.id
     ORDER BY u.created_at,u.id`);
   const platforms=await db.query(`WITH inventory AS (
     SELECT b.connection_id,count(*)::int AS accounts,

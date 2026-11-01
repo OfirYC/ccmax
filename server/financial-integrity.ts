@@ -160,7 +160,14 @@ export async function assertWalletAccounting(db: DB, userId: string) {
       AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind=e.kind AND l.reference_id=e.id AND l.user_id=e.user_id AND l.amount_usd=e.profit_usd)
 
     UNION ALL
-    SELECT a.id FROM settlement_adjustments a WHERE a.user_id=$1 AND (
+    SELECT a.id FROM settlement_adjustments a LEFT JOIN invoices ai ON ai.id=a.invoice_id WHERE a.user_id=$1 AND (
+      ai.id IS NULL OR ai.user_id<>a.user_id OR ai.state<>'confirmed'
+      OR (a.gross_usd,a.downstream_usd,a.profit_usd) IS DISTINCT FROM (
+        SELECT ROW(-COALESCE(sum(e.gross_usd),0),-COALESCE(sum(e.downstream_usd),0),-COALESCE(sum(e.profit_usd),0))
+        FROM invoice_items x JOIN earnings e ON e.id=x.earning_id WHERE x.invoice_id=a.invoice_id
+          AND e.usage_id IN (SELECT jsonb_array_elements_text(CASE
+            WHEN jsonb_typeof(a.evidence->'usageIds')='array' THEN a.evidence->'usageIds' ELSE '[]'::jsonb END)))
+      OR
       (a.profit_usd<>0 AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.kind='settlement_adjustment' AND l.reference_id=a.id
         AND l.user_id=a.user_id AND l.amount_usd=a.profit_usd))
       OR (a.downstream_usd<0 AND NOT EXISTS(SELECT 1 FROM team_fund_ledger t WHERE t.kind='funding_adjustment'

@@ -654,9 +654,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       COALESCE(sum(e.profit_usd),0)+(SELECT COALESCE(sum(profit_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS profit_usd,
       COALESCE(sum(CASE WHEN u.state='final' THEN e.profit_usd ELSE 0 END),0)
         +(SELECT COALESCE(sum(profit_usd),0) FROM settlement_adjustments WHERE user_id=$1) AS final_profit
-      FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1`,[req.user.id]);
+      FROM earnings e JOIN usage_days u ON u.id=e.usage_id
+      LEFT JOIN invoice_items x ON x.earning_id=e.id LEFT JOIN invoices i ON i.id=x.invoice_id
+      WHERE e.user_id=$1 AND i.state IS DISTINCT FROM 'voided'`,[req.user.id]);
     const daily=await db.query(`SELECT day,sum(raw_usd) AS raw_usd,sum(gross_usd) AS gross_usd,sum(profit_usd) AS profit_usd FROM (
-      SELECT u.day,u.raw_usd,e.gross_usd,e.profit_usd FROM earnings e JOIN usage_days u ON u.id=e.usage_id WHERE e.user_id=$1
+      SELECT u.day,u.raw_usd,e.gross_usd,e.profit_usd FROM earnings e JOIN usage_days u ON u.id=e.usage_id
+        LEFT JOIN invoice_items x ON x.earning_id=e.id LEFT JOIN invoices i ON i.id=x.invoice_id
+        WHERE e.user_id=$1 AND i.state IS DISTINCT FROM 'voided'
       UNION ALL SELECT i.date_to AS day,0 AS raw_usd,a.gross_usd,a.profit_usd FROM settlement_adjustments a
         JOIN invoices i ON i.id=a.invoice_id WHERE a.user_id=$1
     ) corrected GROUP BY day ORDER BY day DESC LIMIT 14`,[req.user.id]);

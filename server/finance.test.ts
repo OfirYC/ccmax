@@ -85,6 +85,17 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     expect(await db.query('SELECT * FROM invoices')).toHaveLength(1);
   });
 
+  it('rejects an adjustment that invents profit instead of reversing the linked invoice items',async()=>{
+    const target=await binding(a);await observe(target);
+    const root=await createInvoice(db,owner,owner.id,prior(),prior());
+    await confirmInvoice(db,owner,root.id,'verified upstream receipt');
+    const invoice=await createInvoice(db,owner,a.id,prior(),prior());
+    await confirmInvoice(db,owner,invoice.id,'verified downstream payment');
+    const [{id:usageId}]=await db.query('SELECT id FROM usage_days WHERE binding_id=$1',[target]);
+    await expect(db.query(`INSERT INTO settlement_adjustments(id,user_id,invoice_id,gross_usd,downstream_usd,profit_usd,reason,evidence)
+      VALUES($1,$2,$3,-1,-2,1,'invalid correction',$4)`,[id(),a.id,invoice.id,JSON.stringify({usageIds:[usageId]})])).rejects.toThrow('adjustment source mismatch');
+  });
+
   it('refuses to confirm an invoice containing a repeated nonzero daily snapshot', async () => {
     const target=await binding(a,'gatelink'), previous=prior(2), current=prior();
     await db.transaction(tx=>ingestUsage(tx,{bindingId:target,day:previous,rawUsd:'706.249458',final:true,source:'daily_snapshot'}));

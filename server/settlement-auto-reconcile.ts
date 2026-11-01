@@ -34,6 +34,26 @@ async function adjustmentSchema(tx:DB) {
   await tx.query('DROP TRIGGER IF EXISTS settlement_adjustments_append_only ON settlement_adjustments');
   await tx.query(`CREATE TRIGGER settlement_adjustments_append_only BEFORE UPDATE OR DELETE ON settlement_adjustments
     FOR EACH ROW EXECUTE FUNCTION ccmax_reject_change()`);
+  await tx.query(`CREATE OR REPLACE FUNCTION ccmax_guard_settlement_adjustment_source() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE bill invoices%ROWTYPE; reversed record;
+    BEGIN
+      SELECT * INTO bill FROM invoices WHERE id=NEW.invoice_id;
+      IF NOT FOUND OR bill.state<>'confirmed' OR bill.user_id<>NEW.user_id
+        OR jsonb_typeof(NEW.evidence->'usageIds') IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'CCMAX: settlement adjustment source mismatch' USING ERRCODE='23514';
+      END IF;
+      SELECT -COALESCE(sum(e.gross_usd),0) AS gross,-COALESCE(sum(e.downstream_usd),0) AS downstream,
+        -COALESCE(sum(e.profit_usd),0) AS profit INTO reversed
+        FROM invoice_items x JOIN earnings e ON e.id=x.earning_id WHERE x.invoice_id=bill.id
+        AND e.usage_id IN (SELECT jsonb_array_elements_text(NEW.evidence->'usageIds'));
+      IF (NEW.gross_usd,NEW.downstream_usd,NEW.profit_usd)
+        IS DISTINCT FROM (reversed.gross,reversed.downstream,reversed.profit) THEN
+        RAISE EXCEPTION 'CCMAX: settlement adjustment source mismatch' USING ERRCODE='23514';
+      END IF; RETURN NEW;
+    END $$`);
+  await tx.query('DROP TRIGGER IF EXISTS settlement_adjustments_source ON settlement_adjustments');
+  await tx.query(`CREATE TRIGGER settlement_adjustments_source BEFORE INSERT ON settlement_adjustments
+    FOR EACH ROW EXECUTE FUNCTION ccmax_guard_settlement_adjustment_source()`);
   await tx.query('ALTER TABLE ledger DROP CONSTRAINT IF EXISTS ledger_kind_check');
   await tx.query("ALTER TABLE ledger ADD CONSTRAINT ledger_kind_check CHECK(kind IN ('settlement','settlement_adjustment','task_settlement','task_adjustment','withdrawal_hold','withdrawal_release'))");
   await tx.query('ALTER TABLE ledger DROP CONSTRAINT IF EXISTS ledger_direction');
