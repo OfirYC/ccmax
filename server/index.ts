@@ -8,6 +8,7 @@ import { createApp } from './app.js';
 import { createWorker, enqueue } from './worker.js';
 import { scheduleDailyBilling, scheduleBillingSnapshots } from './billing-scheduler.js';
 import { syncPublishedKeyTasks } from './key-market.js';
+import { autoRepairInvoices } from './invoice-repair.js';
 
 const prod=process.env.NODE_ENV==='production';
 const appUrl=process.env.APP_URL||(process.env.RAILWAY_PUBLIC_DOMAIN?`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`:undefined);
@@ -64,7 +65,12 @@ let lastBillingMinute=-1;
 async function scheduleBilling() {
   const minute=Math.floor(Date.now()/60000);
   if(billingScheduling||lastBillingMinute===minute)return;billingScheduling=true;
-  try {await worker.recover();await scheduleBillingSnapshots(db,box);await scheduleDailyBilling(db,box);lastBillingMinute=minute;} finally {billingScheduling=false;}
+  try {
+    await worker.recover();await scheduleBillingSnapshots(db,box);await scheduleDailyBilling(db,box);
+    const repairs=await autoRepairInvoices(db);
+    if(repairs.repaired||repairs.issues.length)app.log.info({repairs},'Automatic duplicate invoice repair');
+    lastBillingMinute=minute;
+  } finally {billingScheduling=false;}
 }
 const billingTimer=setInterval(()=>{scheduleBilling().catch(e=>app.log.error(e));},5000);
 await scheduleBilling();

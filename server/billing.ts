@@ -3,6 +3,7 @@ import type { DB, Row } from './db.js';
 import { AppError, ancestry, assert, audit, dayString, id, MAX_USD, sum, today, usd, type SecretBox } from './core.js';
 import { assertFundingAccounting, assertInvoiceAccounting, assertUsageAccounting, assertWalletAccounting } from './financial-integrity.js';
 import { invoiceItems, invoicePreviewToken } from './invoice-preview.js';
+import { repeatedInvoiceSnapshots } from './invoice-snapshot-conflicts.js';
 
 export type UsageInput = { bindingId: string; day: string; rawUsd: string; final: boolean; source: string; evidence?: string; sourceAt?: string };
 
@@ -134,12 +135,8 @@ export async function confirmInvoiceInTransaction(tx: DB, actor: Row, invoiceId:
     assert(invoice.payer_id===actor.id || (!invoice.payer_id && actor.role==='owner'),'只能确认直属下级账单；平台回款仅管理员确认',403);
     if (invoice.state==='confirmed') return invoice;
     assert(invoice.state==='pending','只能确认待处理账单',409);
-    const [repeatedSnapshot]=await tx.query(`SELECT u.id FROM invoice_items i JOIN earnings e ON e.id=i.earning_id
-      JOIN usage_days u ON u.id=e.usage_id JOIN usage_days previous ON previous.binding_id=u.binding_id
-        AND previous.day=(u.day-interval '1 day')::date AND previous.raw_usd=u.raw_usd
-      WHERE i.invoice_id=$1 AND u.source='daily_snapshot' AND u.raw_usd>0
-        AND previous.source IN ('live_snapshot','daily_snapshot') LIMIT 1`,[invoiceId]);
-    assert(!repeatedSnapshot,'账单包含与前一日完全相同的非零快照，疑似上游缓存；请先核实真实日账单',409);
+    if ((await repeatedInvoiceSnapshots(tx,invoiceId)).length) throw new AppError(409,
+      '账单包含与前一日完全相同的非零快照，疑似上游缓存；请先核实真实日账单', 'REPEATED_SNAPSHOT_CONFLICT');
     await assertInvoiceAccounting(tx,invoice);
     if (invoice.payer_id) {
       const usages=await tx.query('SELECT e.usage_id FROM invoice_items x JOIN earnings e ON e.id=x.earning_id WHERE x.invoice_id=$1',[invoiceId]);

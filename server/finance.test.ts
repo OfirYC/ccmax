@@ -8,6 +8,8 @@ import { auditFinance } from './finance-audit.js';
 import { previewInvoice } from './invoice-preview.js';
 import { createApp } from './app.js';
 import { openTestDB, seedSettlement } from './test-db.js';
+import { autoRepairInvoices, invoiceRepairPolicy, previewInvoiceRepair, repairInvoice, setInvoiceRepairPolicy } from './invoice-repair.js';
+import { createDailyInvoices } from './daily-billing.js';
 
 const scale = 100000000n;
 const atoms = (value: string) => { const [integer, fraction = ''] = value.split('.'); return BigInt(integer) * scale + BigInt(fraction.padEnd(8, '0')); };
@@ -105,6 +107,188 @@ describe('financial source reconciliation and complete agent cash flow', () => {
     await expect(confirmInvoice(db,owner,invoice.id,'should remain blocked')).rejects.toThrow('前一日完全相同');
     expect((await db.query('SELECT state FROM invoices WHERE id=$1',[invoice.id]))[0].state).toBe('pending');
     expect(await db.query('SELECT * FROM ledger WHERE reference_id=$1',[invoice.id])).toHaveLength(0);
+  });
+
+  async function repeatedDraft(mixed = false) {
+    const target = await binding(a, 'gatelink');
+    for (const day of [prior(2), prior()]) await db.transaction(tx => ingestUsage(tx, {
+      bindingId: target, day, rawUsd: '100', final: true, source: 'daily_snapshot',
+    }));
+    if (mixed) await observe(await binding(a), '40');
+    const root = await createInvoice(db, owner, owner.id, prior(), prior());
+    const child = await createInvoice(db, a, a.id, prior(), prior());
+    return { target, root, child };
+  }
+
+  it('removes only repeated draft items, keeps legitimate money at every layer, and never rebills discarded items', async () => {
+    const { root, child } = await repeatedDraft(true);
+    const beforeUsage = await db.query('SELECT * FROM usage_days ORDER BY id');
+    const beforeEarnings = await db.query('SELECT * FROM earnings ORDER BY id');
+    const rootPreview = await previewInvoiceRepair(db, owner, root.id);
+    expect(rootPreview).toMatchObject({ original: { count: 2, gross_usd: '88.00000000' },
+      removed: { count: 1, gross_usd: '60.00000000' }, remaining: { count: 1, gross_usd: '28.00000000', downstream_usd: '12.00000000', profit_usd: '16.00000000' } });
+    expect(await db.query('SELECT * FROM invoice_repairs')).toHaveLength(0);
+    const repairedRoot = await repairInvoice(db, owner, root.id, rootPreview.previewToken, '核对后移除缓存快照');
+    expect(repairedRoot.replacement).toMatchObject({ state: 'pending', estimated: false });
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    await confirmInvoice(db, owner, repairedRoot.replacement!.id, '真实日账单回款');
+    const childPreview = await previewInvoiceRepair(db, owner, child.id);
+    const repairedChild = await repairInvoice(db, owner, child.id, childPreview.previewToken, '核对后移除缓存快照');
+    expect((await settlementFunds(db, owner.id)).downstreamPayableUsd).toBe('12.00000000');
+    await confirmInvoice(db, owner, repairedChild.replacement!.id, '正常用量结算');
+    expect((await balance(db, owner.id)).available).toBe('28.00000000');
+    expect((await balance(db, a.id)).available).toBe('12.00000000');
+    expect(await db.query('SELECT * FROM usage_days ORDER BY id')).toEqual(beforeUsage);
+    expect(await db.query('SELECT * FROM earnings ORDER BY id')).toEqual(beforeEarnings);
+    expect((await createDailyInvoices(db, owner, prior())).created).toBe(0);
+    await expect(createInvoice(db, owner, owner.id, prior(), prior())).rejects.toThrow('没有可结算');
+    await expect(confirmInvoice(db, owner, root.id, '不能重复确认')).rejects.toThrow('待处理');
+    const exportResponse = await app.inject({ url: `/api/invoices/${repairedRoot.replacement!.id}/export`, headers: { cookie: await financeLogin(owner) } });
+    expect(exportResponse.statusCode).toBe(200);
+    expect(exportResponse.body).not.toContain(rootPreview.items[0].email);
+    expect(exportResponse.body).toContain('40.00000000');
+    expect(await db.query("SELECT * FROM audits WHERE action='invoice.repair_duplicates'")).toHaveLength(2);
+    expect((await audit()).ok).toBe(true);
+  });
+
+  async function financeLogin(user: Row) {
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-ccmax-request': '1' }, payload: { email: user.email, password } });
+    expect(login.statusCode).toBe(200);
+    return String(login.headers['set-cookie']).split(';')[0];
+  }
+
+  it('voids an entirely repeated draft exactly once across concurrent retries and preserves its immutable source links', async () => {
+    const { root } = await repeatedDraft();
+    const preview = await previewInvoiceRepair(db, owner, root.id);
+    const results = await Promise.all([1, 2].map(() => repairInvoice(db, owner, root.id, preview.previewToken, '移除重复记录')));
+    expect(results.map(result => result.alreadyRepaired).sort()).toEqual([false, true]);
+    expect(results.every(result => result.replacement === null)).toBe(true);
+    expect(await db.query('SELECT * FROM invoice_repairs')).toHaveLength(1);
+    expect((await db.query('SELECT state FROM invoices WHERE id=$1', [root.id]))[0].state).toBe('voided');
+    const links = await db.query('SELECT * FROM invoice_items WHERE invoice_id=$1', [root.id]);
+    expect(links).toHaveLength(1);
+    await expect(db.query('DELETE FROM invoice_items WHERE invoice_id=$1', [root.id])).rejects.toThrow('append-only');
+    await expect(db.query("UPDATE invoice_repairs SET reason='tamper' WHERE invoice_id=$1", [root.id])).rejects.toThrow('append-only');
+    await expect(db.query("UPDATE invoices SET state='pending' WHERE id=$1", [root.id])).rejects.toThrow('immutable');
+    await expect(repairInvoice(db, owner, root.id, '0'.repeat(64), 'another preview')).rejects.toThrow('已修复');
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    expect((await audit()).ok).toBe(true);
+  });
+
+  it('requires an administrator web session, explicit acknowledgement and the current exact preview', async () => {
+    const { child } = await repeatedDraft();
+    const ownerCookie = await financeLogin(owner), agentCookie = await financeLogin(a);
+    const path = `/api/invoices/${child.id}`;
+    const preview = (await app.inject({ url: `${path}/repair-preview`, headers: { cookie: ownerCookie } })).json();
+    expect(preview.removed.gross_usd).toBe('30.00000000');
+    const payload = { previewToken: preview.previewToken, reason: '核对后移除', acknowledgeDiscard: true };
+    expect((await app.inject({ url: `${path}/repair-preview`, headers: { cookie: agentCookie } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: `${path}/repair-duplicates`, headers: { cookie: agentCookie, 'x-ccmax-request': '1' }, payload })).statusCode).toBe(403);
+    const response = await app.inject({ method: 'POST', url: `${path}/confirm`, headers: { cookie: ownerCookie, 'x-ccmax-request': '1' }, payload: { reference: '检查冲突类型' } });
+    expect(response.json().code).toBe('REPEATED_SNAPSHOT_CONFLICT');
+    for (const body of [{ ...payload, acknowledgeDiscard: false }, { ...payload, previewToken: '0'.repeat(64) }]) {
+      const denied = await app.inject({ method: 'POST', url: `${path}/repair-duplicates`, headers: { cookie: ownerCookie, 'x-ccmax-request': '1' }, payload: body });
+      expect([400, 409]).toContain(denied.statusCode);
+    }
+    const issued = await app.inject({ method: 'POST', url: '/api/settings/api-keys', headers: { cookie: ownerCookie, 'x-ccmax-request': '1' },
+      payload: { name: 'repair cannot use key', scopes: ['read', 'finance:write'], expiresInDays: 30, currentPassword: password } });
+    expect(issued.statusCode, issued.body).toBe(200);
+    for (const method of ['GET', 'POST'] as const) {
+      const denied = await app.inject({ method, url: `${path}/${method === 'GET' ? 'repair-preview' : 'repair-duplicates'}`,
+        headers: { authorization: `Bearer ${issued.json().token}` }, ...(method === 'POST' ? { payload } : {}) });
+      expect(denied.json().code).toBe('SESSION_REQUIRED');
+    }
+    expect(await db.query('SELECT * FROM invoice_repairs')).toHaveLength(0);
+    expect((await db.query('SELECT state FROM invoices WHERE id=$1', [child.id]))[0].state).toBe('pending');
+    const repaired = await app.inject({ method: 'POST', url: `${path}/repair-duplicates`, headers: { cookie: ownerCookie, 'x-ccmax-request': '1' }, payload });
+    expect(repaired.statusCode, repaired.body).toBe(200);
+    expect(repaired.json()).toMatchObject({ replacement: null, alreadyRepaired: false });
+    const finance = (await app.inject({ url: '/api/finance', headers: { cookie: ownerCookie } })).json();
+    expect(finance.invoices.find((invoice: Row) => invoice.id === child.id)).toMatchObject({ state: 'voided', repair_reason: '核对后移除' });
+  });
+
+  it('rechecks mutable prior-day evidence before accepting a preview', async () => {
+    const target = await binding(a);
+    await db.transaction(tx => ingestUsage(tx, { bindingId: target, day: prior(2), rawUsd: '100', final: false, source: 'live_snapshot' }));
+    await db.transaction(tx => ingestUsage(tx, { bindingId: target, day: prior(), rawUsd: '100', final: true, source: 'daily_snapshot' }));
+    const invoice = await createInvoice(db, owner, owner.id, prior(), prior());
+    const preview = await previewInvoiceRepair(db, owner, invoice.id);
+    await db.transaction(tx => ingestUsage(tx, { bindingId: target, day: prior(2), rawUsd: '99', final: false, source: 'live_snapshot' }));
+    await expect(repairInvoice(db, owner, invoice.id, preview.previewToken, '过期的预览')).rejects.toThrow('没有可移除');
+    expect(await db.query('SELECT * FROM invoice_repairs')).toHaveLength(0);
+    expect((await db.query('SELECT state FROM invoices WHERE id=$1', [invoice.id]))[0].state).toBe('pending');
+  });
+
+  it('rejects repair records containing valid items and rolls back incomplete repairs at commit', async () => {
+    const { root } = await repeatedDraft(true);
+    const preview = await previewInvoiceRepair(db, owner, root.id);
+    const [valid] = await db.query(`SELECT e.usage_id FROM invoice_items x JOIN earnings e ON e.id=x.earning_id
+      WHERE x.invoice_id=$1 AND e.usage_id<>$2`, [root.id, preview.items[0].usage_id]);
+    const insert = (tx: DB, usageIds: string[]) => tx.query(`INSERT INTO invoice_repairs(id,invoice_id,discarded_usage_ids,created_by,reason,preview_token)
+      VALUES($1,$2,$3,$4,'attempt invalid repair',$5)`, [id(), root.id, usageIds, owner.id, preview.previewToken]);
+    await expect(insert(db, [valid.usage_id])).rejects.toThrow('source mismatch');
+    const { root: allRepeated } = await repeatedDraft();
+    const only = await previewInvoiceRepair(db, owner, allRepeated.id);
+    await expect(db.transaction(tx => tx.query(`INSERT INTO invoice_repairs(id,invoice_id,discarded_usage_ids,created_by,reason,preview_token)
+      VALUES($1,$2,$3,$4,'incomplete repair',$5)`, [id(), allRepeated.id, only.items.map(item => item.usage_id), owner.id, only.previewToken]))).rejects.toThrow('incomplete invoice repair');
+    expect(await db.query('SELECT * FROM invoice_repairs')).toHaveLength(0);
+    await expect(db.query('UPDATE invoice_items SET invoice_id=$2 WHERE invoice_id=$1', [root.id, allRepeated.id])).rejects.toThrow('append-only');
+  });
+
+  it('keeps equal official daily amounts and zero snapshots, and refuses to repair confirmed invoices', async () => {
+    const target = await binding(a);
+    for (const day of [prior(2), prior()]) await observe(target, '40', day);
+    const zero = await binding(a, 'gatelink');
+    for (const day of [prior(2), prior()]) await db.transaction(tx => ingestUsage(tx, { bindingId: zero, day, rawUsd: '0', final: true, source: 'daily_snapshot' }));
+    const invoice = await createInvoice(db, owner, owner.id, prior(), prior());
+    await expect(previewInvoiceRepair(db, owner, invoice.id)).rejects.toThrow('没有可移除');
+    await confirmInvoice(db, owner, invoice.id, '真实账单金额相同');
+    await expect(repairInvoice(db, owner, invoice.id, '0'.repeat(64), '不得修改已确认账单')).rejects.toThrow('待处理');
+    expect((await balance(db, owner.id)).available).toBe('28.00000000');
+    expect((await audit()).ok).toBe(true);
+  });
+
+  it('automatically repairs existing and future pending invoices at every layer only while the policy is enabled', async () => {
+    const {root,child}=await repeatedDraft(true);
+    expect((await invoiceRepairPolicy(db)).enabled).toBe(false);
+    expect((await autoRepairInvoices(db)).repaired).toBe(0);
+    await setInvoiceRepairPolicy(db,owner,true);
+    const results=await Promise.all([autoRepairInvoices(db),autoRepairInvoices(db)]);
+    expect(results.reduce((count,result)=>count+result.repaired,0)).toBe(2);
+    expect(results.flatMap(result=>result.issues)).toEqual([]);
+    for(const invoice of [root,child])expect((await db.query('SELECT state FROM invoices WHERE id=$1',[invoice.id]))[0].state).toBe('voided');
+    const replacements=await db.query('SELECT i.* FROM invoices i JOIN invoice_repairs r ON r.replacement_id=i.id ORDER BY i.gross_usd DESC');
+    expect(replacements.map(row=>[row.state,row.gross_usd])).toEqual([['pending','28.00000000'],['pending','12.00000000']]);
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    expect((await autoRepairInvoices(db)).repaired).toBe(0);
+    const events=await db.query("SELECT details FROM audits WHERE action='invoice.repair_duplicates'");
+    expect(events.every(row=>row.details.automatic===true)).toBe(true);
+    await setInvoiceRepairPolicy(db,owner,false);
+    const future=await repeatedDraft();
+    expect((await autoRepairInvoices(db)).repaired).toBe(0);
+    expect((await db.query('SELECT state FROM invoices WHERE id=$1',[future.root.id]))[0].state).toBe('pending');
+    await setInvoiceRepairPolicy(db,owner,true);
+    expect((await autoRepairInvoices(db)).repaired).toBe(2);
+    await confirmInvoice(db,owner,replacements[0].id,'修复后正常回款');
+    await confirmInvoice(db,owner,replacements[1].id,'修复后正常结算');
+    expect((await audit()).ok).toBe(true);
+  });
+
+  it('requires administrator acknowledgement to enable automatic removal and applies it immediately without settlement', async () => {
+    await repeatedDraft();
+    const ownerCookie=await financeLogin(owner),agentCookie=await financeLogin(a),url='/api/invoices/repair-policy';
+    expect((await app.inject({url,headers:{cookie:ownerCookie}})).json().enabled).toBe(false);
+    expect((await app.inject({method:'POST',url,headers:{cookie:ownerCookie,'x-ccmax-request':'1'},payload:{enabled:true}})).statusCode).toBe(400);
+    expect((await app.inject({method:'POST',url,headers:{cookie:agentCookie,'x-ccmax-request':'1'},payload:{enabled:true,acknowledgeDiscard:true}})).statusCode).toBe(403);
+    const issued=await app.inject({method:'POST',url:'/api/settings/api-keys',headers:{cookie:ownerCookie,'x-ccmax-request':'1'},payload:{name:'policy key',scopes:['read','finance:write'],expiresInDays:30,currentPassword:password}});
+    for(const method of ['GET','POST'] as const)expect((await app.inject({method,url,headers:{authorization:`Bearer ${issued.json().token}`},...(method==='POST'?{payload:{enabled:true,acknowledgeDiscard:true}}:{})})).json().code).toBe('SESSION_REQUIRED');
+    const enabled=await app.inject({method:'POST',url,headers:{cookie:ownerCookie,'x-ccmax-request':'1'},payload:{enabled:true,acknowledgeDiscard:true}});
+    expect(enabled.statusCode,enabled.body).toBe(200);
+    expect(enabled.json()).toMatchObject({policy:{enabled:true,updated_by:owner.id},result:{repaired:2,issues:[]}});
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
+    expect((await invoiceRepairPolicy(db)).enabled).toBe(true);
+    await setInvoiceRepairPolicy(db,owner,false);
+    expect((await invoiceRepairPolicy(db)).enabled).toBe(false);
   });
 
   it('reports confirmed gross funding and separates direct team payment obligations', async () => {

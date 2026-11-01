@@ -11,6 +11,7 @@ import { PROVIDERS, PROVIDER_KEYS, platformCatalog, ProviderClient, type Provide
 import { accountProxy, parseProxy, proxyFingerprint } from './proxies.js';
 import { applyBatchPricing, lockPricing, previewBatchPricing, pricingReport } from './pricing.js';
 import { apiKeyService } from './api-keys.js';
+import { autoRepairInvoices, invoiceRepairPolicy, previewInvoiceRepair, repairInvoice, setInvoiceRepairPolicy } from './invoice-repair.js';
 import { assertWalletAccounting } from './financial-integrity.js';
 import { auditFinance } from './finance-audit.js';
 import { previewInvoice } from './invoice-preview.js';
@@ -682,7 +683,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const [ic]=accountSource?await db.query(`SELECT count(*) AS count FROM invoices i WHERE ${filter('i')}`,params):[{count:0}];
     const [wc]=accountSource?await db.query(`SELECT count(*) AS count FROM withdrawals w WHERE ${filter('w')}`,params):[{count:0}];
     const [pending]=accountSource?await db.query(`SELECT COALESCE(sum(profit_usd),0) AS amount FROM invoices WHERE user_id=$1 AND state='pending'`,[req.user.id]):[{amount:0}];
-    const invoices=accountSource?await db.query(`SELECT i.*,u.name AS user_name,p.name AS payer_name FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users p ON p.id=i.payer_id
+    const invoices=accountSource?await db.query(`SELECT i.*,u.name AS user_name,p.name AS payer_name,
+      r.id AS repair_id,r.reason AS repair_reason,corrected.number AS replacement_number
+      FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users p ON p.id=i.payer_id
+      LEFT JOIN invoice_repairs r ON r.invoice_id=i.id LEFT JOIN invoices corrected ON corrected.id=r.replacement_id
       WHERE ${filter('i')} ORDER BY i.created_at DESC,i.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
     const withdrawals=accountSource?await db.query(`SELECT w.*,u.name AS user_name FROM withdrawals w JOIN users u ON u.id=w.user_id
       WHERE ${filter('w')} ORDER BY w.created_at DESC,w.id LIMIT 12 OFFSET $3`,[...params,offset]):[];
@@ -720,6 +724,23 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.post('/api/invoices/:id/confirm',async req=>{
     const d=z.object({reference:z.string().trim().min(3).max(500)}).parse(req.body);return confirmInvoice(db,req.user,identifier.parse((req.params as Row).id),d.reference);
+  });
+  app.get('/api/invoices/:id/repair-preview',async req=>
+    previewInvoiceRepair(db,req.user,identifier.parse((req.params as Row).id)));
+  app.get('/api/invoices/repair-policy',async req=>{
+    await requireOwner(req.user);return invoiceRepairPolicy(db);
+  });
+  app.post('/api/invoices/repair-policy',{config:{rateLimit:{max:6,timeWindow:'1 minute'}}},async req=>{
+    await requireOwner(req.user);
+    const d=z.object({enabled:z.boolean(),acknowledgeDiscard:z.boolean().default(false)}).strict()
+      .refine(value=>!value.enabled||value.acknowledgeDiscard,'启用自动修复前请确认移除规则').parse(req.body);
+    const policy=await setInvoiceRepairPolicy(db,req.user,d.enabled);
+    return {policy,result:d.enabled?await autoRepairInvoices(db):{repaired:0,issues:[]}};
+  });
+  app.post('/api/invoices/:id/repair-duplicates',async req=>{
+    const d=z.object({previewToken:z.string().regex(/^[a-f0-9]{64}$/),reason:z.string().trim().min(3).max(500),
+      acknowledgeDiscard:z.literal(true)}).strict().parse(req.body);
+    return repairInvoice(db,req.user,identifier.parse((req.params as Row).id),d.previewToken,d.reason);
   });
   app.get('/api/invoices/:id/export',async(req,reply)=>{
     const invoiceId=identifier.parse((req.params as Row).id),[inv]=await db.query('SELECT * FROM invoices WHERE id=$1',[invoiceId]);assert(inv&&(inv.user_id===req.user.id||inv.payer_id===req.user.id),'无权查看账单',403);
