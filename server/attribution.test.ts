@@ -153,6 +153,23 @@ describe('independent account, platform and recursive team reconciliation',()=>{
     expect((await get('/api/telemetry')).totals.requests.value).toBeNull();expect((await get('/api/accounts')).accounts[0].bindings[0].today_usd).toBeNull();
   });
 
+  it('does not book disabled Gatelink accounts when fresh responses repeat the prior-day amount',async()=>{
+    const box=secretBox(encryptionKey),[connection]=await db.query('SELECT * FROM connections WHERE id=$1',[gate]);
+    const remote=(externalId:string,status:string)=>({id:externalId,email:`${externalId}@example.com`,name:externalId,status,dailyUsd:'123.45',cost7d:null,cost30d:null,utilization:null,
+      telemetry:normalizeTelemetry('gatelink',{upstreamDailyCost:'123.45',upstreamSyncedAt:new Date().toISOString()})});
+    const upstreamDisabled=await saveBinding(db,connection,{...remote('upstream-disabled','disabled'),status:'active'});
+    const locallyDisabled=await saveBinding(db,connection,remote('locally-disabled','active'));
+    await db.query('UPDATE bindings SET local_enabled=false WHERE id=$1',[locallyDisabled.id]);
+    for(const binding of [upstreamDisabled,locallyDisabled])await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:previousDay(),rawUsd:'123.45',final:false,source:'live_snapshot'}));
+    const client={login:async()=>{},listAccounts:async()=>[remote('upstream-disabled','disabled'),remote('locally-disabled','active')]};
+    await enqueue(db,box,root.id,gate,'sync',{},'disabled-repeated-daily');
+    await createWorker(db,box,()=>client as any).runOne();
+    const [job]=await db.query('SELECT state,result,error FROM jobs');
+    expect(job.state,job.error).toBe('succeeded');expect(job.result.skippedDaily).toBe(2);
+    expect(await db.query('SELECT day,raw_usd FROM usage_days ORDER BY binding_id,day')).toEqual([
+      {day:previousDay(),raw_usd:'123.45000000'},{day:previousDay(),raw_usd:'123.45000000'}]);
+  });
+
   it('syncs Gatelink inventory with missing counters, preserves existing usage and resumes without duplicate charges',async()=>{
     const box=secretBox(encryptionKey),[connection]=await db.query('SELECT * FROM connections WHERE id=$1',[gate]);
     const remote=(id:string,dailyUsd:string|null)=>({id,email:`${id}@example.com`,name:id,status:'active',dailyUsd,cost7d:null,cost30d:null,utilization:null,
