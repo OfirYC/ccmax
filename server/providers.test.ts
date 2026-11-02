@@ -163,6 +163,28 @@ describe('upstream adapter data integrity',()=>{
     });
     await c.login();const attempt=await c.startOAuth({email:'claude-owner@example.com',proxy:'http://proxy.example.com:8080'});expect(attempt.url).toContain('claude.ai');const remote=await c.exchangeOAuth(attempt.secret,'one-time-code');expect(remote.id).toBe('provider-account-1');expect(viewCalls).toBe(1);
   });
+  it('forces the Aeromax uploader only after its documented instance conflict',async()=>{
+    const authorizeBodies:any[]=[];
+    const c=new ProviderClient('aeromax',{username:'provider@example.com',password:'provider-password'},async(url,init)=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/auth/login')return new Response(JSON.stringify({role:'provider',email:'provider@example.com'}),{headers:{'content-type':'application/json','set-cookie':'aeromax_session=opaque-session; Path=/; HttpOnly'}});
+      if(path==='/api/v1/provider/uploader/sessions')return Response.json({id:'11111111-1111-4111-8111-111111111111',authorizationUrl:'https://claude.ai/oauth/authorize?opaque=1',expiresAt:Date.now()+600000});
+      if(path==='/api/v1/provider/uploader/authorize'){
+        const body=JSON.parse(String(init?.body));authorizeBodies.push(body);
+        if(!body.force)return Response.json({error:'instance_exists',name:'stale-worker',hostLabel:null,vmId:null,phase:'running',since:new Date().toISOString()},{status:409});
+        return Response.json({id:'22222222-2222-4222-8222-222222222222',status:'succeeded',phase:'complete',message:'ok',name:'claude-owner@example.com',providerId:'provider-account-1',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+      }
+      if(path==='/api/v1/view/provider')return Response.json({role:'provider',email:'provider@example.com',accounts:[{providerId:'provider-account-1',displayName:'slot',health:'healthy',lastError:null,money:{tag:'unpriced',verifiedPointsMinor:0},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false},service:{ownerEmail:'claude-owner@example.com',requests:0,refusedRequests:0,inputTokens:0,outputTokens:0,deployment:'ready'}}],live:{accounts:1,requestsRecent:0,requestsToday:0,rpm:0,rpmCapacity:null,eligible:1,healthy:1,rateLimited:0,reauth:0,degraded:0,retired:0,pointsToday:null,pointsTotal:0},timeline:[],earnings:{tag:'unpriced',verifiedPointsMinor:0},uploader:{state:'ready',detail:'ready'},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false}});
+      throw new Error(`unexpected ${path}`);
+    });
+    await c.login();const attempt=await c.startOAuth({email:'claude-owner@example.com',proxy:'http://proxy.example.com:8080'});
+    const remote=await c.exchangeOAuth(attempt.secret,'one-time-code');
+    expect(remote.id).toBe('provider-account-1');
+    expect(authorizeBodies).toEqual([
+      {sessionId:attempt.secret.sessionId,code:'one-time-code',name:'claude-owner@example.com'},
+      {sessionId:attempt.secret.sessionId,code:'one-time-code',name:'claude-owner@example.com',force:true},
+    ]);
+  });
   it('blocks Gatelink account status writes with an agent session and permits an authenticated upstream admin',async()=>{
     let writes=0;
     const c=new ProviderClient('gatelink',{username:'fixture',password:'fixture'},async(url,init)=>{writes++;expect(String(url)).toContain('/api/admin/accounts/existing/enabled');expect(JSON.parse(String(init?.body))).toEqual({enabled:false});return Response.json({});});
