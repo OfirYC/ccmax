@@ -556,7 +556,24 @@ export class ProviderClient {
         if(!(error instanceof UpstreamError)||error.upstreamStatus!==409||error.upstreamCode!=='instance_exists')throw error;
         if(!allowInstanceReplacement)throw new AppError(409,
           '平台 E 已有同名实例，请核对后重新生成授权链接，并勾选允许替换已有实例','UPSTREAM_INSTANCE_EXISTS');
-        data=await this.call('/api/v1/provider/uploader/authorize','POST',{...payload,force:true});
+        // Aeromax can keep the old worker in its stopping phase briefly after
+        // accepting replacement. A documented instance_exists response is a
+        // definitive rejection, so the OAuth code was not consumed and the
+        // same approved replacement can be retried safely. Never retry a
+        // network failure or an unknown conflict because that write may have
+        // succeeded upstream.
+        for(let replacementAttempt=0;replacementAttempt<3;replacementAttempt++) {
+          if(replacementAttempt>0)await new Promise(resolve=>setTimeout(resolve,750*replacementAttempt));
+          try {
+            data=await this.call('/api/v1/provider/uploader/authorize','POST',{...payload,force:true});
+            break;
+          } catch(replacementError) {
+            const confirmedConflict=replacementError instanceof UpstreamError
+              && replacementError.upstreamStatus===409
+              && replacementError.upstreamCode==='instance_exists';
+            if(!confirmedConflict||replacementAttempt===2)throw replacementError;
+          }
+        }
       }
       assert(data.id,'E-coding 未返回上号任务',502);
       let task=data;

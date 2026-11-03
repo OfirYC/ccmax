@@ -204,7 +204,7 @@ describe('upstream adapter data integrity',()=>{
     const error=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true).catch(error=>error);
     expect(error).toBeInstanceOf(UpstreamError);expect(error.message).not.toContain('private-token');expect(calls).toBe(1);
   });
-  it('attempts an approved Aeromax replacement once and never retries an uncertain write',async()=>{
+  it('retries only confirmed Aeromax instance conflicts and never retries an uncertain write',async()=>{
     for(const networkFailure of [false,true]) {
       const bodies:any[]=[];
       const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async(_url,init)=>{
@@ -213,7 +213,7 @@ describe('upstream adapter data integrity',()=>{
         return Response.json({error:'instance_exists'},{status:409});
       });
       await expect(c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true)).rejects.toBeInstanceOf(UpstreamError);
-      expect(bodies.map(body=>body.force)).toEqual(networkFailure?[undefined]:[undefined,true]);
+      expect(bodies.map(body=>body.force)).toEqual(networkFailure?[undefined]:[undefined,true,true,true]);
     }
   });
   it('blocks Gatelink account status writes with an agent session and permits an authenticated upstream admin',async()=>{
