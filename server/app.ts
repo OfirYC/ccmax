@@ -540,15 +540,18 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       FROM oauth_attempts o JOIN connections c ON c.id=o.connection_id WHERE o.account_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 30`,[accountId,req.user.id]))};
   });
   app.post('/api/oauth/:id/exchange',async req=>{
-    const attemptId=identifier.parse((req.params as Row).id),d=z.object({callback:z.string().trim().min(1).max(8000),key}).parse(req.body);
+    const attemptId=identifier.parse((req.params as Row).id),d=z.object({callback:z.string().trim().min(1).max(8000),replaceExistingInstance:z.boolean().default(false),key}).parse(req.body);
     return db.transaction(async tx=>{
       const [a]=await tx.query('SELECT * FROM oauth_attempts WHERE id=$1 AND user_id=$2 FOR UPDATE',[attemptId,req.user.id]);assert(a,'授权流程不存在',404);
+      const [connection]=await tx.query('SELECT provider FROM connections WHERE id=$1',[a.connection_id]);
+      assert(!d.replaceExistingInstance||connection?.provider==='aeromax','仅平台 E 支持显式替换已有实例');
+      const consent=d.replaceExistingInstance?{replaceExistingInstance:true}:{};
       const [previous]=await tx.query(`SELECT id FROM jobs WHERE requested_by=$1 AND kind='oauth_exchange' AND connection_id=$2 AND idempotency_key=$3`,[req.user.id,a.connection_id,d.key]);
       if(previous) {
         // Completed exchanges erase their secrets. The immutable account proxy
         // still reconstructs the request hash without reusing a one-time code.
         const [account]=await tx.query('SELECT proxy_id FROM accounts WHERE id=$1',[a.account_id]);
-        return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:account.proxy_id,attemptId,callback:d.callback},d.key);
+        return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:account.proxy_id,attemptId,callback:d.callback,...consent},d.key);
       }
       // Terminal attempts have already erased their secrets. Check their state
       // before reading the proxy snapshot so stale links get a useful conflict.
@@ -563,7 +566,6 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       }
       // Reject a wrong-platform callback before consuming the attempt or code.
       // Old Gatelink attempts stored the state only inside their authorization URL.
-      const [connection]=await tx.query('SELECT provider FROM connections WHERE id=$1',[a.connection_id]);
       const pendingState=secret.pendingState||authorizationState(a.authorization_url);
       const code=connection?.provider==='aeromax'?aeromaxCallbackCode(d.callback):validateOAuthCallback(d.callback,pendingState).code;
       const [claim]=await tx.query(`INSERT INTO oauth_code_claims(user_id,code_hash,attempt_id) VALUES($1,$2,$3)
@@ -571,7 +573,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       assert(claim,'此授权码已提交过，不能跨平台复用；请打开目标平台自己的授权链接重新授权',409);
       if(connection?.provider!=='aeromax'&&!secret.pendingState)await tx.query('UPDATE oauth_attempts SET secret=$2 WHERE id=$1',[a.id,box.encrypt({...secret,pendingState})]);
       await tx.query(`UPDATE oauth_attempts SET state='exchanging' WHERE id=$1`,[a.id]);
-      return enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:proxy.id,attemptId,callback:d.callback},d.key);
+      const job=await enqueue(tx,box,req.user.id,a.connection_id,'oauth_exchange',{accountId:a.account_id,proxyId:proxy.id,attemptId,callback:d.callback,...consent},d.key);
+      if(d.replaceExistingInstance)await audit(tx,req.user.id,'oauth.instance_replacement.consent',a.id,{connectionId:a.connection_id,jobId:job.id});
+      return job;
     });
   });
   app.post('/api/accounts/:id/import-token',async req=>{

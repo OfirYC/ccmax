@@ -1525,5 +1525,8 @@
   "我同意按以上规则自动移除疑似重复明细及其应收款": "I authorize automatic removal of suspected duplicate items and their receivables under these rules",
   "确认开启自动修复": "Confirm automatic repair",
   "启用自动修复前请确认移除规则": "Acknowledge the removal rules before enabling automatic repair",
-  "自动修复：按管理员设置移除重复快照": "Automatic repair: removed duplicate snapshots under administrator policy"
+  "自动修复：按管理员设置移除重复快照": "Automatic repair: removed duplicate snapshots under administrator policy",
+  "允许在平台 E 实例冲突时替换已有实例（可能中断原实例）": "Allow replacement on Platform E instance conflict (may interrupt the existing instance)",
+  "平台 E 已有同名实例，请核对后重新生成授权链接，并勾选允许替换已有实例": "Platform E already has an instance with this name. Review it, generate a new authorization link, and enable replacement if intended.",
+  "仅平台 E 支持显式替换已有实例": "Explicit instance replacement is supported only on Platform E"
 }

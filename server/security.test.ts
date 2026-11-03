@@ -490,6 +490,7 @@ describe('CCMAX authorization and ledger safeguards', () => {
       const secret={options:{email:acct.email,proxy:'http://test-user:test-secret@proxy.example.com:8080'},proxyId,...(provider==='gatelink'?{}:{pendingState})};
       await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7)`,[attemptId,owner.id,conn.id,acct.id,box.encrypt(secret),`https://auth.example.com/?state=${pendingState}`,new Date(Date.now()+600000)]);
+      expect((await api(cookie,'POST',`/api/oauth/${attemptId}/exchange`,{callback:`unique-${provider}#${pendingState}`,replaceExistingInstance:true,key:id()})).statusCode).toBe(400);
       for(const callback of ['wrong-code#other-platform','incomplete-code','https://callback.example/?code=ambiguous&state='+pendingState+'&state=other']){
         const response=await api(cookie,'POST',`/api/oauth/${attemptId}/exchange`,{callback,key:id()});
         expect(response.statusCode).toBe(400);
@@ -502,6 +503,34 @@ describe('CCMAX authorization and ledger safeguards', () => {
     expect(await db.query('SELECT * FROM jobs')).toHaveLength(3);
     expect(await db.query('SELECT * FROM oauth_code_claims')).toHaveLength(3);
     expect(await db.query('SELECT * FROM bindings')).toHaveLength(0);
+  });
+
+  it.each([false,true])('keeps Platform E replacement consent %s explicit, audited and bound to the queued callback',async replace=>{
+    const cookie=await login('owner@example.com','correct horse battery staple'),[owner]=await db.query("SELECT * FROM users WHERE role='owner'");
+    const acct=await account(owner,'replacement@example.com',false),proxyId=await bindProxy(cookie,acct),conn=await connection('aeromax'),box=secretBox(key),attemptId=id();
+    const secret={options:{email:acct.email,proxy:'http://test-user:test-secret@proxy.example.com:8080'},proxyId,session:{},sessionId:id()};
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,secret,authorization_url,expires_at)
+      VALUES($1,$2,$3,$4,$5,'https://auth.example.com/',now()+interval '10 minutes')`,[attemptId,owner.id,conn.id,acct.id,box.encrypt(secret)]);
+    const body={callback:'one-use-code',key:id(),...(replace?{replaceExistingInstance:true}:{})},url=`/api/oauth/${attemptId}/exchange`;
+    const queued=await api(cookie,'POST',url,body);
+    expect(queued.statusCode,queued.body).toBe(200);
+    const [job]=await db.query('SELECT * FROM jobs WHERE id=$1',[queued.json().id]);
+    expect(box.decrypt(job.payload).replaceExistingInstance).toBe(replace?true:undefined);
+    expect((await api(cookie,'POST',url,body)).json().id).toBe(job.id);
+    expect((await api(cookie,'POST',url,{...body,replaceExistingInstance:!replace})).statusCode).toBe(409);
+    const consentEvents=await db.query("SELECT * FROM audits WHERE action='oauth.instance_replacement.consent'");
+    expect(consentEvents).toHaveLength(replace?1:0);
+    if(replace)expect(consentEvents[0]).toMatchObject({actor_id:owner.id,target_id:attemptId,details:{connectionId:conn.id,jobId:job.id}});
+    const received:boolean[]=[];
+    const {ProviderClient}=await import('./providers.js');
+    const worker=createWorker(db,box,()=>({restoreSession:()=>{},exchangeOAuth:async(_secret:unknown,_callback:string,allow:boolean)=>{
+      received.push(allow);return {...remote('replacement-account',acct.email),dailyUsd:null};
+    }} as unknown as InstanceType<typeof ProviderClient>),['oauth_exchange']);
+    await worker.runOne();
+    expect(received).toEqual([replace]);
+    expect((await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state).toBe('succeeded');
+    expect((await api(cookie,'POST',url,body)).json().id).toBe(job.id);
+    expect(await db.query('SELECT * FROM ledger')).toHaveLength(0);
   });
 
   it('claims a code once across concurrent platform requests while preserving safe idempotent retries',async()=>{

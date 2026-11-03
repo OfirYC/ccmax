@@ -29,7 +29,7 @@ export type Credentials={username:string;password:string};
 export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string|null;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
 export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string;existingExternalId?:string;note?:string};
 export class UpstreamError extends AppError {
-  constructor(public upstreamStatus:number, message:string) { super(502,message); }
+  constructor(public upstreamStatus:number, message:string, public upstreamCode?:string) { super(502,message); }
 }
 function miniOperation(path:string) {
   const pathname=path.split('?')[0];
@@ -108,7 +108,16 @@ export class ProviderClient {
       if(index>0) this.cookies.set(pair.slice(0,index),pair.slice(index+1));
     }
     // Never expose a raw upstream body: account APIs can contain tokens/proxies.
-    if(!response.ok) throw new UpstreamError(response.status,this.provider==='gatelink'?await gatelinkFailure(response,path):`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}`);
+    if(!response.ok) {
+      let upstreamCode:string|undefined;
+      if(this.provider==='aeromax'&&response.status===409&&path==='/api/v1/provider/uploader/authorize') {
+        try {
+          const failure=await response.clone().json() as {error?:unknown};
+          if(failure?.error==='instance_exists')upstreamCode='instance_exists';
+        } catch { /* Keep the generic status-only error for unknown response shapes. */ }
+      }
+      throw new UpstreamError(response.status,this.provider==='gatelink'?await gatelinkFailure(response,path):`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}`,upstreamCode);
+    }
     if(response.status===204) return {};
     let text:string;
     try {text=await response.text();}
@@ -530,7 +539,7 @@ export class ProviderClient {
     assert(data.url && data.state,'平台未返回 OAuth URL / state',502);
     return {url:data.url,secret:{options,pendingState:data.state},expiresIn:600};
   }
-  async exchangeOAuth(secret:any,callback:string) {
+  async exchangeOAuth(secret:any,callback:string,allowInstanceReplacement=false) {
     this.requireProxy(secret.options);
     if(this.provider==='aeromax') {
       const input=callback.trim();let code=input;
@@ -538,7 +547,17 @@ export class ProviderClient {
         const url=new URL(input);const values=url.searchParams.getAll('code');assert(values.length===1&&values[0],'请粘贴 E-coding 返回的授权码或完整回调地址');code=values[0]!;
       }
       assert(code.length>0&&code.length<=4096&&!/[\s#]/.test(code),'请粘贴有效的 E-coding 授权码');
-      const data=await this.call('/api/v1/provider/uploader/authorize','POST',{sessionId:secret.sessionId,code,name:secret.options.email,note:secret.options.note});
+      const payload={sessionId:secret.sessionId,code,name:secret.options.email,note:secret.options.note};
+      let data:any;
+      try { data=await this.call('/api/v1/provider/uploader/authorize','POST',payload); }
+      catch(error) {
+        // Upstream offers replacement as a separate, explicit user action;
+        // an existing instance can still be running and must not be assumed stale.
+        if(!(error instanceof UpstreamError)||error.upstreamStatus!==409||error.upstreamCode!=='instance_exists')throw error;
+        if(!allowInstanceReplacement)throw new AppError(409,
+          '平台 E 已有同名实例，请核对后重新生成授权链接，并勾选允许替换已有实例','UPSTREAM_INSTANCE_EXISTS');
+        data=await this.call('/api/v1/provider/uploader/authorize','POST',{...payload,force:true});
+      }
       assert(data.id,'E-coding 未返回上号任务',502);
       let task=data;
       for(let n=0;n<30&&!['succeeded','failed','cancelled'].includes(task.status);n++) {await new Promise(resolve=>setTimeout(resolve,1000));task=await this.call(`/api/v1/provider/uploader/tasks/${encodeURIComponent(data.id)}`);}

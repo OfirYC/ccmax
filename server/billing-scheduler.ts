@@ -49,10 +49,10 @@ export async function scheduleDailyBilling(db: DB, box: SecretBox, now = new Dat
     // and restore its obsolete 403/no-snapshot failure. Recover that expected
     // fallback automatically instead of waiting for the old failure backoff.
     await tx.query(`UPDATE billing_days d SET state='awaiting_data',error=NULL,
-      source_error=COALESCE(d.source_error,d.error),next_attempt_at=now()
+      source_error=COALESCE(d.source_error,d.error),next_attempt_at=$1
       FROM connections c WHERE c.id=d.connection_id AND c.snapshot_billing
       AND d.state='failed' AND d.basis='snapshot'
-      AND d.error ~ '读取历史日账单失败（HTTP (403|404)'`);
+      AND d.error ~ '读取历史日账单失败（HTTP (403|404)'`,[now]);
     const through = billingThrough(now), current = billingDayAt(now);
     // Older workers could retire an interrupted job without releasing its day.
     // An active replacement protects the day even if job_id still points back.

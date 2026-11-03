@@ -187,7 +187,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         const [bound]=await db.query('SELECT id FROM bindings WHERE account_id=$1 AND connection_id=$2',[account.id,connection.id]);
         assert(recovery?bound?.id===recovery.id:!bound,'平台已存在该账号，未重复写入，请由管理员核对归属');
         if(recovery)await client.verifySubmissionTarget(recovery.external_id,account.email);
-        const remote=job.kind==='oauth_exchange'?await client.exchangeOAuth(box.decrypt(attempt!.secret),payload.callback):await client.importRefreshToken(await submissionOptions(client,connection,proxy,{...payload.options,email:account.email}),payload.refreshToken);
+        const remote=job.kind==='oauth_exchange'?await client.exchangeOAuth(box.decrypt(attempt!.secret),payload.callback,payload.replaceExistingInstance===true):await client.importRefreshToken(await submissionOptions(client,connection,proxy,{...payload.options,email:account.email}),payload.refreshToken);
         if(recovery)assert(remote.id===recovery.external_id&&remote.email===account.email,'重新授权返回的账号 ID 或邮箱不一致，请同步核对；未替换原绑定',409);
         await db.transaction(async tx=>{
           await accountProxy(tx,box,account.id,proxy.id);

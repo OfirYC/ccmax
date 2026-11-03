@@ -1,6 +1,47 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
 
+test('Platform E replacement consent is optional, scoped to one attempt and never applied to other platforms',async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
+  await page.goto('/');await page.getByLabel('登录邮箱').fill('owner@example.com');
+  await page.getByLabel('密码',{exact:true}).fill('e2e-owner-password');
+  await page.getByRole('button',{name:'进入工作空间'}).click();await expect(page.locator('h1')).toContainText('你好');
+  const headers={'x-ccmax-request':'1'};
+  const account=(await(await page.request.post('/api/accounts',{headers,data:{email:'platform-e-replacement@example.com'}})).json()).account;
+  const proxy=await(await page.request.post('/api/proxies',{headers,data:{name:'Replacement test',url:'http://replacement.proxy.example.com:8080'}})).json();
+  expect((await page.request.post(`/api/accounts/${account.id}/proxy`,{headers,data:{proxyId:proxy.id}})).ok()).toBe(true);
+  const catalog=await(await page.request.get('/api/connections')).json();
+  const other=catalog.connections.find((c:any)=>c.provider==='B'),platformE={...other,id:randomUUID(),provider:'E',capabilities:{...other.capabilities,name:'平台 E (coding)',refreshTokenImport:false}};
+  const attempt=(connection:any,state:string)=>({id:randomUUID(),connection_id:connection.id,provider:connection.provider,
+    authorization_url:`https://auth.example.com/?state=${state}`,state:'pending',expires_at:new Date(Date.now()+600000).toISOString()});
+  const first=attempt(platformE,'first'),fresh=attempt(platformE,'fresh'),otherAttempt=attempt(other,'other');
+  let visible=[first,otherAttempt];const submitted:any[]=[],jobs:any[]=[];
+  await page.route('**/api/connections',route=>route.fulfill({json:{...catalog,connections:[...catalog.connections,platformE]}}));
+  await page.route(`**/api/accounts/${account.id}/attempts`,route=>route.fulfill({json:{attempts:visible}}));
+  await page.route('**/api/jobs',route=>route.fulfill({json:{jobs}}));
+  await page.route('**/api/oauth/*/exchange',async route=>{
+    const attemptId=new URL(route.request().url()).pathname.split('/')[3],body=route.request().postDataJSON();submitted.push({attemptId,...body});
+    visible=visible.filter(a=>a.id!==attemptId);
+    if(attemptId===first.id)visible.push(fresh);
+    const job={id:randomUUID(),connection_id:attemptId===otherAttempt.id?other.id:platformE.id,kind:'oauth_exchange',
+      state:attemptId===first.id?'needs_attention':'succeeded',error:attemptId===first.id?'请核对已有实例并重新授权':null};
+    jobs.push(job);await route.fulfill({json:job});
+  });
+  await page.goto('/accounts');await page.getByRole('button',{name:'新增账号 / 多平台上号',exact:true}).click();
+  const dialog=page.getByRole('dialog');await dialog.getByLabel('选择已有 Claude 账号（可选）').selectOption(account.id);
+  const eCard=dialog.locator('.oauth-attempt').filter({hasText:'平台 E'}),otherCard=dialog.locator('.oauth-attempt').filter({hasText:'平台 B'});
+  const consent=eCard.getByLabel('允许在平台 E 实例冲突时替换已有实例（可能中断原实例）');
+  await expect(consent).not.toBeChecked();await expect(otherCard.getByRole('checkbox')).toHaveCount(0);
+  await eCard.getByRole('textbox').fill('first-code');await eCard.getByRole('button',{name:/提交.*的授权/}).click();
+  await expect(eCard.getByRole('textbox')).toHaveValue('');await expect(consent).not.toBeChecked();
+  expect(submitted[0].replaceExistingInstance).toBeUndefined();
+  await consent.check();await eCard.getByRole('textbox').fill('fresh-code');
+  await eCard.getByRole('button',{name:/提交.*的授权/}).click();await expect(eCard).toHaveCount(0);
+  expect(submitted[1]).toMatchObject({attemptId:fresh.id,replaceExistingInstance:true});
+  await otherCard.getByRole('textbox').fill('other-code#other');await otherCard.getByRole('button',{name:/提交.*的授权/}).click();
+  await expect(otherCard).toHaveCount(0);expect(submitted[2].replaceExistingInstance).toBeUndefined();
+});
+
 for (const rejectionStatus of [400, 409]) test(`platform authorizations stay independent and a ${rejectionStatus} on a pending platform preserves its callback`, async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('ccmax.locale', 'zh-CN'));
   await page.goto('/');
