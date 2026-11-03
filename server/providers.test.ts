@@ -202,7 +202,17 @@ describe('upstream adapter data integrity',()=>{
     let calls=0;
     const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>{calls++;return new Response(body,{status});});
     const error=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true).catch(error=>error);
-    expect(error).toBeInstanceOf(UpstreamError);expect(error.message).not.toContain('private-token');expect(calls).toBe(1);
+    expect(error).toBeInstanceOf(UpstreamError);expect(error.message).toContain('平台 E 初次上号请求失败');expect(error.message).not.toContain('private-token');expect(calls).toBe(1);
+  });
+  it('identifies an Aeromax task polling failure without exposing its response body',async()=>{
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async(url)=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/provider/uploader/authorize')return Response.json({id:'task-id',status:'queued'});
+      if(path==='/api/v1/provider/uploader/tasks/task-id')return new Response('private-token',{status:409});
+      throw new Error(`unexpected ${path}`);
+    });
+    const error=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true).catch(error=>error);
+    expect(error).toBeInstanceOf(UpstreamError);expect(error.message).toContain('平台 E 上号任务状态检查失败');expect(error.message).not.toContain('private-token');
   });
   it('retries only confirmed Aeromax instance conflicts and never retries an uncertain write',async()=>{
     for(const networkFailure of [false,true]) {
@@ -212,7 +222,9 @@ describe('upstream adapter data integrity',()=>{
         if(networkFailure)throw new Error('private network details');
         return Response.json({error:'instance_exists'},{status:409});
       });
-      await expect(c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true)).rejects.toBeInstanceOf(UpstreamError);
+      const error=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true).catch(error=>error);
+      expect(error).toBeInstanceOf(UpstreamError);
+      expect(error.message).toContain(networkFailure?'平台 E 初次上号请求失败':'平台 E 替换已有实例失败');
       expect(bodies.map(body=>body.force)).toEqual(networkFailure?[undefined]:[undefined,true,true,true]);
     }
   });

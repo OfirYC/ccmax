@@ -542,6 +542,9 @@ export class ProviderClient {
   async exchangeOAuth(secret:any,callback:string,allowInstanceReplacement=false) {
     this.requireProxy(secret.options);
     if(this.provider==='aeromax') {
+      const stageFailure=(error:unknown,stage:string)=>error instanceof UpstreamError
+        ?new UpstreamError(error.upstreamStatus,`${stage}：${error.message}`,error.upstreamCode)
+        :error;
       const input=callback.trim();let code=input;
       if(/^https?:\/\//i.test(input)) {
         const url=new URL(input);const values=url.searchParams.getAll('code');assert(values.length===1&&values[0],'请粘贴 E-coding 返回的授权码或完整回调地址');code=values[0]!;
@@ -553,7 +556,7 @@ export class ProviderClient {
       catch(error) {
         // Upstream offers replacement as a separate, explicit user action;
         // an existing instance can still be running and must not be assumed stale.
-        if(!(error instanceof UpstreamError)||error.upstreamStatus!==409||error.upstreamCode!=='instance_exists')throw error;
+        if(!(error instanceof UpstreamError)||error.upstreamStatus!==409||error.upstreamCode!=='instance_exists')throw stageFailure(error,'平台 E 初次上号请求失败');
         if(!allowInstanceReplacement)throw new AppError(409,
           '平台 E 已有同名实例，请核对后重新生成授权链接，并勾选允许替换已有实例','UPSTREAM_INSTANCE_EXISTS');
         // Aeromax can keep the old worker in its stopping phase briefly after
@@ -571,13 +574,17 @@ export class ProviderClient {
             const confirmedConflict=replacementError instanceof UpstreamError
               && replacementError.upstreamStatus===409
               && replacementError.upstreamCode==='instance_exists';
-            if(!confirmedConflict||replacementAttempt===2)throw replacementError;
+            if(!confirmedConflict||replacementAttempt===2)throw stageFailure(replacementError,'平台 E 替换已有实例失败');
           }
         }
       }
       assert(data.id,'E-coding 未返回上号任务',502);
       let task=data;
-      for(let n=0;n<30&&!['succeeded','failed','cancelled'].includes(task.status);n++) {await new Promise(resolve=>setTimeout(resolve,1000));task=await this.call(`/api/v1/provider/uploader/tasks/${encodeURIComponent(data.id)}`);}
+      for(let n=0;n<30&&!['succeeded','failed','cancelled'].includes(task.status);n++) {
+        await new Promise(resolve=>setTimeout(resolve,1000));
+        try {task=await this.call(`/api/v1/provider/uploader/tasks/${encodeURIComponent(data.id)}`);}
+        catch(error) {throw stageFailure(error,'平台 E 上号任务状态检查失败');}
+      }
       assert(task.status==='succeeded'&&task.providerId,'E-coding 上号任务未成功完成',502);
       return this.submittedIdentity({id:task.providerId},undefined);
     }
