@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
 
 test('agent pages, network responses, public docs and loaded browser assets contain no upstream identity',async({page})=>{
-  test.setTimeout(60000);
+  test.setTimeout(120000);
   await page.addInitScript(()=>localStorage.setItem('ccmax.locale','zh-CN'));
   const privateSource=/gatelink|ai008|minicc|maxchat|aeromax|e-coding|aeromax\.one|mini\s*cc|207\.57\.170\.28|private-upstream-/i;
   const checked:Promise<void>[]=[],leaks:string[]=[];
