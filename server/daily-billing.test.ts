@@ -453,6 +453,17 @@ describe('automatic daily billing',()=>{
     expect((await db.query('SELECT error FROM billing_days'))[0].error).toContain('登录失败');
   });
 
+  it('uses the scheduler clock when releasing an obsolete permission-failure backoff',async()=>{
+    await db.query('UPDATE connections SET snapshot_billing=true WHERE id=$1',[connection.id]);
+    const message='Gatelink 读取历史日账单失败（HTTP 403）；当前主账号无此权限；没有当天有效快照，无法补建历史金额';
+    await db.query(`UPDATE billing_days SET state='failed',basis='snapshot',error=$1,next_attempt_at=now()+interval '2 days'`,[message]);
+    const schedulerNow=new Date('2020-01-01T00:00:00.000Z');
+
+    expect(await scheduleDailyBilling(db,box,schedulerNow)).toHaveLength(0);
+    expect((await db.query('SELECT state,error,source_error,next_attempt_at=$1 AS uses_scheduler_clock FROM billing_days',[schedulerNow]))[0])
+      .toEqual({state:'awaiting_data',error:null,source_error:message,uses_scheduler_clock:true});
+  });
+
   it('allows only administrators to collect, inspect or download raw statements and exports estimated billing basis',async()=>{
     const {app}=await createApp(db,{encryptionKey:'bd'.repeat(32),appUrl:'http://localhost:3000'});
     try {
