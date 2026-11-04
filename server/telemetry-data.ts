@@ -16,7 +16,7 @@ export function attributionTotals(rows:Row[]) {
 
 export function snapshotView(row:Row) {
   const parsed=telemetrySchema.safeParse(row.data),telemetry=parsed.success?parsed.data:null;
-  return {telemetry,fresh:!!telemetry&&isFresh(telemetry)&&row.status!=='missing'&&row.enabled===true&&row.local_enabled!==false};
+  return {telemetry,fresh:!!telemetry&&isFresh(telemetry)&&row.status==='active'&&row.enabled===true&&row.local_enabled!==false};
 }
 
 // Dashboard, account lists and analytics must share the same visibility and
