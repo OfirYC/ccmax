@@ -20,11 +20,18 @@ it('migration removes only uninvoiced repeated estimates from disabled Gatelink 
     };
     const disabled=await add('disabled','disabled@example.com');
     const active=await add('active','active@example.com');
+    const [{id:staleUsageId}]=await db.query("SELECT id FROM usage_days WHERE binding_id=$1 AND day='2026-11-01'",[disabled]);
+    await db.query("INSERT INTO billing_days(connection_id,day,state) VALUES($1,'2026-11-01','needs_attention')",[connection]);
+    await db.query(`INSERT INTO billing_entries(connection_id,day,external_id,usage_id,state,error)
+      VALUES($1,'2026-11-01',$2,$3,'blocked','stale repeated snapshot')`,[connection,disabled,staleUsageId]);
     await db.query('DELETE FROM migrations WHERE version=29');
     await migrate(db);await migrate(db);
     expect(await db.query('SELECT day FROM usage_days WHERE binding_id=$1 ORDER BY day',[disabled])).toEqual([{day:'2026-10-31'}]);
     expect(await db.query('SELECT day FROM usage_days WHERE binding_id=$1 ORDER BY day',[active])).toEqual([{day:'2026-10-31'},{day:'2026-11-01'}]);
     expect((await db.query('SELECT count(*)::int AS count FROM earnings WHERE usage_id NOT IN (SELECT id FROM usage_days)'))[0].count).toBe(0);
+    expect(await db.query('SELECT usage_id,state,error FROM billing_entries')).toEqual([
+      {usage_id:null,state:'blocked',error:'stale repeated snapshot'},
+    ]);
     expect(await db.query("SELECT action FROM audits WHERE action='usage.stale_live_snapshot_reconcile'")).toHaveLength(1);
   } finally {await db.close();}
 });
