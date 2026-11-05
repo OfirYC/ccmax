@@ -128,6 +128,16 @@ describe('telemetry ownership, retention and accounting separation',()=>{
     const data=(await request('/api/telemetry')).json();expect(data.total).toBe(2);expect(data.totals.fresh).toBe(0);expect(data.totals.rpm.value).toBeNull();expect(data.rows[0].telemetry.activity.rpm).toBe(3);
     expect((await db.query('SELECT count(*)::int AS count FROM usage_days'))[0].count).toBe(0);expect((await db.query('SELECT count(*)::int AS count FROM ledger'))[0].count).toBe(0);
   });
+  it('does not report a disabled binding as fresh even when its saved telemetry is recent',async()=>{
+    const disabled=await account(leaf,'disabled@example.com');
+    await db.query("UPDATE bindings SET status='disabled' WHERE id=$1",[disabled.bid]);
+
+    const data=(await request('/api/telemetry')).json();
+    expect(data.total).toBe(1);
+    expect(data.rows[0]).toMatchObject({status:'disabled',fresh:false});
+    expect(data.totals.fresh).toBe(0);
+    expect(data.totals.requests.value).toBeNull();
+  });
   it('deduplicates rate samples and prevents an older response replacing a newer one',async()=>{
     const {bid}=await account(leaf,'samples@example.com'),newer=normalizeTelemetry('ai008',upstream()),older=structuredClone(newer);
     newer.collectedAt=new Date(Date.now()+1000).toISOString();newer.sourceAt=newer.collectedAt;newer.activity.rpm=7;

@@ -9,6 +9,7 @@ import { invitationMigration } from './invitations.js';
 import { applyJadenSettlementRepair } from './jaden-settlement-repair.js';
 import { applyRepeatedSnapshotReconciliation, applySettlementAutoReconciliation } from './settlement-auto-reconcile.js';
 import { invoiceRepairMigration } from './invoice-repair-migration.js';
+import { applyStaleLiveSnapshotReconciliation } from './stale-live-snapshot-reconciliation.js';
 
 export type Row = Record<string, any>;
 export interface DB {
@@ -210,6 +211,11 @@ export async function migrate(db: DB) {
     if (!done.some(row=>Number(row.version)===28)) {
       await invoiceRepairMigration(tx);
       await tx.query('INSERT INTO migrations(version) VALUES (28)');
+    }
+    if (!done.some(row=>Number(row.version)===29)) {
+      await bindingUsageControls(tx);
+      await applyStaleLiveSnapshotReconciliation(tx);
+      await tx.query('INSERT INTO migrations(version) VALUES (29)');
     }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are

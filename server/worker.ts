@@ -149,8 +149,14 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
           // Gatelink caches may still contain yesterday's daily counter.
           // Keep the source snapshot for inspection without booking it today.
           if(remote.dailyUsd===null || remote.telemetry&&(remote.telemetry.day!==day||!remote.telemetry.sourceAt)) {skippedDaily++;continue;}
-          const [binding]=await db.query('SELECT id FROM bindings WHERE connection_id=$1 AND external_id=$2',[connection.id,remote.id]);
+          const [binding]=await db.query('SELECT id,local_enabled FROM bindings WHERE connection_id=$1 AND external_id=$2',[connection.id,remote.id]);
           if(!binding) {billingIssues.push({externalId:remote.id,message:'同步后找不到平台账号绑定'});continue;}
+          if(connection.provider==='gatelink'&&(remote.status==='disabled'||binding.local_enabled===false)) {
+            const [repeated]=await db.query(`SELECT 1 AS value FROM usage_days
+              WHERE binding_id=$1 AND day=($2::date-interval '1 day')::date AND raw_usd=$3::numeric AND raw_usd>0
+              AND source IN ('live_snapshot','daily_snapshot') LIMIT 1`,[binding.id,day,remote.dailyUsd]);
+            if(repeated) {skippedDaily++;continue;}
+          }
           const usage={bindingId:binding.id,day,rawUsd:remote.dailyUsd,final:false as const,source:'live_snapshot',sourceAt:remote.telemetry?.sourceAt??undefined};
           try {
             // Keep the raw observation visible even when attribution cannot be
