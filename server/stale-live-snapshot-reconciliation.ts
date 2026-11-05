@@ -18,6 +18,7 @@ export async function applyStaleLiveSnapshotReconciliation(tx:DB) {
   if(!stale.length)return {removed:0};
   const usageIds=stale.map(row=>row.id);
   await tx.query('DELETE FROM earnings WHERE usage_id=ANY($1::text[])',[usageIds]);
+  await tx.query('UPDATE billing_entries SET usage_id=NULL WHERE usage_id=ANY($1::text[])',[usageIds]);
   await tx.query("DELETE FROM usage_days WHERE id=ANY($1::text[]) AND state='provisional'",[usageIds]);
   await tx.query(`INSERT INTO audits(id,actor_id,action,details) VALUES($1,NULL,'usage.stale_live_snapshot_reconcile',$2)`,
     [id(),JSON.stringify({usageIds,reason:'disabled Gatelink account repeated the prior-day live estimate'})]);
