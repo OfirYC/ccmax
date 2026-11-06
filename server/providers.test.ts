@@ -246,6 +246,26 @@ describe('upstream adapter data integrity',()=>{
     expect(authorizeBodies[1].name).toMatch(/^owner@example\.com-[a-f0-9]{8}$/);
     expect(authorizeBodies[1].force).toBeUndefined();
   });
+  it('renames and retries when a forced Aeromax replacement hits a provider-name collision',async()=>{
+    const authorizeBodies:any[]=[];
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async(url,init)=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/provider/uploader/authorize') {
+        const body=JSON.parse(String(init?.body));authorizeBodies.push(body);
+        if(authorizeBodies.length===1)return Response.json({error:'instance_exists'},{status:409});
+        if(authorizeBodies.length===2)return Response.json({error:'arx_request_rejected',detail:'upstream HTTP 409: 提供商名称已存在，请换一个名称'},{status:409});
+        return Response.json({id:'task',status:'succeeded',providerId:'new-provider'});
+      }
+      if(path==='/api/v1/view/provider')return Response.json({role:'provider',email:'fixture',accounts:[{providerId:'new-provider',health:'healthy',service:{ownerEmail:'owner@example.com'}}]});
+      throw new Error(`unexpected ${path}`);
+    });
+    const remote=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'11111111-1111-4111-8111-111111111111'},'single-use-code',true);
+    expect(remote.id).toBe('new-provider');
+    expect(authorizeBodies).toHaveLength(3);
+    expect(authorizeBodies[0]).toMatchObject({name:'owner@example.com'});expect(authorizeBodies[0].force).toBeUndefined();
+    expect(authorizeBodies[1]).toMatchObject({name:'owner@example.com',force:true});
+    expect(authorizeBodies[2].name).toMatch(/^owner@example\.com-[a-f0-9]{8}$/);expect(authorizeBodies[2].force).toBe(true);
+  });
   it('does not replay an Aeromax OAuth code for an unrelated ARX rejection',async()=>{
     let writes=0;
     const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>{
