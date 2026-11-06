@@ -255,6 +255,26 @@ describe('upstream adapter data integrity',()=>{
     expect(error).toBeInstanceOf(UpstreamError);
     expect(writes).toBe(1);
   });
+  it('binds the exact Aeromax task provider ID when inventory contains the same email more than once',async()=>{
+    const row=(providerId:string,email='owner@example.com')=>({providerId,displayName:providerId,health:'healthy',lastError:null,money:{tag:'unpriced',verifiedPointsMinor:0},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false},service:{ownerEmail:email,requests:0,refusedRequests:0,inputTokens:0,outputTokens:0,deployment:'ready'}});
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async url=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/provider/uploader/authorize')return Response.json({id:'task',status:'succeeded',providerId:'new-provider'});
+      if(path==='/api/v1/view/provider')return Response.json({role:'provider',email:'fixture',accounts:[row('old-provider'),row('new-provider')],live:{},timeline:[],earnings:{tag:'unpriced',verifiedPointsMinor:0},uploader:{state:'ready',detail:'ready'},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false}});
+      throw new Error(`unexpected ${path}`);
+    });
+    const remote=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true);
+    expect(remote).toMatchObject({id:'new-provider',email:'owner@example.com'});
+  });
+  it('rejects an exact Aeromax task provider ID whose owner email does not match the authorized account',async()=>{
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async url=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/provider/uploader/authorize')return Response.json({id:'task',status:'succeeded',providerId:'wrong-owner'});
+      if(path==='/api/v1/view/provider')return Response.json({role:'provider',email:'fixture',accounts:[{providerId:'wrong-owner',health:'healthy',service:{ownerEmail:'other@example.com'}}]});
+      throw new Error(`unexpected ${path}`);
+    });
+    await expect(c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true)).rejects.toThrow('账号归属');
+  });
   it('identifies a non-JSON Aeromax failure without exposing its raw body',async()=>{
     const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>new Response('oauth_code=private-one-use-code',{status:503,headers:{'content-type':'text/html','x-request-id':'req-html-503'}}));
     const error=await c.call('/api/v1/provider/uploader/authorize','POST',{}).catch(error=>error);
