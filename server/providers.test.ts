@@ -6,6 +6,17 @@ const fixedProxy={proxy:'http://user:pass@proxy.example.com:8080',proxyExternalI
 const client=(handler:(url:string,init?:RequestInit)=>any)=>new ProviderClient('ai008',{username:'test',password:'test'},async(url,init)=>Response.json(await handler(String(url),init)));
 
 describe('upstream adapter data integrity',()=>{
+  it('preserves a failed Aeromax task reason and task ID without exposing credentials',async()=>{
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>Response.json({id:'task-safe-123',status:'failed',phase:'exchange',message:'authorization exchange rejected',error:{code:'invalid_grant',detail:'token=private-secret'},sessionId:'private-session'}));
+    const error=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true).catch(error=>error);
+    expect(error).toBeInstanceOf(UpstreamError);
+    expect(error.message).toContain('task-safe-123');
+    expect(error.message).toContain('status=failed');
+    expect(error.message).toContain('authorization exchange rejected');
+    expect(error.diagnostic).toMatchObject({stage:'uploader_task',fields:{status:'failed',phase:'exchange'}});
+    expect(JSON.stringify(error)).not.toContain('private-secret');
+    expect(JSON.stringify(error)).not.toContain('private-session');
+  });
   const history=(handler:(page:number)=>any)=>client((url,init)=>init?.method==='POST'?{task:{id:'history'}}:handler(Number(new URL(url).searchParams.get('account_page'))));
   const historyPage=(page:number,accounts:any[],count=accounts.length,size=100)=>({task:{id:'history',status:'succeeded',input:{since:'2026-10-17T00:00:00+08:00',until:'2026-10-17T23:59:59+08:00'}},result:{accounts,account_page:page,account_count:count,page_size:size}});
   it('reads every AI008 history page and preserves decimal amounts without shared-total allocation',async()=>{

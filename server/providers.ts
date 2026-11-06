@@ -674,7 +674,12 @@ export class ProviderClient {
         try {task=await this.call(`/api/v1/provider/uploader/tasks/${encodeURIComponent(data.id)}`);}
         catch(error) {throw stageFailure(error,'平台 E 上号任务状态检查失败');}
       }
-      assert(task.status==='succeeded'&&task.providerId,'E-coding 上号任务未成功完成',502);
+      if(task.status!=='succeeded'||!task.providerId) {
+        const diagnostic={...upstreamDiagnostic(200,'/api/v1/provider/uploader/tasks',task),stage:'uploader_task'};
+        const taskId=safeDiagnosticString(String(data.id));
+        const pending=!['succeeded','failed','cancelled'].includes(task.status);
+        throw new UpstreamError(200,`平台 E ${pending?'任务仍未完成，结果待核对，请勿重复授权':'上号任务未成功完成'}；taskId=${taskId}${diagnosticSummary(diagnostic)}`,diagnostic.code,diagnostic);
+      }
       return this.submittedIdentity({id:task.providerId},undefined,secret.options.email);
     }
     const code=statefulOAuthCallback(callback,secret.pendingState);
