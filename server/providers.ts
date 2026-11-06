@@ -1,4 +1,5 @@
 import { AppError, assert,MAX_USD } from './core.js';
+import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { parseProxy } from './proxies.js';
 import { gatelinkFailure } from './gatelink-errors.js';
@@ -68,8 +69,15 @@ function upstreamDiagnostic(status:number,path:string,body:unknown):UpstreamDiag
     }
   };
   visit(body,[],0);
-  const code=codes.includes('instance_exists')?'instance_exists':codes[0];
+  const arxRejected=Object.entries(fields).some(([path,value])=>/(?:^|\.)(?:error|code|errorcode)$/.test(path.toLowerCase().replace(/[_-]/g,''))&&value==='arx_request_rejected');
+  const detail=Object.entries(fields).filter(([path])=>/(?:^|\.)(?:detail|message)$/.test(path.toLowerCase())).map(([,value])=>String(value)).join(' ');
+  const providerNameExists=status===409&&arxRejected&&(/提供商名称.*(?:已存在|存在)/.test(detail)||/provider\s+name.*(?:already\s+exists|exists|in\s+use)/i.test(detail));
+  const code=providerNameExists?'provider_name_exists':codes.includes('instance_exists')?'instance_exists':codes[0];
   return {status,operation:path.split('?')[0],...(code?{code}:{}),...(Object.keys(fields).length?{fields}:{}),...(responseShape.length?{responseShape:[...new Set(responseShape)].slice(0,40)}:{})};
+}
+function uniqueAeromaxName(email:string,sessionId:string) {
+  const suffix=createHash('sha256').update(`${email}\0${sessionId}`).digest('hex').slice(0,8);
+  return `${email.slice(0,55)}-${suffix}`;
 }
 function diagnosticSummary(diagnostic:UpstreamDiagnostic) {
   const parts:string[]=[];
@@ -611,31 +619,42 @@ export class ProviderClient {
         const url=new URL(input);const values=url.searchParams.getAll('code');assert(values.length===1&&values[0],'请粘贴 E-coding 返回的授权码或完整回调地址');code=values[0]!;
       }
       assert(code.length>0&&code.length<=4096&&!/[\s#]/.test(code),'请粘贴有效的 E-coding 授权码');
-      const payload={sessionId:secret.sessionId,code,name:secret.options.email,note:secret.options.note};
+      let payload={sessionId:secret.sessionId,code,name:secret.options.email,note:secret.options.note};
       let data:any;
       try { data=await this.call('/api/v1/provider/uploader/authorize','POST',payload); }
       catch(error) {
+        let currentError=error;
+        // A confirmed name collision means Aeromax rejected the request before
+        // accepting the OAuth code. Retry once with a stable per-session name;
+        // never replay other ARX rejections or uncertain network failures.
+        if(currentError instanceof UpstreamError&&currentError.upstreamStatus===409&&currentError.upstreamCode==='provider_name_exists') {
+          payload={...payload,name:uniqueAeromaxName(secret.options.email,String(secret.sessionId))};
+          try {data=await this.call('/api/v1/provider/uploader/authorize','POST',payload);}
+          catch(nameRetryError) {currentError=nameRetryError;}
+        }
         // Upstream offers replacement as a separate, explicit user action;
         // an existing instance can still be running and must not be assumed stale.
-        if(!(error instanceof UpstreamError)||error.upstreamStatus!==409||error.upstreamCode!=='instance_exists')throw stageFailure(error,'平台 E 初次上号请求失败');
-        if(!allowInstanceReplacement)throw new AppError(409,
-          '平台 E 已有同名实例，请核对后重新生成授权链接，并勾选允许替换已有实例','UPSTREAM_INSTANCE_EXISTS');
-        // Aeromax can keep the old worker in its stopping phase briefly after
-        // accepting replacement. A documented instance_exists response is a
-        // definitive rejection, so the OAuth code was not consumed and the
-        // same approved replacement can be retried safely. Never retry a
-        // network failure or an unknown conflict because that write may have
-        // succeeded upstream.
-        for(let replacementAttempt=0;replacementAttempt<3;replacementAttempt++) {
-          if(replacementAttempt>0)await new Promise(resolve=>setTimeout(resolve,750*replacementAttempt));
-          try {
-            data=await this.call('/api/v1/provider/uploader/authorize','POST',{...payload,force:true});
-            break;
-          } catch(replacementError) {
-            const confirmedConflict=replacementError instanceof UpstreamError
-              && replacementError.upstreamStatus===409
-              && replacementError.upstreamCode==='instance_exists';
-            if(!confirmedConflict||replacementAttempt===2)throw stageFailure(replacementError,'平台 E 替换已有实例失败');
+        if(data===undefined&&(!(currentError instanceof UpstreamError)||currentError.upstreamStatus!==409||currentError.upstreamCode!=='instance_exists'))throw stageFailure(currentError,'平台 E 初次上号请求失败');
+        if(data===undefined) {
+          if(!allowInstanceReplacement)throw new AppError(409,
+            '平台 E 已有同名实例，请核对后重新生成授权链接，并勾选允许替换已有实例','UPSTREAM_INSTANCE_EXISTS');
+          // Aeromax can keep the old worker in its stopping phase briefly after
+          // accepting replacement. A documented instance_exists response is a
+          // definitive rejection, so the OAuth code was not consumed and the
+          // same approved replacement can be retried safely. Never retry a
+          // network failure or an unknown conflict because that write may have
+          // succeeded upstream.
+          for(let replacementAttempt=0;replacementAttempt<3;replacementAttempt++) {
+            if(replacementAttempt>0)await new Promise(resolve=>setTimeout(resolve,750*replacementAttempt));
+            try {
+              data=await this.call('/api/v1/provider/uploader/authorize','POST',{...payload,force:true});
+              break;
+            } catch(replacementError) {
+              const confirmedConflict=replacementError instanceof UpstreamError
+                && replacementError.upstreamStatus===409
+                && replacementError.upstreamCode==='instance_exists';
+              if(!confirmedConflict||replacementAttempt===2)throw stageFailure(replacementError,'平台 E 替换已有实例失败');
+            }
           }
         }
       }

@@ -226,6 +226,35 @@ describe('upstream adapter data integrity',()=>{
     expect(visible).not.toContain('user:password');
     expect(visible).not.toContain('private.example');
   });
+  it('retries a confirmed Aeromax provider-name collision once with a unique name',async()=>{
+    const authorizeBodies:any[]=[];
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async(url,init)=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/provider/uploader/authorize') {
+        const body=JSON.parse(String(init?.body));authorizeBodies.push(body);
+        return authorizeBodies.length===1
+          ?Response.json({error:'arx_request_rejected',detail:'upstream HTTP 409: 提供商名称已存在，请换一个名称'},{status:409})
+          :Response.json({id:'task',status:'succeeded',providerId:'provider-account'});
+      }
+      if(path==='/api/v1/view/provider')return Response.json({role:'provider',email:'fixture',accounts:[{providerId:'provider-account',displayName:'slot',health:'healthy',lastError:null,money:{tag:'unpriced',verifiedPointsMinor:0},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false},service:{ownerEmail:'owner@example.com',requests:0,refusedRequests:0,inputTokens:0,outputTokens:0,deployment:'ready'}}],live:{accounts:1,requestsRecent:0,requestsToday:0,rpm:0,rpmCapacity:null,eligible:1,healthy:1,rateLimited:0,reauth:0,degraded:0,retired:0,pointsToday:null,pointsTotal:0},timeline:[],earnings:{tag:'unpriced',verifiedPointsMinor:0},uploader:{state:'ready',detail:'ready'},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false}});
+      throw new Error(`unexpected ${path}`);
+    });
+    const remote=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'11111111-1111-4111-8111-111111111111'},'single-use-code',true);
+    expect(remote.id).toBe('provider-account');
+    expect(authorizeBodies).toHaveLength(2);
+    expect(authorizeBodies[0]).toMatchObject({name:'owner@example.com'});
+    expect(authorizeBodies[1].name).toMatch(/^owner@example\.com-[a-f0-9]{8}$/);
+    expect(authorizeBodies[1].force).toBeUndefined();
+  });
+  it('does not replay an Aeromax OAuth code for an unrelated ARX rejection',async()=>{
+    let writes=0;
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>{
+      writes++;return Response.json({error:'arx_request_rejected',detail:'upstream HTTP 409: account policy denied'},{status:409});
+    });
+    const error=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true).catch(error=>error);
+    expect(error).toBeInstanceOf(UpstreamError);
+    expect(writes).toBe(1);
+  });
   it('identifies a non-JSON Aeromax failure without exposing its raw body',async()=>{
     const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>new Response('oauth_code=private-one-use-code',{status:503,headers:{'content-type':'text/html','x-request-id':'req-html-503'}}));
     const error=await c.call('/api/v1/provider/uploader/authorize','POST',{}).catch(error=>error);
