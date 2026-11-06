@@ -185,6 +185,54 @@ describe('upstream adapter data integrity',()=>{
       {sessionId:attempt.secret.sessionId,code:'one-time-code',name:'claude-owner@example.com',force:true},
     ]);
   });
+  it.each([
+    {error:{code:'instance_exists',message:'an instance already exists'}},
+    {code:'INSTANCE-EXISTS',message:'an instance already exists'},
+    {error:{details:{reason:'instance_exists'}}},
+    {error_code:'InstanceExistsError'},
+  ])('recognizes a documented Aeromax instance conflict in alternate safe response shapes',async conflict=>{
+    const authorizeBodies:any[]=[];
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async(url,init)=>{
+      const path=new URL(String(url)).pathname;
+      if(path==='/api/v1/provider/uploader/authorize') {
+        const body=JSON.parse(String(init?.body));authorizeBodies.push(body);
+        return body.force
+          ?Response.json({id:'task',status:'succeeded',providerId:'provider-account'})
+          :Response.json(conflict,{status:409});
+      }
+      if(path==='/api/v1/view/provider')return Response.json({role:'provider',email:'fixture',accounts:[{providerId:'provider-account',displayName:'slot',health:'healthy',lastError:null,money:{tag:'unpriced',verifiedPointsMinor:0},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false},service:{ownerEmail:'owner@example.com',requests:0,refusedRequests:0,inputTokens:0,outputTokens:0,deployment:'ready'}}],live:{accounts:1,requestsRecent:0,requestsToday:0,rpm:0,rpmCapacity:null,eligible:1,healthy:1,rateLimited:0,reauth:0,degraded:0,retired:0,pointsToday:null,pointsTotal:0},timeline:[],earnings:{tag:'unpriced',verifiedPointsMinor:0},uploader:{state:'ready',detail:'ready'},stamp:{sourceId:'source',asOf:new Date().toISOString(),freshness:'fresh',staged:false}});
+      throw new Error(`unexpected ${path}`);
+    });
+    const remote=await c.exchangeOAuth({options:{email:'owner@example.com',proxy:fixedProxy.proxy},sessionId:'session'},'single-use-code',true);
+    expect(remote.id).toBe('provider-account');
+    expect(authorizeBodies.map(body=>body.force)).toEqual([undefined,true]);
+  });
+  it('reports a bounded sanitized Aeromax error contract without exposing the response body',async()=>{
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>Response.json({
+      error:{code:'account_conflict',message:'Owner private@example.com callback https://callback.example/?code=one-use-secret'},
+      phase:'initial',access_token:'private-token',httpProxy:'http://user:password@proxy.example.com:8080',authorizationUrl:'https://private.example/auth',
+    },{status:422,headers:{'x-request-id':'req-safe-123'}}));
+    const error=await c.call('/api/v1/provider/uploader/authorize','POST',{code:'one-use-secret'}).catch(error=>error);
+    expect(error).toBeInstanceOf(UpstreamError);
+    expect(error).toMatchObject({upstreamStatus:422,upstreamCode:'account_conflict'});
+    expect(error.message).toContain('account_conflict');
+    expect(error.message).toContain('phase=initial');
+    expect(error.diagnostic).toMatchObject({status:422,format:'json',requestId:'req-safe-123',code:'account_conflict'});
+    const visible=JSON.stringify({message:error.message,diagnostic:error.diagnostic});
+    expect(visible).not.toContain('private@example.com');
+    expect(visible).not.toContain('callback.example');
+    expect(visible).not.toContain('one-use-secret');
+    expect(visible).not.toContain('private-token');
+    expect(visible).not.toContain('user:password');
+    expect(visible).not.toContain('private.example');
+  });
+  it('identifies a non-JSON Aeromax failure without exposing its raw body',async()=>{
+    const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async()=>new Response('oauth_code=private-one-use-code',{status:503,headers:{'content-type':'text/html','x-request-id':'req-html-503'}}));
+    const error=await c.call('/api/v1/provider/uploader/authorize','POST',{}).catch(error=>error);
+    expect(error).toMatchObject({upstreamStatus:503,diagnostic:{status:503,format:'non_json',contentType:'text/html',responseBytes:31,requestId:'req-html-503'}});
+    expect(error.message).toContain('format=non_json');
+    expect(JSON.stringify(error)).not.toContain('private-one-use-code');
+  });
   it('requires explicit consent before replacing an existing Aeromax uploader instance',async()=>{
     const bodies:any[]=[];
     const c=new ProviderClient('aeromax',{username:'fixture',password:'fixture'},async(_url,init)=>{

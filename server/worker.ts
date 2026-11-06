@@ -80,6 +80,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
     });
     if(!job) return false;
     let recoveryStarted=false;
+    let connectionForLog:Row|undefined,attemptId:string|undefined;
 
     // Billing leases expire quickly after a process stops. Live collection or
     // settlement renews its lease while requests and account processing run.
@@ -89,6 +90,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
     try {
       if(job.kind==='daily_billing') await db.query(`UPDATE billing_days SET state='running',attempts=attempts+1,last_attempt_at=now(),error=NULL WHERE connection_id=$1 AND day=$2`,[job.connection_id,job.subject_id]);
       const [connection]=await db.query('SELECT * FROM connections WHERE id=$1',[job.connection_id]);
+      connectionForLog=connection;
       assert(connection?.enabled,'平台连接已停用');
       const [actor]=await db.query('SELECT * FROM users WHERE id=$1',[job.requested_by]);
       assert(actor?.active,'任务提交人已停用');
@@ -96,6 +98,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         SELECT u.id,u.parent_id,u.active FROM users u JOIN chain c ON c.parent_id=u.id) SELECT id FROM chain WHERE active=false LIMIT 1`,[actor.id]);
       assert(!blocked,'所属团队已停用');
       const payload=box.decrypt(job.payload),client=clientFactory(connection.provider,box.decrypt(connection.credentials));
+      attemptId=typeof payload.attemptId==='string'?payload.attemptId:undefined;
       recoveryStarted=job.kind==='oauth_start'&&!!payload.bindingId;
       let result:Record<string,any>={};
       let attempt:Row|undefined;
@@ -296,6 +299,12 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
       // OAuth codes and credential imports are one-use. Never blindly retry an
       // external mutation after a timeout or crash; reconcile the inventory first.
       const uncertain=['oauth_exchange','import_rt','set_enabled','set_proxy'].includes(job.kind)||recoveryStarted;
+      const upstream=error instanceof UpstreamError?{
+        status:error.upstreamStatus,...(error.upstreamCode?{code:error.upstreamCode}:{}),...(error.diagnostic?{diagnostic:error.diagnostic}:{}),
+      }:undefined;
+      console.error(JSON.stringify({event:'ccmax_job_failed',jobId:job.id,connectionId:job.connection_id,
+        ...(connectionForLog?.provider?{provider:connectionForLog.provider}:{}),kind:job.kind,state:uncertain?'needs_attention':'failed',
+        ...(attemptId?{attemptId}:{}),error:error instanceof UpstreamError?message:'任务执行失败',...(upstream?{upstream}:{})}));
       await db.query(`UPDATE jobs SET state=$2,error=$3,payload=$4,completed_at=now() WHERE id=$1`,[job.id,uncertain?'needs_attention':'failed',message,box.encrypt({})]);
       if(job.kind==='oauth_exchange') {
         try {

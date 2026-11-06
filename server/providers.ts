@@ -28,8 +28,63 @@ export const usesAdminOAuth=(provider:ProviderKey)=>provider==='ai008'||provider
 export type Credentials={username:string;password:string};
 export type UpstreamAccount={id:string;email:string;name:string;status:string;dailyUsd:string|null;cost7d:string|null;cost30d:string|null;utilization:number|null;proxyExternalId?:string|null;telemetry?:AccountTelemetry};
 export type OAuthOptions={email:string;proxy?:string;proxyExternalId?:string;accountType?:string;policyTemplateId?:string;groupIds?:string[];ccTemplateId?:string;existingExternalId?:string;note?:string};
+export type UpstreamDiagnostic={status:number;operation:string;format?:'json'|'non_json'|'unreadable';contentType?:string;responseBytes?:number;requestId?:string;code?:string;fields?:Record<string,string|number|boolean|null>;responseShape?:string[];stage?:string};
 export class UpstreamError extends AppError {
-  constructor(public upstreamStatus:number, message:string, public upstreamCode?:string) { super(502,message); }
+  constructor(public upstreamStatus:number, message:string, public upstreamCode?:string,public diagnostic?:UpstreamDiagnostic) { super(502,message); }
+}
+const diagnosticFields=new Set(['error','code','errorcode','type','reason','message','detail','phase','name','hostlabel','vmid','since','status','requestid','traceid']);
+const sensitiveField=/(?:access|authorization|callback|cookie|credential|password|proxy|refresh|secret|session|token)/i;
+function safeDiagnosticString(value:string) {
+  return value.slice(0,500)
+    .replace(/bearer\s+[^\s,;]+/gi,'Bearer [REDACTED]')
+    .replace(/https?:\/\/[^\s,;]+/gi,'[REDACTED_URL]')
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g,'[REDACTED_EMAIL]')
+    .replace(/\b(code|token|secret|password|proxy|callback)\s*[:=]\s*[^\s,;]+/gi,'$1=[REDACTED]')
+    .replace(/\b[A-Za-z0-9_=-]{32,}\b/g,'[REDACTED]')
+    .slice(0,240);
+}
+function diagnosticCode(value:unknown) {
+  if(typeof value!=='string'||value.length>64||!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value))return undefined;
+  const normalized=value.toLowerCase().replaceAll('-','_');
+  if(normalized.replaceAll('_','')==='instanceexists'||normalized.replaceAll('_','')==='instanceexistserror')return 'instance_exists';
+  return /(?:conflict|exists|invalid|denied|unauthorized|forbidden|duplicate|limit|failed|error|busy|locked)/.test(normalized)?normalized:undefined;
+}
+function upstreamDiagnostic(status:number,path:string,body:unknown):UpstreamDiagnostic {
+  const fields:Record<string,string|number|boolean|null>={},responseShape:string[]=[],codes:string[]=[];
+  const visit=(value:unknown,segments:string[],depth:number)=>{
+    if(depth>5||responseShape.length>=40||value===null||typeof value!=='object')return;
+    if(Array.isArray(value)) {for(let n=0;n<Math.min(value.length,3);n++)visit(value[n],[...segments,'[]'],depth+1);return;}
+    for(const [key,child] of Object.entries(value as Record<string,unknown>)) {
+      const pathSegments=[...segments,key],fieldPath=pathSegments.join('.'),normalizedKey=key.toLowerCase().replace(/[^a-z0-9]/g,'');
+      if(pathSegments.some(segment=>sensitiveField.test(segment)))continue;
+      responseShape.push(fieldPath);
+      if(child!==null&&typeof child==='object') {visit(child,pathSegments,depth+1);continue;}
+      if(['error','code','errorcode','type','reason'].includes(normalizedKey)) {
+        const code=diagnosticCode(child);if(code)codes.push(code);
+      }
+      if(!diagnosticFields.has(normalizedKey)||!['string','number','boolean'].includes(typeof child)&&child!==null)continue;
+      const safe=typeof child==='string'?safeDiagnosticString(child):child as number|boolean|null;
+      fields[fieldPath]=safe;
+    }
+  };
+  visit(body,[],0);
+  const code=codes.includes('instance_exists')?'instance_exists':codes[0];
+  return {status,operation:path.split('?')[0],...(code?{code}:{}),...(Object.keys(fields).length?{fields}:{}),...(responseShape.length?{responseShape:[...new Set(responseShape)].slice(0,40)}:{})};
+}
+function diagnosticSummary(diagnostic:UpstreamDiagnostic) {
+  const parts:string[]=[];
+  if(diagnostic.format)parts.push(`format=${diagnostic.format}`);
+  if(diagnostic.contentType)parts.push(`contentType=${diagnostic.contentType}`);
+  if(diagnostic.responseBytes!==undefined)parts.push(`bytes=${diagnostic.responseBytes}`);
+  if(diagnostic.requestId)parts.push(`requestId=${diagnostic.requestId}`);
+  if(diagnostic.code)parts.push(`code=${diagnostic.code}`);
+  for(const [path,value] of Object.entries(diagnostic.fields??{})) {
+    if(path.toLowerCase().endsWith('.code')||path.toLowerCase()==='code')continue;
+    parts.push(`${path}=${String(value)}`);
+    if(parts.length>=10)break;
+  }
+  if(diagnostic.responseShape?.length)parts.push(`shape=${diagnostic.responseShape.join(',')}`);
+  return parts.length?`（${parts.join('；')}）`:'';
 }
 function miniOperation(path:string) {
   const pathname=path.split('?')[0];
@@ -109,14 +164,20 @@ export class ProviderClient {
     }
     // Never expose a raw upstream body: account APIs can contain tokens/proxies.
     if(!response.ok) {
-      let upstreamCode:string|undefined;
-      if(this.provider==='aeromax'&&response.status===409&&path==='/api/v1/provider/uploader/authorize') {
-        try {
-          const failure=await response.clone().json() as {error?:unknown};
-          if(failure?.error==='instance_exists')upstreamCode='instance_exists';
-        } catch { /* Keep the generic status-only error for unknown response shapes. */ }
+      let diagnostic:UpstreamDiagnostic|undefined;
+      if(this.provider==='aeromax'&&path==='/api/v1/provider/uploader/authorize') {
+        const contentType=response.headers.get('content-type')?.split(';')[0].slice(0,80);
+        const rawRequestId=response.headers.get('x-request-id')??response.headers.get('x-correlation-id');
+        const requestId=rawRequestId&&/^[A-Za-z0-9._:-]{1,128}$/.test(rawRequestId)?rawRequestId:undefined;
+        let text:string|undefined;
+        try {text=await response.clone().text();}
+        catch {diagnostic={status:response.status,operation:path,format:'unreadable',...(contentType?{contentType}:{}),...(requestId?{requestId}:{})};}
+        if(text!==undefined) {
+          try {diagnostic={...upstreamDiagnostic(response.status,path,JSON.parse(text)),format:'json',...(contentType?{contentType}:{}),responseBytes:text.length,...(requestId?{requestId}:{})};}
+          catch {diagnostic={status:response.status,operation:path,format:'non_json',...(contentType?{contentType}:{}),responseBytes:text.length,...(requestId?{requestId}:{})};}
+        }
       }
-      throw new UpstreamError(response.status,this.provider==='gatelink'?await gatelinkFailure(response,path):`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}`,upstreamCode);
+      throw new UpstreamError(response.status,this.provider==='gatelink'?await gatelinkFailure(response,path):`平台返回 HTTP ${response.status}${response.status===403?'：当前主账号无此权限':''}${diagnostic?diagnosticSummary(diagnostic):''}`,diagnostic?.code,diagnostic);
     }
     if(response.status===204) return {};
     let text:string;
@@ -543,7 +604,7 @@ export class ProviderClient {
     this.requireProxy(secret.options);
     if(this.provider==='aeromax') {
       const stageFailure=(error:unknown,stage:string)=>error instanceof UpstreamError
-        ?new UpstreamError(error.upstreamStatus,`${stage}：${error.message}`,error.upstreamCode)
+        ?new UpstreamError(error.upstreamStatus,`${stage}：${error.message}`,error.upstreamCode,error.diagnostic?{...error.diagnostic,stage}:undefined)
         :error;
       const input=callback.trim();let code=input;
       if(/^https?:\/\//i.test(input)) {
