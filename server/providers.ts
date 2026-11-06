@@ -644,16 +644,25 @@ export class ProviderClient {
           // same approved replacement can be retried safely. Never retry a
           // network failure or an unknown conflict because that write may have
           // succeeded upstream.
-          for(let replacementAttempt=0;replacementAttempt<3;replacementAttempt++) {
+          let replacementRenamed=payload.name!==secret.options.email,confirmedInstanceConflicts=0;
+          for(let replacementAttempt=0;replacementAttempt<4;replacementAttempt++) {
             if(replacementAttempt>0)await new Promise(resolve=>setTimeout(resolve,750*replacementAttempt));
             try {
               data=await this.call('/api/v1/provider/uploader/authorize','POST',{...payload,force:true});
               break;
             } catch(replacementError) {
+              const confirmedNameCollision=replacementError instanceof UpstreamError
+                && replacementError.upstreamStatus===409
+                && replacementError.upstreamCode==='provider_name_exists';
+              if(confirmedNameCollision&&!replacementRenamed) {
+                payload={...payload,name:uniqueAeromaxName(secret.options.email,String(secret.sessionId))};
+                replacementRenamed=true;continue;
+              }
               const confirmedConflict=replacementError instanceof UpstreamError
                 && replacementError.upstreamStatus===409
                 && replacementError.upstreamCode==='instance_exists';
-              if(!confirmedConflict||replacementAttempt===2)throw stageFailure(replacementError,'平台 E 替换已有实例失败');
+              if(confirmedConflict&&++confirmedInstanceConflicts<3)continue;
+              throw stageFailure(replacementError,'平台 E 替换已有实例失败');
             }
           }
         }
