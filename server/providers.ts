@@ -666,7 +666,7 @@ export class ProviderClient {
         catch(error) {throw stageFailure(error,'平台 E 上号任务状态检查失败');}
       }
       assert(task.status==='succeeded'&&task.providerId,'E-coding 上号任务未成功完成',502);
-      return this.submittedIdentity({id:task.providerId},undefined);
+      return this.submittedIdentity({id:task.providerId},undefined,secret.options.email);
     }
     const code=statefulOAuthCallback(callback,secret.pendingState);
     if(this.provider==='gatelink') {
@@ -703,10 +703,16 @@ export class ProviderClient {
     assert(data.id,'平台未返回账号 ID',502);
     return this.submittedIdentity(data,options.proxyExternalId);
   }
-  private async submittedIdentity(data:any,expectedProxyId:string|undefined):Promise<UpstreamAccount> {
+  private async submittedIdentity(data:any,expectedProxyId:string|undefined,expectedEmail?:string):Promise<UpstreamAccount> {
     if(this.provider==='aeromax') {
-      const remote=(await this.listAccounts()).find(account=>account.id===String(data.id));
-      assert(remote && (!expectedProxyId||remote.proxyExternalId===expectedProxyId),'E-coding 未返回可核实的账号归属，请同步后由管理员核对',502);
+      const view=await this.call('/api/v1/view/provider');
+      assert(view.role==='provider'&&view.email&&String(view.email).toLowerCase()===this.credentials.username.toLowerCase(),'E-coding provider 返回身份不一致',502);
+      assert(Array.isArray(view.accounts),'E-coding provider 账号列表格式变化',502);
+      const matches=view.accounts.filter((account:any)=>String(account?.providerId)===String(data.id));
+      assert(matches.length===1,'E-coding 未返回唯一且可核实的账号 ID，请同步后由管理员核对',502);
+      const remote=this.normalize(matches[0]);
+      assert(!expectedEmail||remote.email===expectedEmail.trim().toLowerCase(),'E-coding 返回的账号归属邮箱与本次授权不一致，请管理员核对',502);
+      assert(!expectedProxyId||remote.proxyExternalId===expectedProxyId,'E-coding 未返回可核实的账号归属，请同步后由管理员核对',502);
       return remote;
     }
     // The label supplied by the user is never proof of ownership. If the write
