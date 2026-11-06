@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
 import { migrate, type DB } from './db.js';
 import { bootstrap, id, secretBox } from './core.js';
 import { openTestDB } from './test-db.js';
 import { ingestUsage } from './billing.js';
-import { createWorker, saveBinding } from './worker.js';
+import { createWorker, enqueue, saveBinding } from './worker.js';
 import { ProviderClient, type ProviderKey } from './providers.js';
 
 const encryptionKey='cd'.repeat(32),box=secretBox(encryptionKey),fixedUrl='http://user:secret@recovery.proxy.example.com:8080';
@@ -211,6 +211,30 @@ describe('owned platform account recovery',()=>{
     expect((await call('POST',`/api/bindings/${binding.id}/reauthorize`,{options:{},key:id()})).statusCode).toBe(200);
     expect(writes).toBe(1);
     expect((await db.query('SELECT account_id,external_id,status FROM bindings WHERE id=$1',[binding.id]))[0]).toMatchObject({account_id:account.id,external_id:binding.external_id,status:'disabled'});
+  });
+
+  it('persists and logs a safe structured Aeromax failure keyed by the job ID',async()=>{
+    const [connection]=await db.query(`INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES($1,'aeromax','Platform E',$2,0.5) RETURNING *`,[id(),box.encrypt({username:'fixture',password:'fixture'})]);
+    const attemptId=id(),secret={proxyId,options:{email:account.email,proxy:fixedUrl},session:{cookies:[],token:'',csrf:'',user:{role:'provider'}}};
+    await db.query(`INSERT INTO oauth_attempts(id,user_id,connection_id,account_id,state,secret,authorization_url,expires_at) VALUES($1,$2,$3,$4,'exchanging',$5,'',$6)`,[attemptId,agent.id,connection.id,account.id,box.encrypt(secret),new Date(Date.now()+600000)]);
+    const job=await enqueue(db,box,agent.id,connection.id,'oauth_exchange',{attemptId,accountId:account.id,proxyId,callback:'one-use-oauth-code'},id());
+    const errorLog=vi.spyOn(console,'error').mockImplementation(()=>{});
+    try {
+      const worker=createWorker(db,box,(provider,credentials)=>new ProviderClient(provider,credentials,async()=>Response.json({
+        error:{code:'account_conflict',message:'Owner private@example.com callback https://callback.example/?code=one-use-oauth-code'},
+        phase:'initial',token:'private-token',proxy:fixedUrl,
+      },{status:409})));
+      await worker.runOne();
+      const [result]=await db.query('SELECT state,error FROM jobs WHERE id=$1',[job.id]);
+      expect(result.state).toBe('needs_attention');
+      expect(result.error).toContain('account_conflict');
+      expect(result.error).toContain('phase=initial');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      const logged=JSON.parse(String(errorLog.mock.calls[0]?.[0]));
+      expect(logged).toMatchObject({event:'ccmax_job_failed',jobId:job.id,connectionId:connection.id,provider:'aeromax',kind:'oauth_exchange',attemptId,upstream:{status:409,code:'account_conflict'}});
+      const visible=JSON.stringify({jobError:result.error,logged});
+      for(const secretValue of ['private@example.com','callback.example','one-use-oauth-code','private-token','user:secret'])expect(visible).not.toContain(secretValue);
+    } finally {errorLog.mockRestore();}
   });
 
   it.each(['interrupted write','interrupted detail read'] as const)('handles Mini CC recovery with an %s without submitting the authorization code twice',async failure=>{
