@@ -70,8 +70,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     // removes that provider from agent-facing catalogs.
     const enabled=new Set<ProviderKey>(PROVIDER_KEYS);
     for(const state of states)if(state.enabled!==true&&state.enabled!=='true')enabled.delete(state.provider);
-    if(!canManageAccedra(user)) enabled.delete('accedra');
-    else enabled.add('accedra');
+    // Platform X is available to all users once an owner/Jaden has configured
+    // the shared connection; only credential management remains restricted.
+    enabled.add('accedra');
     return platformCatalog(false,enabled);
   };
   const assertAgentProvider=async(user:Row,provider:ProviderKey)=>{
@@ -284,8 +285,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       (SELECT r.effective_date::text FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_date
       FROM connections c ${root?'':'WHERE c.enabled=true'} ORDER BY c.created_at`,[current,req.user.id]);
     const catalog=await catalogFor(req.user);
-    const visibleRows=rows.filter(row=>canManageAccedra(req.user)||row.provider!=='accedra');
-    return {connections:visibleRows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
+    return {connections:rows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
       ...c,name:connectionName(req.user,c.provider,c.id,c.name),
       settlement_rate:root?payout_rate:own_rate,settlement_effective_date:root?payout_effective_date:own_effective_date,
       upcoming_settlement_rate:root?upcoming_payout_rate:own_upcoming_rate,upcoming_settlement_date:root?upcoming_payout_date:own_upcoming_date,
@@ -690,7 +690,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
         JOIN invoices i ON i.id=a.invoice_id WHERE a.user_id=$1
     ) corrected GROUP BY day ORDER BY day DESC LIMIT 14`,[req.user.id]);
     const snapshots=await visibleTelemetry(db,req.user,telemetryFilters.parse({}),connectionName);
-    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).filter(c=>canManageAccedra(req.user)||c.provider!=='accedra').map(c=>{
+    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).map(c=>{
       const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today'),week=aggregateTelemetry(group,'7d');
       return {...c,account_count:group.length,daily_usd:metrics.billedUsd.value,daily_covered:metrics.billedUsd.covered,
         seven_day_usd:week.billedUsd.value,seven_day_covered:week.billedUsd.covered,attribution:attributionTotals(group)};
