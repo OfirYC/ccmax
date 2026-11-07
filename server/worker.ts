@@ -168,6 +168,8 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
           // Keep the source snapshot for inspection without booking it today.
           if(remote.dailyUsd===null || remote.telemetry&&(remote.telemetry.day!==day||!remote.telemetry.sourceAt)) {skippedDaily++;continue;}
           const [binding]=await db.query('SELECT id,local_enabled FROM bindings WHERE connection_id=$1 AND external_id=$2',[connection.id,remote.id]);
+          // F inventory deliberately leaves owned submissions unbound until OAuth completes.
+          if(!binding&&connection.provider==='accedra'){skippedDaily++;continue;}
           if(!binding) {billingIssues.push({externalId:remote.id,message:'同步后找不到平台账号绑定'});continue;}
           if(connection.provider==='gatelink'&&(remote.status==='disabled'||binding.local_enabled===false)) {
             const [repeated]=await db.query(`SELECT 1 AS value FROM usage_days
@@ -220,7 +222,7 @@ export function createWorker(db:DB,box:SecretBox,clientFactory=(p:ProviderKey,c:
         if(recovery)assert(remote.id===recovery.external_id&&remote.email===account.email,'重新授权返回的账号 ID 或邮箱不一致，请同步核对；未替换原绑定',409);
         if(connection.provider==='accedra'&&attempt&&remote.nextAuthorization) {
           const next=remote.nextAuthorization,nextId=id();
-          assert(remote.email===account.email&&(actor.role==='owner'||!privateAuthorizationUrl(next.url)),'平台 F 授权身份或下一步链接无效',502);
+          assert(remote.email===account.email&&(actor.role==='owner'||!privateAuthorizationUrl(next.url)),'Platform X (✨ Anti-Ban) 授权身份或下一步链接无效',502);
           await db.transaction(async tx=>{
             await accountProxy(tx,box,account.id,proxy.id);
             await tx.query(`UPDATE oauth_attempts SET state='done',secret=$2,authorization_url='' WHERE id=$1`,[attempt!.id,box.encrypt({})]);

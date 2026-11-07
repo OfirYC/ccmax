@@ -221,7 +221,7 @@ export class ProviderClient {
     return {role:this.user.role,username:this.user.username};
   }
   async listAccounts():Promise<UpstreamAccount[]> {
-    if(this.provider==='accedra') {const client=this.accedra(),accounts=await client.accounts();this.providerSnapshot=await client.finance();return accounts;}
+    if(this.provider==='accedra') {const client=this.accedra(),accounts=await client.liveAccounts();this.providerSnapshot=await client.finance();return accounts;}
     const result:UpstreamAccount[]=[];
     const seen=new Set<string>(),emails=new Set<string>();let declaredTotal:number|undefined;
     for(let page=1;page<=1000;page++) {
@@ -523,7 +523,7 @@ export class ProviderClient {
     throw new UpstreamError(0,'平台代理分页超过上限');
   }
   async verifyProxyMapping(url:string,externalId:string) {
-    assert(this.provider!=='accedra','平台 F 不支持此操作，请联系管理员核对');
+    assert(this.provider!=='accedra','Platform X (✨ Anti-Ban) 不支持此操作，请联系管理员核对');
     const records=await this.remoteProxies();
     const record=records.find(p=>String(this.provider==='minicc'?(p.upstream_id??p.id):p.id)===externalId);
     assert(record && this.proxyMatches(record,url,false),'上游代理地址与账号固定代理不符或不可核实，已阻止上号',502);
@@ -532,7 +532,7 @@ export class ProviderClient {
     return this.usableProxy(record,true);
   }
   async provisionProxy(url:string,existingExternalId?:string) {
-    assert(this.provider!=='accedra','平台 F 不支持此操作，请联系管理员核对');
+    assert(this.provider!=='accedra','Platform X (✨ Anti-Ban) 不支持此操作，请联系管理员核对');
     const normalized=parseProxy(url).url;
     if(this.provider==='gatelink'||this.provider==='aeromax')return null;
     const before=await this.remoteProxies();
@@ -770,7 +770,7 @@ export class ProviderClient {
     assert(identity&&String(identity).toLowerCase()===email,'上游原账号不存在或邮箱不一致，请管理员同步核对；未覆盖其他账号',409);
   }
   async setEnabled(externalId:string,enabled:boolean) {
-    assert(this.provider!=='accedra','平台 F 不支持此操作，请联系管理员核对');
+    assert(this.provider!=='accedra','Platform X (✨ Anti-Ban) 不支持此操作，请联系管理员核对');
     if(this.provider==='aeromax')return this.call(`/api/v1/provider/accounts/${encodeURIComponent(externalId)}/actions`,'POST',{action:enabled?'enable':'disable'});
     if(this.provider==='gatelink') {
       assert(this.user?.role==='admin','Gatelink 启停账号需要上游管理员权限，当前主账号无此权限');
@@ -796,7 +796,7 @@ export class ProviderClient {
     assert(identity?.toLowerCase()===email&&status===(enabled?'active':'disabled'),'上游尚未确认目标账号状态，请同步核对；本地未提前修改状态',502);
   }
   async setAccountProxy(externalId:string,options:OAuthOptions) {
-    assert(this.provider!=='accedra','平台 F 不支持此操作，请联系管理员核对');
+    assert(this.provider!=='accedra','Platform X (✨ Anti-Ban) 不支持此操作，请联系管理员核对');
     this.requireProxy(options);
     if(this.provider==='aeromax') {
       await this.call(`/api/v1/provider/accounts/${encodeURIComponent(externalId)}/proxy`,'PUT',{httpProxy:options.proxy});

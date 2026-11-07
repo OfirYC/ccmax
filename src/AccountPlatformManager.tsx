@@ -62,7 +62,7 @@ export default function AccountPlatformManager({account,onClose,onOnboard,onRefr
               <button className="button" disabled={!!pending||!effectiveActive&&!canActivate} onClick={()=>submit(connection,binding,!effectiveActive)}>{effectiveActive?t('停用'):t('启用')}</button>
               <button className="button" disabled={!!pending} onClick={()=>{setEditing(binding.id);setEnabled(effectiveActive?'active':'disabled');}}>{t('编辑状态')}</button>
             </>}
-            {canManage&&current.ownership_verified&&connection.enabled&&connection.provider!=='F'&&<button className="button primary" disabled={!proxyReady||!!pending} onClick={()=>onOnboard(current,connection.id,binding.id)}>{t('重新授权')}</button>}
+            {canManage&&current.ownership_verified&&connection.enabled&&connection.provider!=='X'&&<button className="button primary" disabled={!proxyReady||!!pending} onClick={()=>onOnboard(current,connection.id,binding.id)}>{t('重新授权')}</button>}
           </div>
           {editing===binding.id&&connection.capabilities?.statusControl!==false&&<div className="account-platform-editor"><Field label={t('{0} 目标状态',[name])}><select value={enabled} onChange={event=>setEnabled(event.target.value)}><option value="active">{t('启用')}</option><option value="disabled">{t('停用')}</option></select></Field><button className="button primary" disabled={!!pending||enabled==='active'&&!canActivate} onClick={()=>submit(connection,binding,enabled==='active')}>{t('保存状态')}</button><button className="button" onClick={()=>setEditing('')}>{t('取消')}</button></div>}
           {connection.provider==='A'&&<p className="form-hint">{t('平台 A 主账号有管理员权限时同步上游状态；权限不足时同一按钮仅暂停或恢复 CCMAX 使用。')}</p>}

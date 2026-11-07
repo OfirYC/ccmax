@@ -88,3 +88,25 @@ describe('Accedra provider API contract',()=>{
     expect(error.message).toContain('401');
   });
 });
+
+describe('Accedra live provisional earnings',()=>{
+  const observed=()=>new Date().toISOString();
+  const report=(overrides:object={})=>({date:new Date(Date.now()+8*3600000).toISOString().slice(0,10),timezone:'Asia/Shanghai',basis:'credited_earnings',complete:false,snapshot_complete:true,observed_at:observed(),accounts:[{account_id:42,payout_multiplier:'0.25',credited_usd:'2.500000009999',billed_usd:'10.000000039996',requests:'3',tokens:'123456'}],total_credited_usd:'2.500000009999',...overrides});
+  const client=(value:any)=>new AccedraClient(credentials,async url=>envelope(String(url).endsWith('/accounts')?[owned,{...owned,id:43,email:'empty@example.com'}]:value));
+  it('maps current credited earnings into the existing daily provisional base while displaying actual token/bill counters',async()=>{
+    const value=report(),accounts=await client(value).liveAccounts();
+    expect(accounts[0]).toMatchObject({id:'42',dailyUsd:'10',telemetry:{sourceAt:value.observed_at,day:value.date,periods:{today:{requests:3,tokens:123456,billedUsd:'10.000000039996'}}}});
+    expect(accounts[1]).toMatchObject({id:'43',dailyUsd:'0',telemetry:{periods:{today:{requests:0,tokens:0,billedUsd:'0'}}}});
+    expect(accounts[0].telemetry?.quota.updatedAt).toBeNull();
+  });
+  it.each([{snapshot_complete:false},{complete:true},{date:'2000-01-01'},{timezone:'UTC'},{observed_at:'2000-01-01T00:00:00Z'},{observed_at:new Date(Date.now()+3600000).toISOString()},{total_credited_usd:'99'},
+    {accounts:[{account_id:42,payout_multiplier:'0.5',credited_usd:'2.500000009999',billed_usd:'5',requests:'1',tokens:'1'}]},
+    {accounts:[{account_id:42,payout_multiplier:'0.25',credited_usd:'2.500000009999',billed_usd:'10',requests:'1',tokens:'9007199254740992'}]},
+  ])('rejects partial, stale, future, or inconsistent live snapshots (%j)',async override=>{
+    await expect(client(report(override)).liveAccounts()).rejects.toThrow();
+  });
+  it('preserves unknown usage coverage rather than inventing zero tokens',async()=>{
+    const value=report({accounts:[{account_id:42,payout_multiplier:'0.25',credited_usd:'2.500000009999',billed_usd:'10',requests:null,tokens:null}]});
+    expect((await client(value).liveAccounts())[0].telemetry?.periods.today).toMatchObject({requests:null,tokens:null});
+  });
+});

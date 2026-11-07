@@ -42,3 +42,13 @@
 - Fresh whole-branch review found an OAuth lost-response/import race. Shared guarded inventory import now preserves OAuth completion for already owned accounts, whether previously verified or not, in both sync and daily billing paths. Regression demonstrated failure first; both recovery cases now pass. Independent reviewer reran 19 adapter/integration tests and found no remaining must-fix issues.
 
 - Final complete suite: 385 tests in 29 files passed (82.40s). TypeScript check and production build passed. Live adapter read-only accounts and exact balance schema smoke passed. Supporting Accedra PR60 merged; production deployment queued behind other existing runner work.
+
+## Live-display and alias follow-up
+
+- [x] Add failing adapter, alias, sync cadence and full provisional allocation coverage.
+- [x] Add live adapter validation and existing telemetry/provisional integration; preserve final billing and wallet separation.
+- [x] Rename public alias to Platform X (✨ Anti-Ban), keeping internal IDs unchanged.
+- [x] Add and verify scoped Accedra live ledger endpoint with token/bill coverage.
+- [ ] Review complete changes, run tests/check/build, update upstream PR18 and supporting backend release.
+
+- Live upgrade final verification: 400 tests in 30 files passed (121.44s); TypeScript and production build passed. Independent reviewer passed 40 targeted tests and found no must-fix issues. Backend live/daily PostgreSQL18 tests and full service/handler/routes package tests passed. Backend PR61 merged; deployment build in progress. Scheduler uses indexed durable idempotency buckets, avoiding full job-history scans.

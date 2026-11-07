@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { openTestDB } from './test-db.js';
 import { migrate, type DB } from './db.js';
-import { bootstrap, id, secretBox } from './core.js';
+import { bootstrap, id, secretBox, today } from './core.js';
 import { createApp } from './app.js';
 import { createWorker, enqueue } from './worker.js';
 import { ProviderClient } from './providers.js';
@@ -23,7 +23,7 @@ const api=(method:string,url:string,payload?:object)=>app.inject({method:method 
 
 async function fixture(){
   const connectionId=id(),accountId=id(),proxyId=id();
-  await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,snapshot_billing) VALUES($1,'accedra','F',$2,0.25,false)",[connectionId,box.encrypt(credentials)]);
+  await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,snapshot_billing) VALUES($1,'accedra','X',$2,0.25,false)",[connectionId,box.encrypt(credentials)]);
   await db.query("INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,0.25,'1970-01-01',$3)",[id(),connectionId,owner.id]);
   await db.query("INSERT INTO proxies(id,owner_id,name,endpoint,secret,fingerprint) VALUES($1,$2,'fixed','http://proxy.example:8080',$3,$1)",[proxyId,owner.id,box.encrypt({url:'http://proxy.example:8080'})]);
   await db.query("INSERT INTO accounts(id,owner_id,email,proxy_id,created_at) VALUES($1,$2,$3,$4,'2019-01-01')",[accountId,owner.id,accountId+'@example.com',proxyId]);
@@ -31,16 +31,16 @@ async function fixture(){
 }
 
 it('enforces the 0.25x contract and stores a provider key encrypted without requiring admin credentials',async()=>{
-  const invalid=await api('POST','/api/connections',{provider:'F',name:'F',username:'provider-api',password:credentials.password,payoutRate:0.5});
+  const invalid=await api('POST','/api/connections',{provider:'X',name:'X',username:'provider-api',password:credentials.password,payoutRate:0.5});
   expect(invalid.statusCode).toBe(400);
-  const valid=await api('POST','/api/connections',{provider:'F',name:'F',username:'provider-api',password:credentials.password,payoutRate:0.25});
+  const valid=await api('POST','/api/connections',{provider:'X',name:'X',username:'provider-api',password:credentials.password,payoutRate:0.25});
   expect(valid.statusCode).toBe(200);
   const [connection]=await db.query('SELECT * FROM connections WHERE id=$1',[valid.json().id]);
   expect(connection.payout_rate).toBe('0.2500');expect(connection.snapshot_billing).toBe(false);
   expect(connection.credentials).not.toContain(credentials.password);
   expect(box.decrypt(connection.credentials)).toEqual(credentials);
   const catalog=await api('GET','/api/connections');
-  expect(catalog.json().providers.F).toMatchObject({name:'平台 F',upstreamName:'Accedra',statusControl:false,proxyRotation:false});
+  expect(catalog.json().providers.X).toMatchObject({name:'Platform X (✨ Anti-Ban)',upstreamName:'Accedra',statusControl:false,proxyRotation:false});
   expect(catalog.body).not.toContain(credentials.password);
   expect((await api('PATCH','/api/connections/'+connection.id,{payoutRate:0.3})).statusCode).toBe(400);
 });
@@ -100,7 +100,7 @@ it('upgrades existing provider constraints idempotently without changing existin
     }
     await legacy.query('DELETE FROM migrations WHERE version=30');
     await migrate(legacy);await migrate(legacy);
-    await legacy.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES('new-f','accedra','F','encrypted',0.25)");
+    await legacy.query("INSERT INTO connections(id,provider,name,credentials,payout_rate) VALUES('new-f','accedra','X','encrypted',0.25)");
     expect((await legacy.query('SELECT version FROM migrations WHERE version=30')).length).toBe(1);
   }finally{await legacy.close();}
 });
@@ -140,6 +140,7 @@ it.each([false,true])('recovers lost completion responses through sync and billi
     const path=new URL(String(url)).pathname,reply=(data:any)=>Response.json({code:0,data});
     if(path.endsWith('/accounts')&&init?.method==='POST')return reply({account:remote(),access_key:'recovery-access'});
     if(path.endsWith('/accounts'))return reply(completed?[remote()]:[]);
+    if(path.endsWith('/live-statement'))return reply({date:today(),timezone:'Asia/Shanghai',basis:'credited_earnings',complete:false,snapshot_complete:true,observed_at:new Date().toISOString(),accounts:[],total_credited_usd:'0'});
     if(path.endsWith('/daily-statement'))return reply({date:'2020-01-01',timezone:'Asia/Shanghai',basis:'credited_earnings',complete:true,accounts:[{account_id:84,payout_multiplier:'0.25',credited_usd:'1'}],total_credited_usd:'1'});
     if(path.endsWith('/earnings'))return reply({balance:{available_amount:'0',held_amount:'0',lifetime_earned:'0',lifetime_paid:'0',withdrawable_amount:'0'}});
     if(path.endsWith('/verify')){
@@ -162,11 +163,51 @@ it.each([false,true])('recovers lost completion responses through sync and billi
   await createWorker(db,box,clientFactory,['daily_billing']).runOne();
   expect(await db.query('SELECT id FROM bindings WHERE account_id=$1',[f.accountId])).toHaveLength(0);
   await db.query("UPDATE jobs SET state='succeeded' WHERE kind='sync' AND state='queued'");
-  await enqueue(db,box,owner.id,f.connectionId,'sync',{},id());
+  const sync=await enqueue(db,box,owner.id,f.connectionId,'sync',{},id());
   await createWorker(db,box,clientFactory,['sync']).runOne();
+  expect((await db.query('SELECT state FROM jobs WHERE id=$1',[sync.id]))[0].state).toBe('succeeded');
   expect(await db.query('SELECT id FROM bindings WHERE account_id=$1',[f.accountId])).toHaveLength(0);
   const retry=await api('POST','/api/accounts/'+f.accountId+'/authorize',{targets:[{connectionId:f.connectionId,options:{}}],key:id()});
   expect(retry.statusCode).toBe(200);await worker.runOne();
   expect((await db.query('SELECT ownership_verified FROM accounts WHERE id=$1',[f.accountId]))[0].ownership_verified).toBe(true);
   expect((await db.query('SELECT external_id FROM bindings WHERE account_id=$1',[f.accountId]))[0].external_id).toBe('84');
+});
+
+it('updates provisional agent earnings and real token bills on each sync without adding withdrawable money or double counting',async()=>{
+ const f=await fixture(),binding=id(),day=today();let credit='2.5',bill='10',tokens='1000',corrupt=false;
+ const invited=await api('POST','/api/team',{name:'Live agent',email:'live-agent@example.com',password:'live agent test password',rates:{A:0.2,B:0.2,C:0.2,D:0.2,E:0.2,X:0.2},effectiveFrom:'1970-01-01'});
+ expect(invited.statusCode,invited.body).toBe(200);const agent=invited.json().user;
+ await db.query('UPDATE accounts SET owner_id=$2,ownership_verified=true WHERE id=$1',[f.accountId,agent.id]);
+ await db.query("INSERT INTO bindings(id,account_id,connection_id,external_id,status,created_at) VALUES($1,$2,$3,'42','active','2019-01-01')",[binding,f.accountId,f.connectionId]);
+ const clientFactory=(provider:any,creds:any)=>new ProviderClient(provider,creds,async url=>{
+  const path=new URL(String(url)).pathname,reply=(data:any)=>Response.json({code:0,data});
+  if(path.endsWith('/accounts'))return reply([{id:42,email:f.email,status:'active',onboarding_status:'complete',usage_5h:20,usage_7d:30}]);
+  if(path.endsWith('/live-statement'))return reply({date:day,timezone:'Asia/Shanghai',basis:'credited_earnings',complete:false,snapshot_complete:true,observed_at:new Date().toISOString(),accounts:[{account_id:42,payout_multiplier:'0.25',credited_usd:credit,billed_usd:bill,requests:'2',tokens}],total_credited_usd:corrupt?'999':credit});
+  if(path.endsWith('/daily-statement'))return reply({date:day,timezone:'Asia/Shanghai',basis:'credited_earnings',complete:true,accounts:[{account_id:42,payout_multiplier:'0.25',credited_usd:credit}],total_credited_usd:credit});
+  if(path.endsWith('/earnings'))return reply({balance:{available_amount:credit,held_amount:'0',lifetime_earned:credit,lifetime_paid:'0',withdrawable_amount:credit}});
+  throw Error('Unexpected request');
+ });
+ await db.query("UPDATE jobs SET state='succeeded' WHERE kind='sync' AND state='queued'");
+ const worker=createWorker(db,box,clientFactory,['sync']);
+ const sync=async()=>{const job=await enqueue(db,box,owner.id,f.connectionId,'sync',{},id());await worker.runOne();return (await db.query('SELECT state FROM jobs WHERE id=$1',[job.id]))[0].state;};
+ expect(await sync()).toBe('succeeded');
+ credit='5';bill='20';tokens='2000';expect(await sync()).toBe('succeeded');expect(await sync()).toBe('succeeded');
+ const [usage]=await db.query('SELECT * FROM usage_days WHERE binding_id=$1 AND day=$2',[binding,day]);
+ expect(usage).toMatchObject({state:'provisional',raw_usd:'20.00000000'});
+ const earnings=await db.query('SELECT user_id,gross_usd,downstream_usd,profit_usd FROM earnings WHERE usage_id=$1',[usage.id]);
+ expect(earnings.find(e=>e.user_id===owner.id)).toMatchObject({gross_usd:'5.00000000',downstream_usd:'4.00000000',profit_usd:'1.00000000'});
+ expect(earnings.find(e=>e.user_id===agent.id)).toMatchObject({gross_usd:'4.00000000',profit_usd:'4.00000000'});
+ const [telemetry]=await db.query('SELECT data FROM binding_telemetry WHERE binding_id=$1',[binding]);
+ expect(telemetry.data.periods.today).toMatchObject({requests:2,tokens:2000,billedUsd:'20'});
+ expect(await db.query('SELECT * FROM ledger WHERE user_id=$1',[agent.id])).toHaveLength(0);
+ expect(await db.query('SELECT * FROM invoices WHERE user_id=$1',[agent.id])).toHaveLength(0);
+ corrupt=true;expect(await sync()).toBe('failed');
+ expect((await db.query('SELECT raw_usd FROM usage_days WHERE id=$1',[usage.id]))[0].raw_usd).toBe('20.00000000');corrupt=false;
+ try {
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(Date.parse(day+'T16:01:00Z'));
+  await db.query('INSERT INTO billing_days(connection_id,day) VALUES($1,$2)',[f.connectionId,day]);
+  await enqueue(db,box,owner.id,f.connectionId,'daily_billing',{day},id());await createWorker(db,box,clientFactory,['daily_billing']).runOne();
+  expect((await db.query('SELECT state FROM usage_days WHERE id=$1',[usage.id]))[0].state).toBe('final');
+  expect((await db.query('SELECT profit_usd FROM earnings WHERE usage_id=$1 AND user_id=$2',[usage.id,agent.id]))[0].profit_usd).toBe('4.00000000');
+ } finally {vi.useRealTimers();}
 });
