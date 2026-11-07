@@ -49,6 +49,8 @@
 - [x] Add live adapter validation and existing telemetry/provisional integration; preserve final billing and wallet separation.
 - [x] Rename public alias to Platform X (✨ Anti-Ban), keeping internal IDs unchanged.
 - [x] Add and verify scoped Accedra live ledger endpoint with token/bill coverage.
-- [ ] Review complete changes, run tests/check/build, update upstream PR18 and supporting backend release.
+- [x] Review complete changes, run tests/check/build, update upstream PR18 and supporting backend release.
 
 - Live upgrade final verification: 400 tests in 30 files passed (121.44s); TypeScript and production build passed. Independent reviewer passed 40 targeted tests and found no must-fix issues. Backend live/daily PostgreSQL18 tests and full service/handler/routes package tests passed. Backend PR61 merged; deployment build in progress. Scheduler uses indexed durable idempotency buckets, avoiding full job-history scans.
+
+- Backend release completed: merge 15ebd51786b93f3cb19c2f57f53e9cbc5d9ed71a; CI42344370853 and Deploy42344632209 succeeded. Production read-only smoke through the actual CCMAX adapter and scoped provider key passed live inventory/earnings/usage, balance and completed-day statement shapes. The provider currently has zero accounts; non-zero token/earnings and full consent flows remain covered by fixtures rather than a real Claude authorization. Upstream CCMAX PR18 updated, remains open and unmerged.
