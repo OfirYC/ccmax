@@ -30,28 +30,6 @@ export async function createDailyInvoices(db: DB, owner: Row, day: string) {
   return { created, issues };
 }
 
-async function automaticDayReady(db:DB,day:string,connectionId:string,hasIssues:boolean) {
-  if(hasIssues)return false;
-  // Platform E has no automatic USD statement. Its unrelated manual-review
-  // jobs must not hold up A–D; an actual stored USD day still participates.
-  const [result]=await db.query(`WITH eligible_connections AS (
-      SELECT c.* FROM connections c WHERE c.provider<>'aeromax'
-      OR EXISTS(SELECT 1 FROM usage_days u JOIN bindings b ON b.id=u.binding_id WHERE b.connection_id=c.id AND u.day=$1)
-    ) SELECT NOT EXISTS(
-      SELECT 1 FROM eligible_connections c WHERE c.id<>$2
-      AND ((c.enabled AND (c.created_at AT TIME ZONE 'Asia/Shanghai')::date<=$1)
-        OR EXISTS(SELECT 1 FROM usage_days u JOIN bindings b ON b.id=u.binding_id WHERE b.connection_id=c.id AND u.day=$1))
-      AND NOT EXISTS(SELECT 1 FROM billing_days d WHERE d.connection_id=c.id AND d.day=$1 AND d.state='succeeded' AND d.issue_count=0)
-    ) AND NOT EXISTS(
-      SELECT 1 FROM usage_days u JOIN bindings b ON b.id=u.binding_id JOIN accounts a ON a.id=b.account_id
-      JOIN eligible_connections c ON c.id=b.connection_id
-      WHERE u.day=$1 AND a.ownership_verified AND u.state<>'final'
-    ) AND NOT EXISTS(
-      SELECT 1 FROM billing_entries e JOIN eligible_connections c ON c.id=e.connection_id WHERE e.day=$1 AND e.state<>'recorded'
-    ) AS ready`,[day,connectionId]);
-  return !!result.ready;
-}
-
 export async function recordDailyStatement(db: DB, connection: Row, owner: Row, day: string, input: DailyAmount[],
   options:{basis?:'upstream'|'snapshot';autoFinalize?:boolean;issues?:Issue[];sourceError?:string;reviewed?:boolean}={}) {
   assert(day < today(), '仅可结算已经结束的北京时间日期');
@@ -88,14 +66,14 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
   for (const row of rows) {
     try {
       const recorded=await db.transaction(async tx => {
-        const [binding] = await tx.query(`SELECT b.id,a.owner_id,a.ownership_verified FROM bindings b
+        const [binding] = await tx.query(`SELECT b.id,b.status,b.local_enabled,a.owner_id,a.ownership_verified FROM bindings b
           JOIN accounts a ON a.id=b.account_id WHERE b.connection_id=$1 AND b.external_id=$2`, [connection.id, row.externalId]);
         assert(binding, '历史账单账号尚未同步，请同步平台账号', 409);
         if(basis==='snapshot'&&new Decimal(row.rawUsd).gt(0)) {
           const [repeated]=await tx.query(`SELECT 1 AS value FROM usage_days
-            WHERE binding_id=$1 AND day=($2::date-interval '1 day')::date AND raw_usd=$3::numeric
-            AND source IN ('live_snapshot','daily_snapshot') LIMIT 1`,[binding.id,day,row.rawUsd]);
-          assert(!repeated,'当日快照与前一日完全相同，疑似上游缓存；已阻止重复结算并等待真实日账单',409);
+            WHERE binding_id=$1 AND day<$2::date AND day>=($2::date-interval '7 days')
+            AND raw_usd=$3::numeric AND raw_usd>0 AND source IN ('live_snapshot','daily_snapshot') LIMIT 1`,[binding.id,day,row.rawUsd]);
+          assert(!repeated,'当日快照与近期完全相同，疑似上游缓存；已阻止重复结算并等待真实日账单',409);
         }
         const owned=!!binding.owner_id&&binding.ownership_verified;
         const usageId = await ingestUsage(tx, { bindingId: binding.id, day, rawUsd: row.rawUsd, final: autoFinalize&&owned,
@@ -134,8 +112,10 @@ export async function recordDailyStatement(db: DB, connection: Row, owner: Row, 
   const preliminaryState=issues.length?'needs_attention':'succeeded';
   await db.query(`UPDATE billing_days SET state=$3,finalized_count=$4,issue_count=$5,issues=$6,error=NULL,source_error=$7
     WHERE connection_id=$1 AND day=$2`,[connection.id,day,preliminaryState,finalized,issues.length,JSON.stringify(issues.slice(0,100)),options.sourceError??null]);
-  const invoices = await automaticDayReady(db,day,connection.id,!!issues.length)
-    ? await createDailyInvoices(db, owner, day) : {created:0,issues:[] as Issue[]};
+  // Invoice clean, finalized rows even when another connection is blocked.
+  // The blocked billing entries stay out of invoiceItems and will be retried
+  // later, so one broken platform cannot hold back unrelated earnings.
+  const invoices = await createDailyInvoices(db, owner, day);
   issues.push(...invoices.issues);
   const state = issues.length ? 'needs_attention' : 'succeeded';
   await db.transaction(async tx => {

@@ -59,7 +59,7 @@ describe('automatic daily billing',()=>{
     expect((await balance(db,leaf.id)).available).toBe('10.00000000');
   });
 
-  it('waits for every eligible platform day before creating automatic invoices',async()=>{
+  it('invoices clean finalized rows even when another platform day is incomplete',async()=>{
     const [second]=await db.query("INSERT INTO connections(id,provider,name,credentials,payout_rate,created_at) VALUES($1,'ai008','Second upstream',$2,0.3,$3) RETURNING *",[id(),box.encrypt({username:'fixture',password:'fixture'}),day+'T00:00:00+08:00']);
     await db.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date) VALUES($1,$2,0.3,$3)',[id(),second.id,day]);
     const accountId=id(),secondBinding=id();
@@ -68,8 +68,8 @@ describe('automatic daily billing',()=>{
     await db.query('INSERT INTO billing_days(connection_id,day) VALUES($1,$2)',[second.id,day]);
 
     const first=await recordDailyStatement(db,connection,owner,day,[{externalId:'real',rawUsd:'100'}]);
-    expect(first.invoices).toBe(0);
-    expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
+    expect(first.invoices).toBe(3);
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(3);
 
     const complete=await recordDailyStatement(db,second,owner,day,[{externalId:'second',rawUsd:'50'}]);
     expect(complete.invoices).toBe(3);
@@ -84,8 +84,8 @@ describe('automatic daily billing',()=>{
 
     const result=await recordDailyStatement(db,connection,owner,day,[{externalId:'real',rawUsd:'100'}]);
 
-    expect(result).toMatchObject({state:'needs_attention',invoices:0,issueCount:1});
-    expect(await db.query('SELECT * FROM invoices')).toHaveLength(0);
+    expect(result).toMatchObject({state:'needs_attention',invoices:3,issueCount:1});
+    expect(await db.query('SELECT * FROM invoices')).toHaveLength(3);
     expect(await db.query("SELECT external_id,state FROM billing_entries WHERE external_id='missing'"))
       .toEqual([{external_id:'missing',state:'blocked'}]);
   });
@@ -116,11 +116,11 @@ describe('automatic daily billing',()=>{
     const unassigned=await account('unassigned',null,false);
     const input=[{externalId:'real',rawUsd:'100'},{externalId:'unassigned',rawUsd:'10'}];
     const first=await recordDailyStatement(db,connection,owner,day,input);
-    expect(first).toMatchObject({state:'needs_attention',finalized:1,issueCount:1,invoices:0});
+    expect(first).toMatchObject({state:'needs_attention',finalized:1,issueCount:1,invoices:3});
     expect((await db.query('SELECT * FROM upstream_statements'))[0].rows).toHaveLength(2);
     await db.query('UPDATE accounts SET owner_id=$2,ownership_verified=true WHERE id=$1',[unassigned.account_id,agent.id]);
     const second=await recordDailyStatement(db,connection,owner,day,input);
-    expect(second).toMatchObject({state:'succeeded',finalized:2,invoices:3});
+    expect(second).toMatchObject({state:'succeeded',finalized:2,invoices:2});
     expect(await db.query('SELECT * FROM invoice_items')).toHaveLength(5);
     expect(await db.query('SELECT * FROM upstream_statements')).toHaveLength(1);
   });
@@ -146,7 +146,7 @@ describe('automatic daily billing',()=>{
   });
 
   it('blocks an unchanged nonzero snapshot carried into the next Beijing day',async()=>{
-    const previous=shiftBillingDay(day,-1);
+    const previous=shiftBillingDay(day,-2);
     await db.query('UPDATE connection_rates SET effective_date=$1',[previous]);
     await db.query('UPDATE rates SET effective_date=$1',[previous]);
     await db.transaction(tx=>ingestUsage(tx,{bindingId:binding.id,day:previous,rawUsd:'706.249458',final:true,source:'daily_snapshot'}));
