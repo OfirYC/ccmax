@@ -221,6 +221,21 @@ export async function migrate(db: DB) {
       await extendProviders(tx,['connections','rates','invitation_rates']);
       await tx.query('INSERT INTO migrations(version) VALUES (30)');
     }
+    if (!done.some(row=>Number(row.version)===31)) {
+      // Platform X defaults were introduced after some connections already
+      // existed. Backfill the personal 0.25 quote only when a user has no
+      // explicit historical quote; never overwrite manual pricing.
+      await tx.query(`INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by)
+        SELECT md5('platform-x-default:'||c.id||':'||u.id),u.id,'accedra',0.25,
+          (c.created_at AT TIME ZONE 'Asia/Shanghai')::date,owner.id
+        FROM connections c
+        JOIN users u ON u.role='agent'
+        JOIN users owner ON owner.role='owner'
+        WHERE c.provider='accedra'
+          AND NOT EXISTS (SELECT 1 FROM rates r WHERE r.user_id=u.id AND r.provider='accedra')
+        ON CONFLICT(user_id,provider,effective_date) DO NOTHING`);
+      await tx.query('INSERT INTO migrations(version) VALUES (31)');
+    }
     // Compatibility upgrades that do not change the numbered migration
     // contract: verified account proxy rotation and local usage pausing are
     // safe to apply idempotently on every startup, including v20 databases.
