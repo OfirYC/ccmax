@@ -1469,7 +1469,6 @@
   "当前可提现资金 · USD": "Tiền hiện có thể rút",
   "上号器": "Uploader",
   "今日产值": "Today output",
-  "今日平台账单": "Hóa đơn nền tảng hôm nay",
   "待人工核对": "Chờ đối soát thủ công",
   "上游原始点数": "Điểm gốc từ nền tảng",
   "按固定汇率换算：1 USD = ¥6.7": "Quy đổi cố định: 1 USD = ¥6,7",
@@ -1542,5 +1541,6 @@
   "Platform X (✨ Anti-Ban) 的上游结算折扣固定为 0.25。": "Platform X (✨ Anti-Ban) có tỷ lệ quyết toán thượng nguồn cố định là 0.25.",
   "接入后不可更换账号固定代理": "Không thể thay đổi proxy tài khoản sau khi kết nối",
   "请继续完成下一步平台授权": "Tiếp tục bước ủy quyền tiếp theo",
-  "Platform X (✨ Anti-Ban) 需要逐步完成独立授权；每一步使用新的授权链接和回调。": "Hoàn tất ủy quyền nền tảng F theo từng bước; mỗi bước dùng liên kết ủy quyền và callback mới."
+  "Platform X (✨ Anti-Ban) 需要逐步完成独立授权；每一步使用新的授权链接和回调。": "Hoàn tất ủy quyền nền tảng F theo từng bước; mỗi bước dùng liên kết ủy quyền và callback mới.",
+  "添加 Platform X API 密钥": "Thêm khóa API Platform X"
 }

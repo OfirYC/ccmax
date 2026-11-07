@@ -38,6 +38,9 @@ const email=z.email().max(200).transform(v=>v.toLowerCase());
 const password=z.string().min(12,'密码至少 12 位').max(200);
 const key=z.string().min(8).max(100);
 const publicUser=(u:Row)=>({id:u.id,name:u.name,email:u.email,role:u.role,parent_id:u.parent_id,active:u.active,created_at:u.created_at});
+const ACCEDRA_MANAGER_EMAIL='jadencharles728@gmail.com';
+const canManageAccedra=(user:Row)=>user.role==='owner'||String(user.email).toLowerCase()===ACCEDRA_MANAGER_EMAIL;
+const canManageConnection=(user:Row,connection:Row)=>user.role==='owner'||(connection.provider==='accedra'&&String(user.email).toLowerCase()===ACCEDRA_MANAGER_EMAIL);
 // All roles receive public platform identity, including administrators and CSVs.
 // Saved labels can contain master-account emails and are never display names.
 const connectionName=(_user:Row,provider:ProviderKey,connectionId:string,_internalName:string)=>`${publicPlatformName(provider)} · ${connectionId.slice(0,8)}`;
@@ -57,7 +60,8 @@ const batchPricingSchema=z.object({provider,userIds:z.array(identifier).min(1).m
 
 export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string;production?:boolean;logger?:boolean}) {
   const box=secretBox(config.encryptionKey);
-  const catalogFor=async(owner:boolean)=>{
+  const catalogFor=async(user:Row,ownerView=user.role==='owner')=>{
+    const owner=ownerView;
     if(owner)return platformCatalog(true);
     const states=await db.query<{provider:ProviderKey;enabled:string|boolean}>(`SELECT provider,bool_or(enabled) AS enabled
       FROM connections GROUP BY provider ORDER BY provider`);
@@ -66,11 +70,13 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     // removes that provider from agent-facing catalogs.
     const enabled=new Set<ProviderKey>(PROVIDER_KEYS);
     for(const state of states)if(state.enabled!==true&&state.enabled!=='true')enabled.delete(state.provider);
+    if(!canManageAccedra(user)) enabled.delete('accedra');
+    else enabled.add('accedra');
     return platformCatalog(false,enabled);
   };
   const assertAgentProvider=async(user:Row,provider:ProviderKey)=>{
     if(user.role==='owner')return;
-    const catalog=await catalogFor(false);
+    const catalog=await catalogFor(user);
     assert(!!catalog[provider],'平台连接不存在或已停用',409);
   };
   const keys=apiKeyService(db,config.appUrl);
@@ -197,7 +203,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     // The team quote surface follows active platforms for every role. Owners
     // still see paused connections in Platform management so they can resume
     // them, while old rates and historical billing remain stored untouched.
-    const catalog=await catalogFor(false),visible=new Set(Object.keys(catalog));
+    const catalog=await catalogFor(req.user,false),visible=new Set(Object.keys(catalog));
     return {users,rates:rates.filter(row=>visible.has(row.provider)),upcoming:upcoming.filter(row=>visible.has(row.provider)),period:q,providers:catalog};
   });
   app.get('/api/team/pricing',async req=>pricingReport(db,req.user));
@@ -274,8 +280,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       (SELECT r.rate FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_rate,
       (SELECT r.effective_date::text FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_date
       FROM connections c ${root?'':'WHERE c.enabled=true'} ORDER BY c.created_at`,[current,req.user.id]);
-    const catalog=await catalogFor(root);
-    return {connections:rows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
+    const catalog=await catalogFor(req.user);
+    const visibleRows=rows.filter(row=>canManageAccedra(req.user)||row.provider!=='accedra');
+    return {connections:visibleRows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
       ...c,name:connectionName(req.user,c.provider,c.id,c.name),
       settlement_rate:root?payout_rate:own_rate,settlement_effective_date:root?payout_effective_date:own_effective_date,
       upcoming_settlement_rate:root?upcoming_payout_rate:own_upcoming_rate,upcoming_settlement_date:root?upcoming_payout_date:own_upcoming_date,
@@ -283,8 +290,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     })),providers:catalog,today:current};
   });
   app.post('/api/connections',async req=>{
-    await requireOwner(req.user);
     const d=z.object({provider,name:z.string().trim().min(1).max(80),username:z.string().min(1).max(200),password:z.string().min(1).max(500),payoutRate:rate,effectiveFrom:date.optional(),snapshotBilling:z.boolean().optional(),initialAgentRate:rate.optional()}).parse(req.body);
+    assert(req.user.role==='owner'||(d.provider==='accedra'&&canManageAccedra(req.user)),'仅平台管理员或指定 Platform X 管理员可配置此平台',403);
     if(d.provider==='accedra'){assert(d.payoutRate===0.25,'Platform X (✨ Anti-Ban) 合同折扣固定为 0.25');assert(!d.snapshotBilling,'Platform X (✨ Anti-Ban) 仅使用已入账收益日账单');}
     const connectionId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
     await db.transaction(async tx=>{
@@ -302,8 +309,10 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     return {id:connectionId,job};
   });
   app.patch('/api/connections/:id',async req=>{
-    await requireOwner(req.user);const target=identifier.parse((req.params as Row).id);
+    const target=identifier.parse((req.params as Row).id);
     const d=z.object({enabled:z.boolean().optional(),payoutRate:rate.optional(),username:z.string().max(200).optional(),password:z.string().min(1).max(500).optional(),name:z.string().trim().min(1).max(80).optional(),snapshotBilling:z.boolean().optional()}).parse(req.body);
+    const [permissionConnection]=await db.query('SELECT provider FROM connections WHERE id=$1',[target]);
+    assert(permissionConnection && canManageConnection(req.user,permissionConnection),'仅平台管理员或指定 Platform X 管理员可配置此平台',403);
     await db.transaction(async tx=>{
       await lockPricing(tx);
       const effective=nextDay();
@@ -396,7 +405,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       return {...a,proxy_bound:!!a.proxy_id,proxy_id:own?a.proxy_id:null,proxy_name:own?a.proxy_name:null,proxy_endpoint:own?a.proxy_endpoint:null,
         proxy_sync_state:!a.proxy_id?null:active?.state??(failed?'needs_attention':pending.length?'pending':'succeeded'),proxy_sync_error:failed?.error??null,
         bindings:visibleBindings.filter(b=>b.account_id===a.id).map(b=>({...b,proxy_verified:!!a.proxy_id&&b.proxy_id===a.proxy_id,proxy_id:own?b.proxy_id:null}))};
-    }),providers:await catalogFor(req.user.role==='owner'),day:today()};
+    }),providers:await catalogFor(req.user),day:today()};
   });
   app.post('/api/accounts/:id/proxy',async req=>{
     const accountId=identifier.parse((req.params as Row).id),d=z.object({proxyId:identifier}).parse(req.body);
@@ -678,14 +687,14 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
         JOIN invoices i ON i.id=a.invoice_id WHERE a.user_id=$1
     ) corrected GROUP BY day ORDER BY day DESC LIMIT 14`,[req.user.id]);
     const snapshots=await visibleTelemetry(db,req.user,telemetryFilters.parse({}),connectionName);
-    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).map(c=>{
+    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).filter(c=>canManageAccedra(req.user)||c.provider!=='accedra').map(c=>{
       const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today'),week=aggregateTelemetry(group,'7d');
       return {...c,account_count:group.length,daily_usd:metrics.billedUsd.value,daily_covered:metrics.billedUsd.covered,
         seven_day_usd:week.billedUsd.value,seven_day_covered:week.billedUsd.covered,attribution:attributionTotals(group)};
     });
     const [pending]=await db.query(`SELECT count(*) AS total FROM withdrawals WHERE payer_id=$1 AND state='pending'`,[req.user.id]);
     const [unassigned]=req.user.role==='owner'?await db.query('SELECT count(*) AS total FROM accounts WHERE ownership_verified=false'):[{total:0}];
-    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:await catalogFor(req.user.role==='owner'),pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
+    return {totals,accounts:Number(accounts.total),team:Number(team.total),balance:await balance(db,req.user.id),daily:daily.reverse(),platforms:platforms.map(c=>({...c,name:connectionName(req.user,c.provider,c.id,c.name)})),providers:await catalogFor(req.user),pendingWithdrawals:Number(pending.total),unassigned:Number(unassigned.total)};
   });
   app.get('/api/finance',async req=>{
     const q=z.object({tab:z.enum(['all','mine','children']).default('all'),source:z.enum(['all','account','key']).default('all'),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(req.query);

@@ -4,7 +4,7 @@ import { t } from '../i18n';
 import { platformName } from '../platforms';
 import { useLocale } from '../LanguageSwitcher';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, Check, KeyRound, Link2, Plus, RefreshCw, Settings2, ShieldCheck, Zap } from 'lucide-react';
 import { dateTime, day, key, mutate, post, localToday, useData } from '../api';
 import { PricingNotice } from '../TeamPricing';
@@ -13,15 +13,15 @@ import { Badge, Empty, ErrorBox, Field, Form, Loading, Modal, PageHead, Platform
 
 export default function Platforms(){useLocale();
   const pricing=useData('/api/team/pricing',30000);
-  const {user}=useSession(),toast=useToast(),{data,error,loading,refresh}=usePlatformCatalog(),[edit,setEdit]=useState<any>(null),[busy,setBusy]=useState(false);
-  const root=user.role==='owner',[scope,setScope]=useState('team'),activity=useData(`/api/telemetry/platforms?scope=${scope}`,30000);
+  const {user}=useSession(),toast=useToast(),{data,error,loading,refresh}=usePlatformCatalog(),[searchParams]=useSearchParams(),[edit,setEdit]=useState<any>(()=>searchParams.get('add')==='platform-x'&& (user.role==='owner'||user.email?.toLowerCase()==='jadencharles728@gmail.com')?{provider:'X'}:null),[busy,setBusy]=useState(false);
+  const root=user.role==='owner',canManageX=root||user.email?.toLowerCase()==='jadencharles728@gmail.com',[scope,setScope]=useState('team'),activity=useData(`/api/telemetry/platforms?scope=${scope}`,30000);
   const stats=activity.data?.scope===scope?activity.data:null;
   async function refreshAll(){await Promise.all([refresh(),activity.refresh(),pricing.refresh()]);}
   async function sync(ids:string[]){if(!ids.length)return;setBusy(true);try{await post('/api/connections/sync',{connectionIds:ids,key:key()});toast(t("已加入同步队列，请在同步任务中查看结果"));}catch(e){toast((e as Error).message,'error');}finally{setBusy(false);}}
   return <>
-    <PageHead eyebrow={t("平台连接管理")} title={t("平台管理")} description={t("查看各平台用量、运行状态与结算价格，直接管理平台连接和上号。")} actions={<><button className="button" onClick={refreshAll}><RefreshCw size={15}/>{t("刷新展示")}</button>{root&&<>
-      <button className="button" disabled={busy} onClick={()=>sync((data?.connections||[]).filter((c:any)=>c.enabled).map((c:any)=>c.id))}><RefreshCw size={15} className={busy?'spin':''}/>{t("同步全部")}</button>
-      <button className="button primary" onClick={()=>setEdit({provider:'A'})}><Plus size={16}/>{t("添加连接")}</button>
+    <PageHead eyebrow={t("平台连接管理")} title={t("平台管理")} description={t("查看各平台用量、运行状态与结算价格，直接管理平台连接和上号。")} actions={<><button className="button" onClick={refreshAll}><RefreshCw size={15}/>{t("刷新展示")}</button>{(root||canManageX)&&<>
+      {root&&<button className="button" disabled={busy} onClick={()=>sync((data?.connections||[]).filter((c:any)=>c.enabled).map((c:any)=>c.id))}><RefreshCw size={15} className={busy?'spin':''}/>{t("同步全部")}</button>}
+      <button className="button primary" onClick={()=>setEdit({provider:canManageX&&!root?'X':'A'})}><Plus size={16}/>{t("添加连接")}</button>
     </>}</>}/>
     <ErrorBox error={error}/><ErrorBox error={activity.error}/><PricingNotice report={pricing.data}/>
     <PlatformActivityOverview connections={data?.connections||[]} activity={stats} loading={!stats}/>
@@ -45,20 +45,20 @@ export default function Platforms(){useLocale();
       {c.last_error&&<div className="platform-connection-error"><ErrorBox error={c.last_error}/></div>}
       <div className="connection-actions">
         {c.enabled?<Link className="button primary" to={`/accounts?create=1&connection=${encodeURIComponent(c.id)}`}><Zap size={14}/>{t("上号到此平台")}</Link>:<button className="button primary" disabled><Zap size={14}/>{t("平台已停用")}</button>}
-        {root&&<>
+        {(root||(canManageX&&c.provider==='X'))&&<>
           <button className="button" onClick={()=>setEdit(c)}><Settings2 size={14}/>{t("配置连接")}</button>
           <button className="button" disabled={!c.enabled||busy} onClick={()=>sync([c.id])}><RefreshCw size={14}/>{t("同步账号")}</button>
           <a href={c.capabilities.url} target="_blank" rel="noreferrer" className="button">{t("打开平台")} <ArrowUpRight size={14}/></a>
         </>}
       </div>
-    </section>)}{!data?.connections.length&&<div className="panel"><Empty title={root?t("连接你的第一个平台"):t("暂无可用平台")} detail={root?t("添加你自己的上游主账号，即可拉取账号与实时用量。"):t("请联系上级开通平台。")} action={root&&<button className="button primary" onClick={()=>setEdit({provider:'A'})}><Plus size={15}/>{t("添加平台")}</button>}/></div>}</div>}
+    </section>)}{!data?.connections.length&&<div className="panel"><Empty title={root?t("连接你的第一个平台"):t("暂无可用平台")} detail={root?t("添加你自己的上游主账号，即可拉取账号与实时用量。"):t("请联系上级开通平台。")} action={(root||canManageX)&&<button className="button primary" onClick={()=>setEdit({provider:canManageX&&!root?'X':'A'})}><Plus size={15}/>{t("添加平台")}</button>}/></div>}</div>}
     <div className="info-grid"><div><Link2 size={20}/><h3>{t("选择平台，独立上号")}</h3><p>{t("可在平台卡片直接上号，也可到账号管理同时选择多个平台。所有平台共用账号固定代理。")}</p></div><div><KeyRound size={20}/><h3>{t("按自己的价格结算")}</h3><p>{t("平台账单 × 你的折扣 = 你的应收。已有报价调整从次日北京时间生效，历史账单保留当日价格。")}</p></div></div>
     {edit&&<Modal title={edit.id?t("配置平台连接"):t("添加平台连接")} subtitle={t("填写你拥有或有权管理的平台主账号")} onClose={()=>setEdit(null)}><Form onSubmit={async f=>{
       const payload:any={payoutRate:edit.provider==='X'?0.25:Number(f.get('payoutRate')),snapshotBilling:edit.provider==='X'?false:edit.snapshot_billing??edit.provider==='A'};
       if(edit.id){payload.enabled=f.get('enabled')==='on';if(f.get('username'))payload.username=f.get('username');if(f.get('password'))payload.password=f.get('password');await mutate(`/api/connections/${edit.id}`,'PATCH',payload);}else{Object.assign(payload,{provider:f.get('provider'),name:platformName(String(f.get('provider'))),username:f.get('username'),password:f.get('password'),effectiveFrom:f.get('effectiveFrom')});await post('/api/connections',payload);}
       toast(edit.id?t("连接配置已更新；新的上游折扣从次日北京时间生效"):t("平台已添加，正在核验并同步账号"));setEdit(null);await refreshAll();
     }}>
-      <Field label={t("平台")}><select aria-label={t("平台")} name="provider" defaultValue={edit.provider} onChange={e=>setEdit({...edit,provider:e.target.value})} disabled={!!edit.id}>{Object.entries(data?.providers||{}).map(([p,v]:[string,any])=><option key={p} value={p}>{t(v.name)}{v.upstreamName?` · ${v.upstreamName}`:''}{v.url?` · ${v.url.replace(/^https?:\/\//,'')}`:''}</option>)}</select></Field>
+      <Field label={t("平台")}><select aria-label={t("平台")} name="provider" defaultValue={edit.provider} onChange={e=>setEdit({...edit,provider:e.target.value})} disabled={!!edit.id}>{Object.entries(data?.providers||{}).filter(([p])=>root||p==='X').map(([p,v]:[string,any])=><option key={p} value={p}>{t(v.name)}{v.upstreamName?` · ${v.upstreamName}`:''}{v.url?` · ${v.url.replace(/^https?:\/\//,'')}`:''}</option>)}</select></Field>
       {edit.provider==='X'?<><input type="hidden" name="username" value="provider-api"/><p className="form-hint">{t('API 地址固定为 https://accedra.xyz；API 密钥仅保存在服务器。')}</p></>:<Field label={edit.id?t("新的登录账号（留空保留）"):t("登录账号")}><input name="username" autoComplete="off" required={!edit.id} placeholder={t("平台登录邮箱或用户名")}/></Field>}
       <Field label={edit.provider==='X'?(edit.id?t("新的 API 密钥（留空保留）"):t("API 密钥")):edit.id?t("新的密码（留空保留）"):t("登录密码")}><input type="password" name="password" autoComplete="new-password" required={!edit.id}/></Field>
       {edit.provider==='X'?<Field label={t("上游给你的结算折扣")} hint={t('Platform X (✨ Anti-Ban) 的上游结算折扣固定为 0.25。')}><input name="payoutRate" value="0.25" readOnly/></Field>:<RateField name="payoutRate" label={t("上游给你的结算折扣")} recipient="self" hint={t("0–1，例如 0.3 表示平台账单 $100，你收到 $30。修改从次日北京时间生效，历史日账单按当日留档价格计算。")} defaultValue={edit.upcoming_payout_rate??edit.payout_rate??''}/>}

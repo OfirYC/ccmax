@@ -1469,7 +1469,6 @@
   "当前可提现资金 · USD": "Funds available to withdraw · USD",
   "上号器": "Uploader",
   "今日产值": "Today output",
-  "今日平台账单": "Today's platform bill",
   "待人工核对": "Pending manual reconciliation",
   "上游原始点数": "Upstream raw points",
   "按固定汇率换算：1 USD = ¥6.7": "Fixed conversion: 1 USD = ¥6.7",
@@ -1542,5 +1541,6 @@
   "Platform X (✨ Anti-Ban) 的上游结算折扣固定为 0.25。": "Platform X (✨ Anti-Ban) has a fixed upstream settlement rate of 0.25.",
   "接入后不可更换账号固定代理": "The account proxy cannot be changed after connection",
   "请继续完成下一步平台授权": "Continue with the next authorization step",
-  "Platform X (✨ Anti-Ban) 需要逐步完成独立授权；每一步使用新的授权链接和回调。": "Complete Platform X (✨ Anti-Ban) authorization one step at a time; each step uses a new authorization link and callback."
+  "Platform X (✨ Anti-Ban) 需要逐步完成独立授权；每一步使用新的授权链接和回调。": "Complete Platform X (✨ Anti-Ban) authorization one step at a time; each step uses a new authorization link and callback.",
+  "添加 Platform X API 密钥": "Add Platform X API key"
 }

@@ -43,7 +43,7 @@ describe('private platform identities at the HTTP boundary',()=>{
   const key=await request('POST','/api/settings/api-keys',{name:'Privacy integration',scopes:['read'],expiresInDays:30,currentPassword:password});expect(key.statusCode).toBe(200);const token=key.json().token;
   const paths=['/api/connections','/api/dashboard','/api/accounts','/api/team','/api/team/pricing','/api/jobs','/api/audits','/api/telemetry','/api/telemetry/platforms',`/api/usage?from=${yesterday}&to=${yesterday}`,`/api/usage/export?from=${yesterday}&to=${yesterday}`,`/api/invoices/${invoice.id}/export`,`/api/invoices/preview?from=${yesterday}&to=${yesterday}`];
   for(const bearer of [undefined,token])for(const path of paths){const r=await request('GET',path,undefined,agentCookie,bearer);expect(r.statusCode,path).toBe(200);safe(r.body);}
-  const catalog=(await request('GET','/api/connections')).json();expect(Object.keys(catalog.providers)).toEqual(['A','B','C','D','E','X']);
+  const catalog=(await request('GET','/api/connections')).json();expect(Object.keys(catalog.providers)).toEqual(['A','B','C','D','E']);
   for(const c of catalog.connections){expect(c.name).toContain(publicPlatformName(c.provider));expect(c.capabilities).not.toHaveProperty('url');expect(c.capabilities).not.toHaveProperty('upstreamName');expect(c.settlement_rate).toBe('0.2000');}
   const owner=(await request('GET','/api/connections',undefined,ownerCookie)).json();expect(owner.connections[0].capabilities).toMatchObject({upstreamName:'Gatelink',url:PROVIDERS.gatelink.url});
   const invite=await request('POST','/api/team/invitations',{name:'Private offer',rates:{A:0.1,D:0},expiresInDays:30});expect(invite.statusCode).toBe(200);
@@ -114,4 +114,8 @@ it('does not alter opaque OAuth values, user input, dates or exact amounts while
 it('calls Accedra Platform X (✨ Anti-Ban) without exposing its internal identity',()=>{
  expect(publicProvider('accedra')).toBe('X');
  expect(encodePlatformResponse({provider:'accedra',connection_name:'Accedra'})).toEqual({provider:'X',connection_name:'Platform X (✨ Anti-Ban)'});
+});
+
+it('keeps Platform X visible only to owners and the allowlisted manager',()=>{
+  expect(publicPlatformName('accedra')).toBe('Platform X (✨ Anti-Ban)');
 });
