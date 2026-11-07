@@ -220,13 +220,16 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   });
   app.post('/api/team',async req=>{
     const d=z.object({name:z.string().trim().min(1).max(80),email,password,rates:z.partialRecord(provider,rate).refine(v=>Object.keys(v).length>0,'请至少设置一个平台价格'),effectiveFrom:date.optional()}).parse(req.body);
-    // Platform E has a fixed onboarding quote for every new downstream member.
-    // An explicit quote still wins; the default only applies while E has an
-    // enabled connection, so future providers remain opt-in.
+    // Platform E and Platform X have fixed onboarding quotes for every new downstream member.
+    // Explicit quotes still win; defaults apply only while that connection is enabled.
     const rates:Partial<Record<ProviderKey,number>>={...d.rates};
     if(rates.aeromax===undefined) {
       const [eConnection]=await db.query('SELECT id FROM connections WHERE provider=$1 AND enabled=true LIMIT 1',['aeromax']);
       if(eConnection) rates.aeromax=0.16;
+    }
+    if(rates.accedra===undefined && canManageAccedra(req.user)) {
+      const [xConnection]=await db.query('SELECT id FROM connections WHERE provider=$1 AND enabled=true LIMIT 1',['accedra']);
+      if(xConnection) rates.accedra=0.25;
     }
     for(const p of Object.keys(rates) as ProviderKey[])await assertAgentProvider(req.user,p);
     const hash=await hashPassword(d.password),userId=id(),effective=d.effectiveFrom??today();assert(effective<=today(),'初始价格日期不能在未来');
@@ -298,7 +301,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       await lockPricing(tx);
       await tx.query('INSERT INTO connections(id,provider,name,credentials,payout_rate,snapshot_billing) VALUES($1,$2,$3,$4,$5,$6)',[connectionId,d.provider,d.name,box.encrypt({username:d.username,password:d.password}),d.payoutRate,d.snapshotBilling??d.provider==='gatelink']);
       await tx.query('INSERT INTO connection_rates(id,connection_id,rate,effective_date,created_by) VALUES($1,$2,$3,$4,$5)',[id(),connectionId,d.payoutRate,effective,req.user.id]);
-      const initialAgentRate=d.initialAgentRate??(d.provider==='aeromax'?0.16:undefined);
+      const initialAgentRate=d.initialAgentRate??(d.provider==='aeromax'?0.16:d.provider==='accedra'?0.25:undefined);
       if(initialAgentRate!==undefined) await tx.query(`INSERT INTO rates(id,user_id,provider,rate,effective_date,created_by)
         SELECT md5($1||':'||u.id),u.id,$2,$3,$4,$5 FROM users u
         WHERE u.role='agent' AND NOT EXISTS(SELECT 1 FROM rates r WHERE r.user_id=u.id AND r.provider=$2)

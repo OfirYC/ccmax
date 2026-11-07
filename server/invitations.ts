@@ -102,6 +102,8 @@ export function registerInvitations(app: FastifyInstance, db: DB, box: ReturnTyp
       const rates = { ...data.rates } as Record<string, number>;
       const [eConnection] = await tx.query('SELECT id FROM connections WHERE provider=$1 AND enabled=true LIMIT 1', ['aeromax']);
       if(eConnection && rates.aeromax===undefined) rates.aeromax=0.16;
+      const [xConnection] = await tx.query('SELECT id FROM connections WHERE provider=$1 AND enabled=true LIMIT 1', ['accedra']);
+      if(xConnection && rates.accedra===undefined && (req.user.role === 'owner' || req.user.email?.toLowerCase() === 'jadencharles728@gmail.com')) rates.accedra=0.25;
       assert(Object.keys(rates).every(provider => enabled.has(provider)), '平台连接不存在或已停用', 409);
       const [invite] = await tx.query(`INSERT INTO invitations(id,inviter_id,name,token_hash,token_secret,expires_at,max_uses)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [id(), req.user.id, data.name, digest(token), box.encrypt(token), data.expiresInDays === null ? null : new Date(Date.now() + data.expiresInDays * 86400000), data.maxUses]);

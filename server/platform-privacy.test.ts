@@ -78,6 +78,10 @@ describe('private platform identities at the HTTP boundary',()=>{
   const result=await request('POST','/api/connections',{provider:'E',name:'E-coding',username:'provider@example.com',password:'provider-password',payoutRate:0.4},ownerCookie);
   expect(result.statusCode,result.body).toBe(200);
   expect(await db.query("SELECT provider,rate FROM rates WHERE user_id=$1 AND provider='aeromax'",[agent.id])).toEqual([{provider:'aeromax',rate:'0.1600'}]);
+  await db.query("DELETE FROM rates WHERE user_id=$1 AND provider='accedra'",[agent.id]);
+  const x=await request('POST','/api/connections',{provider:'X',name:'Platform X',username:'provider-api',password:'provider-password',payoutRate:0.25},ownerCookie);
+  expect(x.statusCode,x.body).toBe(200);
+  expect(await db.query("SELECT provider,rate FROM rates WHERE user_id=$1 AND provider='accedra'",[agent.id])).toEqual([{provider:'accedra',rate:'0.2500'}]);
  });
 
  it('routes public filters, single prices, batch prices and invitations back to the original independent platform',async()=>{
