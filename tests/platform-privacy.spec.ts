@@ -26,7 +26,7 @@ test('agent pages, network responses, public docs and loaded browser assets cont
     }
   }
   await page.getByRole('button',{name:'使用帮助',exact:true}).click();expect(await page.getByRole('dialog').innerText()).not.toMatch(privateSource);await page.getByRole('button',{name:'关闭弹窗'}).click();
-  const catalog=await(await page.request.get('/api/connections')).json();expect(Object.keys(catalog.providers)).toEqual(['A','B','C','D','E']);
+  const catalog=await(await page.request.get('/api/connections')).json();expect(Object.keys(catalog.providers)).toEqual(['A','B','C','D','E','X']);
   for(const entry of Object.values(catalog.providers)){expect(entry).not.toHaveProperty('url');expect(entry).not.toHaveProperty('upstreamName');}
   for(const path of ['/api/docs','/api/openapi.json','/api/usage/export']){const response=await page.request.get(path);expect(response.ok()).toBe(true);expect(await response.text()).not.toMatch(privateSource);}
   await Promise.all(checked);expect(leaks).toEqual([]);

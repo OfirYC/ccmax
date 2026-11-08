@@ -24,7 +24,7 @@ it('migration removes only uninvoiced repeated estimates from disabled Gatelink 
     await db.query("INSERT INTO billing_days(connection_id,day,state) VALUES($1,'2026-11-01','needs_attention')",[connection]);
     await db.query(`INSERT INTO billing_entries(connection_id,day,external_id,usage_id,state,error)
       VALUES($1,'2026-11-01',$2,$3,'blocked','stale repeated snapshot')`,[connection,disabled,staleUsageId]);
-    await db.query('DELETE FROM migrations WHERE version IN (29,31)');
+      await db.query('DELETE FROM migrations WHERE version IN (29,31,32)');
     await migrate(db);await migrate(db);
     expect(await db.query('SELECT day FROM usage_days WHERE binding_id=$1 ORDER BY day',[disabled])).toEqual([{day:'2026-10-31'}]);
     expect(await db.query('SELECT day FROM usage_days WHERE binding_id=$1 ORDER BY day',[active])).toEqual([{day:'2026-10-31'},{day:'2026-11-01'}]);

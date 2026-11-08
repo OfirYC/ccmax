@@ -18,7 +18,7 @@ import { previewInvoice } from './invoice-preview.js';
 import { registerTelemetry } from './telemetry-routes.js';
 import { registerBilling } from './billing-routes.js';
 import { billingSchedule } from './billing-scheduler.js';
-import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry } from './telemetry-data.js';
+import { attributionTotals,snapshotView,telemetryFilters,visibleTelemetry,isAnalyticsAdmin } from './telemetry-data.js';
 import { aggregateTelemetry } from './telemetry.js';
 import { authorizationState } from '../shared/oauth.js';
 import { validateOAuthCallback } from './oauth-callback.js';
@@ -70,8 +70,9 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     // removes that provider from agent-facing catalogs.
     const enabled=new Set<ProviderKey>(PROVIDER_KEYS);
     for(const state of states)if(state.enabled!==true&&state.enabled!=='true')enabled.delete(state.provider);
-    if(!canManageAccedra(user)) enabled.delete('accedra');
-    else enabled.add('accedra');
+    // Platform X is available to all users once an owner/Jaden has configured
+    // the shared connection; only credential management remains restricted.
+    enabled.add('accedra');
     return platformCatalog(false,enabled);
   };
   const assertAgentProvider=async(user:Row,provider:ProviderKey)=>{
@@ -284,8 +285,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
       (SELECT r.effective_date::text FROM rates r WHERE r.user_id=$2 AND r.provider=c.provider AND r.effective_date>$1 ORDER BY r.effective_date LIMIT 1) AS own_upcoming_date
       FROM connections c ${root?'':'WHERE c.enabled=true'} ORDER BY c.created_at`,[current,req.user.id]);
     const catalog=await catalogFor(req.user);
-    const visibleRows=rows.filter(row=>canManageAccedra(req.user)||row.provider!=='accedra');
-    return {connections:visibleRows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
+    return {connections:rows.map(({payout_rate,payout_effective_date,last_error,upstream_snapshot,upcoming_payout_rate,upcoming_payout_date,own_rate,own_effective_date,own_upcoming_rate,own_upcoming_date,...c})=>({
       ...c,name:connectionName(req.user,c.provider,c.id,c.name),
       settlement_rate:root?payout_rate:own_rate,settlement_effective_date:root?payout_effective_date:own_effective_date,
       upcoming_settlement_rate:root?upcoming_payout_rate:own_upcoming_rate,upcoming_settlement_date:root?upcoming_payout_date:own_upcoming_date,
@@ -644,8 +644,8 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   async function usageRows(user:Row,query:any,exporting=false) {
     const q=z.object({from:date.optional(),to:date.optional(),provider:provider.optional(),search:z.string().max(200).default(''),page:z.coerce.number().int().min(1).max(1000000).default(1)}).parse(query);
     assert(!q.from||!q.to||q.from<=q.to,'开始日期不能晚于结束日期');
-    const ids=await subtree(db,user.id);
-    const params=[user.id,ids,user.role==='owner',q.from??null,q.to??null,q.provider??null,q.search];
+    const analyticsAdmin=isAnalyticsAdmin(user),ids=analyticsAdmin?(await db.query('SELECT id FROM users')).map(row=>row.id):await subtree(db,user.id);
+    const params=[user.id,ids,analyticsAdmin,q.from??null,q.to??null,q.provider??null,q.search];
     const source=`FROM usage_days u JOIN bindings b ON b.id=u.binding_id JOIN connections c ON c.id=b.connection_id
       JOIN accounts a ON a.id=b.account_id LEFT JOIN users o ON o.id=a.owner_id
       LEFT JOIN earnings e ON e.usage_id=u.id AND e.user_id=$1
@@ -657,7 +657,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
     const rows=await db.query(`SELECT u.id,u.day,u.raw_usd,u.state,u.source,u.source_at,u.evidence,u.updated_at,b.id AS binding_id,b.connection_id,c.provider,c.name AS connection_name,
       a.email,a.owner_id,a.ownership_verified,o.name AS owner_name,e.rate,e.gross_usd,e.downstream_usd,e.profit_usd ${source}
       ORDER BY u.day DESC,a.email,u.id LIMIT $8 OFFSET $9`,[...params,exporting?100000:12,exporting?0:(q.page-1)*12]);
-    return {rows:publicConnectionRows(user,rows).map(({evidence,...r})=>({...r,...(user.role==='owner'?{evidence}:{})})),totals,total:Number(totals.count),page:q.page};
+    return {rows:publicConnectionRows(user,rows).map(({evidence,...r})=>({...r,...(isAnalyticsAdmin(user)?{evidence}:{})})),totals,total:Number(totals.count),page:q.page};
   }
   app.get('/api/usage',async req=>usageRows(req.user,req.query));
   app.get('/api/usage/export',async(req,reply)=>{const {rows}=await usageRows(req.user,req.query,true);return reply.header('Content-Type','text/csv; charset=utf-8').header('Content-Disposition','attachment; filename="ccmax-usage.csv"').send(csv(rows,[['day','日期（北京时间）'],['email','账号'],['connection_name','平台'],['raw_usd','平台账单 USD'],['rate','结算折扣'],['gross_usd','我的应收 USD'],['downstream_usd','下级应付 USD'],['profit_usd','我的利润 USD'],['state','核实状态'],['source','金额来源'],['source_at','数据截止时间']]));});
@@ -690,7 +690,7 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
         JOIN invoices i ON i.id=a.invoice_id WHERE a.user_id=$1
     ) corrected GROUP BY day ORDER BY day DESC LIMIT 14`,[req.user.id]);
     const snapshots=await visibleTelemetry(db,req.user,telemetryFilters.parse({}),connectionName);
-    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).filter(c=>canManageAccedra(req.user)||c.provider!=='accedra').map(c=>{
+    const platforms:Row[]=(await db.query('SELECT id,provider,name,status,last_sync_at FROM connections WHERE enabled=true ORDER BY created_at')).map(c=>{
       const group=snapshots.filter(r=>r.connection_id===c.id),metrics=aggregateTelemetry(group,'today'),week=aggregateTelemetry(group,'7d');
       return {...c,account_count:group.length,daily_usd:metrics.billedUsd.value,daily_covered:metrics.billedUsd.covered,
         seven_day_usd:week.billedUsd.value,seven_day_covered:week.billedUsd.covered,attribution:attributionTotals(group)};
@@ -778,6 +778,6 @@ export async function createApp(db:DB,config:{encryptionKey:string;appUrl:string
   app.post('/api/withdrawals/:id/review',async req=>{
     const d=z.object({action:z.enum(['paid','rejected']),reference:z.string().trim().min(3).max(500)}).parse(req.body);const w=await reviewWithdrawal(db,req.user,identifier.parse((req.params as Row).id),d.action,d.reference);return {...w,destination:withdrawalDestination(box,w.destination)};
   });
-  app.get('/api/audits',async req=>({rows:await db.query(`SELECT a.*,u.name AS actor_name FROM audits a LEFT JOIN users u ON u.id=a.actor_id WHERE a.actor_id=$1 OR $2::boolean ORDER BY a.created_at DESC LIMIT 300`,[req.user.id,req.user.role==='owner'])}));
+  app.get('/api/audits',async req=>({rows:await db.query(`SELECT a.*,u.name AS actor_name FROM audits a LEFT JOIN users u ON u.id=a.actor_id WHERE a.actor_id=$1 OR $2::boolean ORDER BY a.created_at DESC LIMIT 300`,[req.user.id,isAnalyticsAdmin(req.user)])}));
   return {app,box};
 }
